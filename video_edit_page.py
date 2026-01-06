@@ -40,31 +40,38 @@ class VideoEditPage:
         body.grid_columnconfigure(0, weight=1)
 
         row = 0
-        self._section_label(body, "素材動画").grid(row=row, column=0, sticky="w", pady=(10, 4)); row += 1
-        self.source_entry = ctk.CTkEntry(body, height=34, corner_radius=12)
-        self.source_entry.grid(row=row, column=0, sticky="ew"); row += 1
+
+        source_card = self._section_frame(body)
+        source_card.grid(row=row, column=0, sticky="ew", pady=(10, 12)); row += 1
+        source_card.grid_columnconfigure(0, weight=1)
+        self._section_label(source_card, "素材動画").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.source_entry = ctk.CTkEntry(source_card, height=34, corner_radius=12)
+        self.source_entry.grid(row=1, column=0, sticky="ew")
         ctk.CTkButton(
-            body,
+            source_card,
             text="動画を選択",
             command=self._browse_source,
             height=36,
             corner_radius=12,
             fg_color=self.colors["button"],
             hover_color=self.colors["button_hover"],
-        ).grid(row=row, column=0, sticky="w", pady=(6, 14)); row += 1
+        ).grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
-        self._section_label(body, "トリミング").grid(row=row, column=0, sticky="w", pady=(0, 4)); row += 1
-        trim_row = ctk.CTkFrame(body, fg_color="transparent")
-        trim_row.grid(row=row, column=0, sticky="ew", pady=(0, 10)); row += 1
-        trim_row.grid_columnconfigure((0, 1), weight=1)
-        self.start_entry = ctk.CTkEntry(trim_row, placeholder_text="開始 (秒)", height=34, corner_radius=12)
-        self.end_entry = ctk.CTkEntry(trim_row, placeholder_text="終了 (秒)", height=34, corner_radius=12)
-        self.start_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        self.end_entry.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        trim_card = self._section_frame(body)
+        trim_card.grid(row=row, column=0, sticky="ew", pady=(0, 12)); row += 1
+        trim_card.grid_columnconfigure((0, 1), weight=1)
+        self._section_label(trim_card, "トリミング").grid(row=0, column=0, sticky="w", columnspan=2, pady=(0, 6))
+        self.start_entry = ctk.CTkEntry(trim_card, placeholder_text="開始 (秒)", height=34, corner_radius=12)
+        self.end_entry = ctk.CTkEntry(trim_card, placeholder_text="終了 (秒)", height=34, corner_radius=12)
+        self.start_entry.grid(row=1, column=0, sticky="ew", padx=(0, 8))
+        self.end_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0))
 
-        self._section_label(body, "書き出し").grid(row=row, column=0, sticky="w", pady=(0, 4)); row += 1
-        export_row = ctk.CTkFrame(body, fg_color="transparent")
-        export_row.grid(row=row, column=0, sticky="ew", pady=(0, 10)); row += 1
+        export_card = self._section_frame(body)
+        export_card.grid(row=row, column=0, sticky="ew", pady=(0, 12)); row += 1
+        export_card.grid_columnconfigure(0, weight=1)
+        self._section_label(export_card, "書き出し").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        export_row = ctk.CTkFrame(export_card, fg_color="transparent")
+        export_row.grid(row=1, column=0, sticky="ew")
         export_row.grid_columnconfigure(0, weight=1)
         self.output_entry = ctk.CTkEntry(export_row, height=34, corner_radius=12)
         self.output_entry.grid(row=0, column=0, sticky="ew")
@@ -110,6 +117,26 @@ class VideoEditPage:
             justify="left",
             text_color=self.colors["muted"],
         ).grid(row=row, column=0, sticky="w")
+
+    def _section_label(self, parent, text: str):
+        return ctk.CTkLabel(
+            parent,
+            text=text,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.colors["text"],
+            anchor="w",
+        )
+
+    def _section_frame(self, parent):
+        return ctk.CTkFrame(
+            parent,
+            fg_color=self.colors["panel2"],
+            corner_radius=12,
+            border_width=1,
+            border_color=self.colors["border"],
+            padx=12,
+            pady=10,
+        )
 
     def _section_label(self, parent, text: str):
         return ctk.CTkLabel(
