@@ -1103,6 +1103,12 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.load_config()
         self.switch_page("video")
         self._edit_thumb_imgtk = None
+        self._edit_preview_imgtk = None
+        self._edit_preview_bg = None
+        self._edit_preview_bg_size = (1280, 720)
+        self._edit_preview_overlay = None
+        self._edit_overlay_original_size = None
+        self._edit_preview_syncing = False
 
     def _pick_font_family(self, candidates: list[str]) -> str:
         try:
@@ -1199,6 +1205,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_thumb_label.configure(image="", text="（行を選択すると表示）")
         if hasattr(self, "edit_thumb_path"):
             self.edit_thumb_path.configure(text="")
+        self._reset_edit_preview()
 
 
 
@@ -1230,6 +1237,170 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_thumb_label.configure(text=f"サムネ生成失敗: {e}", image=None)
             self.edit_thumb_path.configure(text=str(img_path))
             self._edit_thumb_imgtk = None
+
+        self.load_edit_overlay_preview(img_path)
+        self.sync_preview_controls_from_form()
+        self.update_edit_preview()
+
+    def _reset_edit_preview(self):
+        if hasattr(self, "edit_preview_label"):
+            self._edit_preview_imgtk = None
+            self.edit_preview_label.configure(image="", text="（プレビューは未生成）")
+        if hasattr(self, "edit_preview_info"):
+            self.edit_preview_info.configure(text="")
+
+    def load_edit_preview_background(self, path: str):
+        if not path or not Path(path).exists():
+            self._edit_preview_bg = None
+            self._edit_preview_bg_size = (1280, 720)
+            self._reset_edit_preview()
+            return
+        try:
+            with VideoFileClip(path) as clip:
+                t = 0.0
+                if clip.duration and clip.duration > 0:
+                    t = min(0.5, max(0.0, clip.duration - 0.01))
+                frame = clip.get_frame(t)
+            bg = Image.fromarray(frame).convert("RGBA")
+            self._edit_preview_bg = bg
+            self._edit_preview_bg_size = bg.size
+        except Exception as e:
+            self._edit_preview_bg = None
+            self._edit_preview_bg_size = (1280, 720)
+            self._reset_edit_preview()
+            if hasattr(self, "edit_preview_info"):
+                self.edit_preview_info.configure(text=f"背景読み込み失敗: {e}")
+            return
+        self._configure_preview_slider_ranges()
+        self.update_edit_preview()
+
+    def load_edit_overlay_preview(self, path: str):
+        if not path or not Path(path).exists():
+            self._edit_preview_overlay = None
+            self._edit_overlay_original_size = None
+            self.update_edit_preview()
+            return
+        try:
+            overlay = Image.open(path).convert("RGBA")
+            self._edit_preview_overlay = overlay
+            self._edit_overlay_original_size = overlay.size
+        except Exception as e:
+            self._edit_preview_overlay = None
+            self._edit_overlay_original_size = None
+            if hasattr(self, "edit_preview_info"):
+                self.edit_preview_info.configure(text=f"画像読み込み失敗: {e}")
+            return
+        self.sync_preview_controls_from_form(force_scale=100)
+        self.update_edit_preview()
+
+    def _configure_preview_slider_ranges(self):
+        if not hasattr(self, "edit_x_slider"):
+            return
+        w, h = self._edit_preview_bg_size
+        self.edit_x_slider.configure(from_=0, to=max(0, w))
+        self.edit_y_slider.configure(from_=0, to=max(0, h))
+        self.edit_x_slider.set(min(self.edit_x_slider.get(), w))
+        self.edit_y_slider.set(min(self.edit_y_slider.get(), h))
+
+    def sync_preview_controls_from_form(self, force_scale: int | None = None):
+        if not hasattr(self, "edit_x_slider"):
+            return
+        try:
+            self._edit_preview_syncing = True
+            x = int(self.edit_x_entry.get().strip() or "0")
+            y = int(self.edit_y_entry.get().strip() or "0")
+            w = int(self.edit_w_entry.get().strip() or "0")
+            h = int(self.edit_h_entry.get().strip() or "0")
+
+            if force_scale is not None:
+                scale = force_scale
+            else:
+                scale = 100
+                if self._edit_overlay_original_size and w > 0 and h > 0:
+                    ow, oh = self._edit_overlay_original_size
+                    scale = int(round((w / ow) * 100)) if ow else 100
+
+            self.edit_x_slider.set(x)
+            self.edit_y_slider.set(y)
+            self.edit_scale_slider.set(scale)
+            self._update_preview_value_labels()
+        finally:
+            self._edit_preview_syncing = False
+
+    def _resize_overlay_image(self, overlay: Image.Image, w: int, h: int) -> Image.Image:
+        ow, oh = overlay.size
+        if w > 0 and h > 0:
+            return overlay.resize((w, h), Image.LANCZOS)
+        if w > 0 and h <= 0:
+            new_h = max(1, int(oh * (w / ow)))
+            return overlay.resize((w, new_h), Image.LANCZOS)
+        if h > 0 and w <= 0:
+            new_w = max(1, int(ow * (h / oh)))
+            return overlay.resize((new_w, h), Image.LANCZOS)
+        return overlay
+
+    def _update_preview_value_labels(self):
+        if not hasattr(self, "edit_x_value"):
+            return
+        self.edit_x_value.configure(text=f"{int(self.edit_x_slider.get())} px")
+        self.edit_y_value.configure(text=f"{int(self.edit_y_slider.get())} px")
+        self.edit_scale_value.configure(text=f"{int(self.edit_scale_slider.get())} %")
+
+    def on_preview_control_change(self, _value=None):
+        if self._edit_preview_syncing:
+            return
+        self._update_preview_value_labels()
+        self.edit_x_entry.delete(0, "end")
+        self.edit_x_entry.insert(0, str(int(self.edit_x_slider.get())))
+        self.edit_y_entry.delete(0, "end")
+        self.edit_y_entry.insert(0, str(int(self.edit_y_slider.get())))
+        if self._edit_overlay_original_size:
+            ow, oh = self._edit_overlay_original_size
+            scale = max(1, int(self.edit_scale_slider.get()))
+            w = max(1, int(ow * (scale / 100)))
+            h = max(1, int(oh * (scale / 100)))
+            self.edit_w_entry.delete(0, "end")
+            self.edit_w_entry.insert(0, str(w))
+            self.edit_h_entry.delete(0, "end")
+            self.edit_h_entry.insert(0, str(h))
+        self.update_edit_preview()
+
+    def update_edit_preview(self):
+        if not hasattr(self, "edit_preview_label"):
+            return
+        try:
+            if self._edit_preview_bg is None:
+                bg = Image.new("RGBA", self._edit_preview_bg_size, (30, 30, 30, 255))
+            else:
+                bg = self._edit_preview_bg.copy()
+
+            x = int(self.edit_x_entry.get().strip() or "0")
+            y = int(self.edit_y_entry.get().strip() or "0")
+            w = int(self.edit_w_entry.get().strip() or "0")
+            h = int(self.edit_h_entry.get().strip() or "0")
+            opacity = float(self.edit_opacity_entry.get().strip() or "1.0")
+
+            if self._edit_preview_overlay:
+                fg = self._resize_overlay_image(self._edit_preview_overlay, w, h)
+                if opacity < 1.0:
+                    alpha = fg.getchannel("A")
+                    alpha = alpha.point(lambda a: int(a * opacity))
+                    fg.putalpha(alpha)
+                bg.alpha_composite(fg, (x, y))
+
+            preview = bg.copy()
+            preview.thumbnail((620, 360))
+            self._edit_preview_imgtk = ImageTk.PhotoImage(preview)
+            self.edit_preview_label.configure(text="", image=self._edit_preview_imgtk)
+            if hasattr(self, "edit_preview_info"):
+                bg_name = Path(self.edit_input_entry.get().strip()).name if self.edit_input_entry.get().strip() else "未選択"
+                overlay_name = Path(self.edit_overlay_img_entry.get().strip()).name if self.edit_overlay_img_entry.get().strip() else "未選択"
+                self.edit_preview_info.configure(text=f"背景: {bg_name} / 画像: {overlay_name}")
+        except Exception as e:
+            self._edit_preview_imgtk = None
+            self.edit_preview_label.configure(text=f"プレビュー生成失敗: {e}", image=None)
+            if hasattr(self, "edit_preview_info"):
+                self.edit_preview_info.configure(text="")
 
     def load_selected_overlay_to_form(self):
         """選択行の値を、上のフォーム入力欄へ反映（編集しやすくする）"""
@@ -1269,6 +1440,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.edit_opacity_entry.insert(0, str(ov.get("opacity", 1.0)))
 
         self.log(f"✏️ 選択行をフォームへ反映: row={idx+1}")
+        self.load_edit_overlay_preview(ov.get("image_path", ""))
+        self.sync_preview_controls_from_form()
+        self.update_edit_preview()
 
     def update_selected_overlay_from_form(self):
         """フォーム入力欄の値で、選択行を上書き更新"""
@@ -1313,6 +1487,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
             self.save_config()
             self.refresh_edit_overlay_table()
+            self.sync_preview_controls_from_form()
+            self.update_edit_preview()
 
             # 更新した行を選択状態に戻す
             if hasattr(self, "edit_tree"):
@@ -2161,6 +2337,70 @@ class NewsShortGeneratorStudio(ctk.CTk):
         form.grid_columnconfigure(0, weight=1)
 
         r = 0
+        # preview area (top)
+        preview_wrap = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_BG)
+        preview_wrap.grid(row=r, column=0, sticky="ew", pady=(10, 16)); r += 1
+        preview_wrap.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            preview_wrap,
+            text="プレビュー",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=self.COL_TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 6))
+
+        self.edit_preview_label = ctk.CTkLabel(
+            preview_wrap,
+            text="（動画を読み込むとプレビュー表示）",
+            text_color=self.COL_MUTED,
+            anchor="center",
+        )
+        self.edit_preview_label.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 10))
+
+        self.edit_preview_info = ctk.CTkLabel(
+            preview_wrap,
+            text="背景: 未選択 / 画像: 未選択",
+            text_color=self.COL_MUTED,
+            anchor="w",
+        )
+        self.edit_preview_info.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 6))
+
+        slider_wrap = ctk.CTkFrame(preview_wrap, fg_color="transparent")
+        slider_wrap.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 12))
+        slider_wrap.grid_columnconfigure(0, weight=1)
+
+        # X slider
+        x_row = ctk.CTkFrame(slider_wrap, fg_color="transparent")
+        x_row.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        x_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(x_row, text="X", text_color=self.COL_TEXT, width=40).grid(row=0, column=0, sticky="w")
+        self.edit_x_slider = ctk.CTkSlider(x_row, from_=0, to=1280, command=self.on_preview_control_change)
+        self.edit_x_slider.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        self.edit_x_value = ctk.CTkLabel(x_row, text="0 px", text_color=self.COL_MUTED, width=70, anchor="e")
+        self.edit_x_value.grid(row=0, column=2, sticky="e")
+
+        # Y slider
+        y_row = ctk.CTkFrame(slider_wrap, fg_color="transparent")
+        y_row.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        y_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(y_row, text="Y", text_color=self.COL_TEXT, width=40).grid(row=0, column=0, sticky="w")
+        self.edit_y_slider = ctk.CTkSlider(y_row, from_=0, to=720, command=self.on_preview_control_change)
+        self.edit_y_slider.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        self.edit_y_value = ctk.CTkLabel(y_row, text="0 px", text_color=self.COL_MUTED, width=70, anchor="e")
+        self.edit_y_value.grid(row=0, column=2, sticky="e")
+
+        # Scale slider
+        s_row = ctk.CTkFrame(slider_wrap, fg_color="transparent")
+        s_row.grid(row=2, column=0, sticky="ew")
+        s_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(s_row, text="拡大率", text_color=self.COL_TEXT, width=40).grid(row=0, column=0, sticky="w")
+        self.edit_scale_slider = ctk.CTkSlider(s_row, from_=10, to=300, command=self.on_preview_control_change)
+        self.edit_scale_slider.set(100)
+        self.edit_scale_slider.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        self.edit_scale_value = ctk.CTkLabel(s_row, text="100 %", text_color=self.COL_MUTED, width=70, anchor="e")
+        self.edit_scale_value.grid(row=0, column=2, sticky="e")
+
         self._v_label(form, "入力動画").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
         self._v_hint(form, "MP4 を読み込んで、指定時間帯に画像を重ねて加工します。").grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
 
@@ -2403,6 +2643,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.edit_render_button.grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
 
         self.refresh_edit_overlay_table()
+        self.sync_preview_controls_from_form()
+        self.update_edit_preview()
 
 
         # 多分要らない
@@ -2441,6 +2683,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path:
             self.edit_input_entry.delete(0, "end")
             self.edit_input_entry.insert(0, path)
+            self.load_edit_preview_background(path)
 
     def browse_edit_output_mp4(self):
         path = filedialog.asksaveasfilename(
@@ -2460,6 +2703,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path:
             self.edit_overlay_img_entry.delete(0, "end")
             self.edit_overlay_img_entry.insert(0, path)
+            self.load_edit_overlay_preview(path)
 
     def add_edit_overlay(self):
         try:
