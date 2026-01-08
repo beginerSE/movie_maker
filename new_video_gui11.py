@@ -1044,6 +1044,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
     SIDEBAR_W = 240
     LOG_W = 320
+    EDIT_PREVIEW_MAX = (640, 360)
 
     def __init__(self):
         super().__init__()
@@ -1093,6 +1094,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.prompt_template_var = ctk.StringVar(value="")
 
         self.edit_overlays: List[Dict[str, Any]] = []
+        self._edit_preview_base: Image.Image | None = None
+        self._edit_preview_overlay: Image.Image | None = None
+        self._edit_preview_imgtk = None
+        self._edit_overlay_original_size = None
+        self._edit_preview_size = None
 
         # build UI
         self._build_layout()
@@ -1103,6 +1109,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.load_config()
         self.switch_page("video")
         self._edit_thumb_imgtk = None
+        self._sync_edit_preview_state()
 
     def _pick_font_family(self, candidates: list[str]) -> str:
         try:
@@ -1200,6 +1207,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if hasattr(self, "edit_thumb_path"):
             self.edit_thumb_path.configure(text="")
 
+        self._sync_edit_preview_state()
+
 
 
     def on_edit_overlay_select(self, _event=None):
@@ -1245,6 +1254,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         # パス
         self.edit_overlay_img_entry.delete(0, "end")
         self.edit_overlay_img_entry.insert(0, ov.get("image_path", ""))
+        self._load_edit_overlay_preview(ov.get("image_path", ""))
 
         # 時間は秒→mm:ssに戻すより「そのまま秒文字列」でOK（必要ならmm:ss化も可能）
         self.edit_start_entry.delete(0, "end")
@@ -1267,6 +1277,20 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self.edit_opacity_entry.delete(0, "end")
         self.edit_opacity_entry.insert(0, str(ov.get("opacity", 1.0)))
+
+        if hasattr(self, "edit_preview_x_slider"):
+            self.edit_preview_x_slider.set(float(ov.get("x", 0)))
+        if hasattr(self, "edit_preview_y_slider"):
+            self.edit_preview_y_slider.set(float(ov.get("y", 0)))
+        if hasattr(self, "edit_preview_scale_slider"):
+            target_w = int(ov.get("w", 0) or 0)
+            if target_w > 0 and self._edit_overlay_original_size:
+                base_w = self._edit_overlay_original_size[0]
+                scale = max(1, min(300, int((target_w / base_w) * 100)))
+                self.edit_preview_scale_slider.set(scale)
+            else:
+                self.edit_preview_scale_slider.set(100)
+        self._sync_edit_preview_from_sliders()
 
         self.log(f"✏️ 選択行をフォームへ反映: row={idx+1}")
 
@@ -2161,6 +2185,83 @@ class NewsShortGeneratorStudio(ctk.CTk):
         form.grid_columnconfigure(0, weight=1)
 
         r = 0
+        # Preview area (center top)
+        preview_wrap = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_PANEL)
+        preview_wrap.grid(row=r, column=0, sticky="ew", padx=10, pady=(10, 18)); r += 1
+        preview_wrap.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            preview_wrap, text="プレビュー",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.COL_TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 6))
+
+        self.edit_preview_label = ctk.CTkLabel(
+            preview_wrap,
+            text="動画を選択してください",
+            text_color=self.COL_MUTED,
+            width=self.EDIT_PREVIEW_MAX[0],
+            height=self.EDIT_PREVIEW_MAX[1],
+            anchor="center",
+        )
+        self.edit_preview_label.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 10))
+
+        preview_controls = ctk.CTkFrame(preview_wrap, fg_color="transparent")
+        preview_controls.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 16))
+        preview_controls.grid_columnconfigure(1, weight=1)
+
+        # X slider
+        ctk.CTkLabel(
+            preview_controls, text="画像X",
+            text_color=self.COL_MUTED,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        self.edit_preview_x_slider = ctk.CTkSlider(
+            preview_controls, from_=0, to=1920,
+            command=lambda _v: self._sync_edit_preview_from_sliders(),
+        )
+        self.edit_preview_x_slider.set(0)
+        self.edit_preview_x_slider.grid(row=0, column=1, sticky="ew", padx=(12, 8))
+        self.edit_preview_x_value = ctk.CTkLabel(
+            preview_controls, text="0", text_color=self.COL_TEXT, width=60, anchor="e"
+        )
+        self.edit_preview_x_value.grid(row=0, column=2, sticky="e")
+
+        # Y slider
+        ctk.CTkLabel(
+            preview_controls, text="画像Y",
+            text_color=self.COL_MUTED,
+            anchor="w",
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.edit_preview_y_slider = ctk.CTkSlider(
+            preview_controls, from_=0, to=1080,
+            command=lambda _v: self._sync_edit_preview_from_sliders(),
+        )
+        self.edit_preview_y_slider.set(0)
+        self.edit_preview_y_slider.grid(row=1, column=1, sticky="ew", padx=(12, 8), pady=(6, 0))
+        self.edit_preview_y_value = ctk.CTkLabel(
+            preview_controls, text="0", text_color=self.COL_TEXT, width=60, anchor="e"
+        )
+        self.edit_preview_y_value.grid(row=1, column=2, sticky="e", pady=(6, 0))
+
+        # Scale slider
+        ctk.CTkLabel(
+            preview_controls, text="画像スケール(%)",
+            text_color=self.COL_MUTED,
+            anchor="w",
+        ).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.edit_preview_scale_slider = ctk.CTkSlider(
+            preview_controls, from_=10, to=300,
+            command=lambda _v: self._sync_edit_preview_from_sliders(),
+        )
+        self.edit_preview_scale_slider.set(100)
+        self.edit_preview_scale_slider.grid(row=2, column=1, sticky="ew", padx=(12, 8), pady=(6, 0))
+        self.edit_preview_scale_value = ctk.CTkLabel(
+            preview_controls, text="100%", text_color=self.COL_TEXT, width=60, anchor="e"
+        )
+        self.edit_preview_scale_value.grid(row=2, column=2, sticky="e", pady=(6, 0))
+
         self._v_label(form, "入力動画").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
         self._v_hint(form, "MP4 を読み込んで、指定時間帯に画像を重ねて加工します。").grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
 
@@ -2433,6 +2534,134 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         # self.refresh_edit_overlay_table()
 
+    def _sync_edit_preview_state(self):
+        if not hasattr(self, "edit_preview_label"):
+            return
+        if not self._edit_preview_base:
+            self.edit_preview_label.configure(text="動画を選択してください", image="")
+            self._edit_preview_imgtk = None
+            return
+        self._update_edit_preview()
+
+    def _sync_edit_preview_from_sliders(self):
+        self._sync_edit_entries_from_sliders()
+        self._update_edit_preview()
+
+    def _sync_edit_entries_from_sliders(self):
+        if not hasattr(self, "edit_preview_x_slider"):
+            return
+        x = int(self.edit_preview_x_slider.get())
+        y = int(self.edit_preview_y_slider.get()) if hasattr(self, "edit_preview_y_slider") else 0
+        scale = int(self.edit_preview_scale_slider.get()) if hasattr(self, "edit_preview_scale_slider") else 100
+
+        if hasattr(self, "edit_preview_x_value"):
+            self.edit_preview_x_value.configure(text=str(x))
+        if hasattr(self, "edit_preview_y_value"):
+            self.edit_preview_y_value.configure(text=str(y))
+        if hasattr(self, "edit_preview_scale_value"):
+            self.edit_preview_scale_value.configure(text=f"{scale}%")
+
+        if hasattr(self, "edit_x_entry"):
+            self.edit_x_entry.delete(0, "end")
+            self.edit_x_entry.insert(0, str(x))
+        if hasattr(self, "edit_y_entry"):
+            self.edit_y_entry.delete(0, "end")
+            self.edit_y_entry.insert(0, str(y))
+
+        if self._edit_overlay_original_size and hasattr(self, "edit_w_entry") and hasattr(self, "edit_h_entry"):
+            base_w, base_h = self._edit_overlay_original_size
+            w = max(1, int(base_w * scale / 100))
+            h = max(1, int(base_h * scale / 100))
+            self.edit_w_entry.delete(0, "end")
+            self.edit_w_entry.insert(0, str(w))
+            self.edit_h_entry.delete(0, "end")
+            self.edit_h_entry.insert(0, str(h))
+
+    def _update_edit_preview_slider_ranges(self):
+        if not self._edit_preview_size:
+            return
+        width, height = self._edit_preview_size
+        if hasattr(self, "edit_preview_x_slider"):
+            self.edit_preview_x_slider.configure(to=max(0, width))
+        if hasattr(self, "edit_preview_y_slider"):
+            self.edit_preview_y_slider.configure(to=max(0, height))
+
+        if hasattr(self, "edit_preview_x_slider"):
+            self.edit_preview_x_slider.set(min(self.edit_preview_x_slider.get(), width))
+        if hasattr(self, "edit_preview_y_slider"):
+            self.edit_preview_y_slider.set(min(self.edit_preview_y_slider.get(), height))
+
+    def _load_edit_video_preview(self, path: str):
+        if not path or not Path(path).exists():
+            self._edit_preview_base = None
+            self._edit_preview_size = None
+            self._sync_edit_preview_state()
+            return
+
+        clip = None
+        try:
+            clip = VideoFileClip(path)
+            t = 0.1 if clip.duration and clip.duration > 0.1 else 0
+            frame = clip.get_frame(t)
+            img = Image.fromarray(frame).convert("RGBA")
+            self._edit_preview_base = img
+            self._edit_preview_size = img.size
+            self._update_edit_preview_slider_ranges()
+            self._sync_edit_preview_from_sliders()
+        except Exception as e:
+            self._edit_preview_base = None
+            self._edit_preview_size = None
+            if hasattr(self, "edit_preview_label"):
+                self.edit_preview_label.configure(text=f"プレビュー取得失敗: {e}", image="")
+            self._edit_preview_imgtk = None
+        finally:
+            if clip:
+                clip.close()
+
+    def _load_edit_overlay_preview(self, path: str):
+        if not path or not Path(path).exists():
+            self._edit_preview_overlay = None
+            self._edit_overlay_original_size = None
+            self._sync_edit_preview_state()
+            return
+        try:
+            overlay = Image.open(path).convert("RGBA")
+            self._edit_preview_overlay = overlay
+            self._edit_overlay_original_size = overlay.size
+            if hasattr(self, "edit_preview_scale_slider"):
+                self.edit_preview_scale_slider.set(100)
+            self._sync_edit_preview_from_sliders()
+        except Exception as e:
+            self._edit_preview_overlay = None
+            self._edit_overlay_original_size = None
+            if hasattr(self, "edit_preview_label"):
+                self.edit_preview_label.configure(text=f"画像読み込み失敗: {e}", image="")
+            self._edit_preview_imgtk = None
+
+    def _update_edit_preview(self):
+        if not self._edit_preview_base or not hasattr(self, "edit_preview_label"):
+            return
+        base = self._edit_preview_base.copy().convert("RGBA")
+
+        if self._edit_preview_overlay:
+            scale = int(self.edit_preview_scale_slider.get()) if hasattr(self, "edit_preview_scale_slider") else 100
+            x = int(self.edit_preview_x_slider.get()) if hasattr(self, "edit_preview_x_slider") else 0
+            y = int(self.edit_preview_y_slider.get()) if hasattr(self, "edit_preview_y_slider") else 0
+            ov = self._edit_preview_overlay
+            if self._edit_overlay_original_size:
+                ow, oh = self._edit_overlay_original_size
+            else:
+                ow, oh = ov.size
+            nw = max(1, int(ow * scale / 100))
+            nh = max(1, int(oh * scale / 100))
+            ov_resized = ov.resize((nw, nh), Image.LANCZOS)
+            base.alpha_composite(ov_resized, dest=(x, y))
+
+        display = base.copy()
+        display.thumbnail(self.EDIT_PREVIEW_MAX, Image.LANCZOS)
+        self._edit_preview_imgtk = ImageTk.PhotoImage(display)
+        self.edit_preview_label.configure(image=self._edit_preview_imgtk, text="")
+
     def browse_edit_input_mp4(self):
         path = filedialog.askopenfilename(
             title="入力MP4を選択",
@@ -2441,6 +2670,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path:
             self.edit_input_entry.delete(0, "end")
             self.edit_input_entry.insert(0, path)
+            self._load_edit_video_preview(path)
 
     def browse_edit_output_mp4(self):
         path = filedialog.asksaveasfilename(
@@ -2460,6 +2690,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path:
             self.edit_overlay_img_entry.delete(0, "end")
             self.edit_overlay_img_entry.insert(0, path)
+            self._load_edit_overlay_preview(path)
 
     def add_edit_overlay(self):
         try:
