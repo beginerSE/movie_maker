@@ -1103,6 +1103,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.load_config()
         self.switch_page("video")
         self._edit_thumb_imgtk = None
+        self._edit_layout_imgtk = None
 
     def _pick_font_family(self, candidates: list[str]) -> str:
         try:
@@ -1199,6 +1200,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_thumb_label.configure(image="", text="（行を選択すると表示）")
         if hasattr(self, "edit_thumb_path"):
             self.edit_thumb_path.configure(text="")
+        if hasattr(self, "edit_layout_label"):
+            self._edit_layout_imgtk = None
+            self.edit_layout_label.configure(image="", text="（プレビューは未生成）")
+        if hasattr(self, "edit_layout_info"):
+            self.edit_layout_info.configure(text="")
 
 
 
@@ -1230,6 +1236,109 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_thumb_label.configure(text=f"サムネ生成失敗: {e}", image=None)
             self.edit_thumb_path.configure(text=str(img_path))
             self._edit_thumb_imgtk = None
+
+        self.update_edit_layout_preview(use_selection=True)
+
+    def _overlay_from_form(self) -> Dict[str, Any]:
+        img = self.edit_overlay_img_entry.get().strip()
+        if not img:
+            raise ValueError("画像が指定されていません。")
+        if not Path(img).exists():
+            raise ValueError("指定した画像が存在しません。")
+
+        start_s = self.edit_start_entry.get().strip()
+        end_s = self.edit_end_entry.get().strip()
+        start = parse_timecode_to_seconds(start_s)
+        end = parse_timecode_to_seconds(end_s)
+
+        x = int(self.edit_x_entry.get().strip() or "0")
+        y = int(self.edit_y_entry.get().strip() or "0")
+        w = int(self.edit_w_entry.get().strip() or "0")
+        h = int(self.edit_h_entry.get().strip() or "0")
+
+        opacity = float(self.edit_opacity_entry.get().strip() or "1.0")
+        if not (0.0 <= opacity <= 1.0):
+            raise ValueError("不透明度は 0.0〜1.0 で指定してください。")
+
+        return {
+            "image_path": img,
+            "start": float(start),
+            "end": float(end),
+            "x": int(x),
+            "y": int(y),
+            "w": int(w),
+            "h": int(h),
+            "opacity": float(opacity),
+        }
+
+    def _resolve_preview_overlay(self, use_selection: bool = False) -> Dict[str, Any]:
+        if use_selection:
+            idx = self._selected_overlay_index()
+            if idx is not None and 0 <= idx < len(self.edit_overlays):
+                return self.edit_overlays[idx]
+        return self._overlay_from_form()
+
+    def _load_preview_background(self, time_s: float) -> Image.Image:
+        input_path = self.edit_input_entry.get().strip()
+        if input_path and Path(input_path).exists():
+            try:
+                with VideoFileClip(input_path) as clip:
+                    if clip.duration and clip.duration > 0:
+                        t = max(0.0, min(time_s, max(0.0, clip.duration - 0.01)))
+                    else:
+                        t = max(0.0, time_s)
+                    frame = clip.get_frame(t)
+                return Image.fromarray(frame).convert("RGBA")
+            except Exception:
+                pass
+        return Image.new("RGBA", (1280, 720), (30, 30, 30, 255))
+
+    def _resize_overlay_image(self, overlay: Image.Image, w: int, h: int) -> Image.Image:
+        ow, oh = overlay.size
+        if w > 0 and h > 0:
+            return overlay.resize((w, h), Image.LANCZOS)
+        if w > 0 and h <= 0:
+            new_h = max(1, int(oh * (w / ow)))
+            return overlay.resize((w, new_h), Image.LANCZOS)
+        if h > 0 and w <= 0:
+            new_w = max(1, int(ow * (h / oh)))
+            return overlay.resize((new_w, h), Image.LANCZOS)
+        return overlay
+
+    def update_edit_layout_preview(self, use_selection: bool = False):
+        if not hasattr(self, "edit_layout_label"):
+            return
+        try:
+            ov = self._resolve_preview_overlay(use_selection=use_selection)
+            img_path = ov.get("image_path", "")
+            start = float(ov.get("start", 0.0) or 0.0)
+            x = int(ov.get("x", 0) or 0)
+            y = int(ov.get("y", 0) or 0)
+            w = int(ov.get("w", 0) or 0)
+            h = int(ov.get("h", 0) or 0)
+            opacity = float(ov.get("opacity", 1.0) or 1.0)
+
+            bg = self._load_preview_background(start)
+            fg = Image.open(img_path).convert("RGBA")
+            fg = self._resize_overlay_image(fg, w, h)
+
+            if opacity < 1.0:
+                alpha = fg.getchannel("A")
+                alpha = alpha.point(lambda a: int(a * opacity))
+                fg.putalpha(alpha)
+
+            preview = bg.copy()
+            preview.alpha_composite(fg, (x, y))
+            preview.thumbnail((420, 420))
+            self._edit_layout_imgtk = ImageTk.PhotoImage(preview)
+            self.edit_layout_label.configure(text="", image=self._edit_layout_imgtk)
+            if hasattr(self, "edit_layout_info"):
+                self.edit_layout_info.configure(text=f"背景: {Path(self.edit_input_entry.get().strip()).name}  /  t={start:.2f}s")
+        except Exception as e:
+            self._edit_layout_imgtk = None
+            self.edit_layout_label.configure(text=f"プレビュー生成失敗: {e}", image=None)
+            if hasattr(self, "edit_layout_info"):
+                self.edit_layout_info.configure(text="")
 
     def load_selected_overlay_to_form(self):
         """選択行の値を、上のフォーム入力欄へ反映（編集しやすくする）"""
@@ -2338,6 +2447,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         pv.grid(row=0, column=1, sticky="nsew")
         pv.grid_columnconfigure(0, weight=1)
         pv.grid_rowconfigure(1, weight=1)
+        pv.grid_rowconfigure(4, weight=1)
 
         ctk.CTkLabel(
             pv, text="サムネプレビュー",
@@ -2360,6 +2470,38 @@ class NewsShortGeneratorStudio(ctk.CTk):
             justify="left",
         )
         self.edit_thumb_path.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 12))
+
+        ctk.CTkLabel(
+            pv, text="レイアウトプレビュー",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=self.COL_TEXT,
+            anchor="w",
+        ).grid(row=3, column=0, sticky="ew", padx=12, pady=(4, 6))
+
+        self.edit_layout_label = ctk.CTkLabel(
+            pv, text="（プレビューは未生成）",
+            text_color=self.COL_MUTED,
+            anchor="center",
+        )
+        self.edit_layout_label.grid(row=4, column=0, sticky="nsew", padx=12, pady=12)
+
+        self.edit_layout_info = ctk.CTkLabel(
+            pv, text="",
+            text_color=self.COL_MUTED,
+            anchor="w",
+            justify="left",
+        )
+        self.edit_layout_info.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 6))
+
+        ctk.CTkButton(
+            pv,
+            text="プレビュー更新",
+            command=self.update_edit_layout_preview,
+            height=34,
+            corner_radius=10,
+            fg_color="#172238",
+            hover_color="#1b2a44",
+        ).grid(row=6, column=0, sticky="ew", padx=12, pady=(0, 12))
 
         # ---- row actions (edit/delete/update) ----
         act = ctk.CTkFrame(form, fg_color="transparent")
