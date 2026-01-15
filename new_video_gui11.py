@@ -17,6 +17,7 @@ import re
 import json
 import threading
 import traceback
+import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 from proglog import ProgressBarLogger
 import tkinter.font as tkfont
@@ -1099,6 +1100,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._edit_preview_imgtk = None
         self._edit_overlay_original_size = None
         self._edit_preview_size = None
+        self._edit_cell_entry = None
+        self._edit_detail_labels: Dict[str, ctk.CTkLabel] = {}
 
         # build UI
         self._build_layout()
@@ -1162,6 +1165,39 @@ class NewsShortGeneratorStudio(ctk.CTk):
         except Exception:
             return None
 
+    def _setup_edit_tree_style(self):
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure(
+            "Overlay.Treeview",
+            background=self.COL_PANEL2,
+            fieldbackground=self.COL_PANEL2,
+            foreground=self.COL_TEXT,
+            bordercolor=self.COL_BORDER,
+            rowheight=30,
+            font=(self.FONT_FAMILY, 11),
+        )
+        style.configure(
+            "Overlay.Treeview.Heading",
+            background=self.COL_CARD,
+            foreground=self.COL_TEXT,
+            relief="flat",
+            font=(self.FONT_FAMILY, 11, "bold"),
+        )
+        style.map(
+            "Overlay.Treeview",
+            background=[("selected", "#1c3a68")],
+            foreground=[("selected", "#ffffff")],
+        )
+        style.map(
+            "Overlay.Treeview.Heading",
+            background=[("active", "#1b2a44")],
+            foreground=[("active", "#ffffff")],
+        )
+
 
 
     def refresh_edit_overlay_table(self):
@@ -1191,9 +1227,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
             h = int(ov.get("h", 0) or 0)
             op = float(ov.get("opacity", 1.0) or 1.0)
 
+            tag = "even" if idx % 2 == 0 else "odd"
             self.edit_tree.insert(
                 "", "end",
                 iid=str(idx),
+                tags=(tag,),
                 values=(img_name, f"{start:.2f}", f"{end:.2f}", x, y, w, h, f"{op:.2f}")
             )
 
@@ -1206,57 +1244,18 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_thumb_label.configure(image="", text="（行を選択すると表示）")
         if hasattr(self, "edit_thumb_path"):
             self.edit_thumb_path.configure(text="")
+        if self._edit_detail_labels:
+            for label in self._edit_detail_labels.values():
+                label.configure(text="--")
 
         self._sync_edit_preview_state()
 
 
-
-    def on_edit_overlay_select(self, _event=None):
-        idx = self._selected_overlay_index()
-        if idx is None:
-            return
-        if idx < 0 or idx >= len(self.edit_overlays):
-            return
-
-        ov = self.edit_overlays[idx]
-        img_path = ov.get("image_path", "")
-        if not img_path or not Path(img_path).exists():
-            if hasattr(self, "edit_thumb_label"):
-                self.edit_thumb_label.configure(text="画像が見つかりません", image=None)
-            if hasattr(self, "edit_thumb_path"):
-                self.edit_thumb_path.configure(text=str(img_path))
-            self._edit_thumb_imgtk = None
-            return
-
-        # サムネ生成
-        try:
-            im = Image.open(img_path).convert("RGBA")
-            im.thumbnail((360, 360))
-            self._edit_thumb_imgtk = ImageTk.PhotoImage(im)
-            self.edit_thumb_label.configure(text="", image=self._edit_thumb_imgtk)
-            self.edit_thumb_path.configure(text=str(img_path))
-        except Exception as e:
-            self.edit_thumb_label.configure(text=f"サムネ生成失敗: {e}", image=None)
-            self.edit_thumb_path.configure(text=str(img_path))
-            self._edit_thumb_imgtk = None
-
-    def load_selected_overlay_to_form(self):
-        """選択行の値を、上のフォーム入力欄へ反映（編集しやすくする）"""
-        idx = self._selected_overlay_index()
-        if idx is None:
-            messagebox.showinfo("選択", "編集したい行を選択してください。")
-            return
-        if idx < 0 or idx >= len(self.edit_overlays):
-            return
-
-        ov = self.edit_overlays[idx]
-
-        # パス
+    def _apply_overlay_to_form(self, ov: Dict[str, Any], *, log_message: bool = False):
         self.edit_overlay_img_entry.delete(0, "end")
         self.edit_overlay_img_entry.insert(0, ov.get("image_path", ""))
         self._load_edit_overlay_preview(ov.get("image_path", ""))
 
-        # 時間は秒→mm:ssに戻すより「そのまま秒文字列」でOK（必要ならmm:ss化も可能）
         self.edit_start_entry.delete(0, "end")
         self.edit_start_entry.insert(0, str(ov.get("start", 0)))
 
@@ -1292,7 +1291,172 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 self.edit_preview_scale_slider.set(100)
         self._sync_edit_preview_from_sliders()
 
-        self.log(f"✏️ 選択行をフォームへ反映: row={idx+1}")
+        if log_message:
+            self.log("✏️ 選択行をフォームへ反映しました。")
+
+    def _update_edit_detail_panel(self, ov: Dict[str, Any]):
+        if not self._edit_detail_labels:
+            return
+        self._edit_detail_labels["start"].configure(text=f"{float(ov.get('start', 0.0)):.2f}s")
+        self._edit_detail_labels["end"].configure(text=f"{float(ov.get('end', 0.0)):.2f}s")
+        self._edit_detail_labels["x"].configure(text=str(int(ov.get("x", 0) or 0)))
+        self._edit_detail_labels["y"].configure(text=str(int(ov.get("y", 0) or 0)))
+        self._edit_detail_labels["w"].configure(text=str(int(ov.get("w", 0) or 0)))
+        self._edit_detail_labels["h"].configure(text=str(int(ov.get("h", 0) or 0)))
+        self._edit_detail_labels["opacity"].configure(
+            text=f"{float(ov.get('opacity', 1.0)):.2f}"
+        )
+
+
+    def on_edit_overlay_select(self, _event=None):
+        idx = self._selected_overlay_index()
+        if idx is None:
+            return
+        if idx < 0 or idx >= len(self.edit_overlays):
+            return
+
+        ov = self.edit_overlays[idx]
+        self._update_edit_detail_panel(ov)
+        self._apply_overlay_to_form(ov)
+        img_path = ov.get("image_path", "")
+        if not img_path or not Path(img_path).exists():
+            if hasattr(self, "edit_thumb_label"):
+                self.edit_thumb_label.configure(text="画像が見つかりません", image=None)
+            if hasattr(self, "edit_thumb_path"):
+                self.edit_thumb_path.configure(text=str(img_path))
+            self._edit_thumb_imgtk = None
+            return
+
+        # サムネ生成
+        try:
+            im = Image.open(img_path).convert("RGBA")
+            im.thumbnail((360, 360))
+            self._edit_thumb_imgtk = ImageTk.PhotoImage(im)
+            self.edit_thumb_label.configure(text="", image=self._edit_thumb_imgtk)
+            self.edit_thumb_path.configure(text=str(img_path))
+        except Exception as e:
+            self.edit_thumb_label.configure(text=f"サムネ生成失敗: {e}", image=None)
+            self.edit_thumb_path.configure(text=str(img_path))
+            self._edit_thumb_imgtk = None
+
+    def on_edit_tree_double_click(self, event):
+        if not hasattr(self, "edit_tree"):
+            return
+        if self._edit_cell_entry is not None:
+            self._edit_cell_entry.destroy()
+            self._edit_cell_entry = None
+
+        region = self.edit_tree.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+
+        row_id = self.edit_tree.identify_row(event.y)
+        column_id = self.edit_tree.identify_column(event.x)
+        if not row_id or not column_id:
+            return
+
+        try:
+            row_index = int(row_id)
+        except ValueError:
+            return
+        if row_index < 0 or row_index >= len(self.edit_overlays):
+            return
+
+        columns = self.edit_tree["columns"]
+        col_index = int(column_id.replace("#", "")) - 1
+        if col_index < 0 or col_index >= len(columns):
+            return
+        column_key = columns[col_index]
+
+        ov = self.edit_overlays[row_index]
+        current_value = ov.get("image_path", "") if column_key == "image" else str(ov.get(column_key, ""))
+
+        bbox = self.edit_tree.bbox(row_id, column_id)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+        entry = ttk.Entry(self.edit_tree)
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.insert(0, current_value)
+        entry.focus_set()
+        entry.select_range(0, tk.END)
+        self._edit_cell_entry = entry
+
+        def _commit(_event=None):
+            new_value = entry.get().strip()
+            if self._apply_tree_cell_edit(row_index, column_key, new_value):
+                entry.destroy()
+                self._edit_cell_entry = None
+                self.refresh_edit_overlay_table()
+                self.edit_tree.selection_set(str(row_index))
+                self.edit_tree.see(str(row_index))
+                self.on_edit_overlay_select()
+            else:
+                entry.focus_set()
+                entry.select_range(0, tk.END)
+
+        def _cancel(_event=None):
+            entry.destroy()
+            self._edit_cell_entry = None
+
+        entry.bind("<Return>", _commit)
+        entry.bind("<Escape>", _cancel)
+        entry.bind("<FocusOut>", _commit)
+
+    def _parse_timecode_value(self, value: str) -> float:
+        if not value:
+            raise ValueError("時間を入力してください。")
+        if ":" in value:
+            return float(parse_timecode_to_seconds(value))
+        try:
+            return float(value)
+        except ValueError as exc:
+            raise ValueError("時間は mm:ss / hh:mm:ss か秒数で入力してください。") from exc
+
+    def _apply_tree_cell_edit(self, idx: int, key: str, value: str) -> bool:
+        ov = self.edit_overlays[idx]
+        try:
+            if key == "image":
+                if not value:
+                    raise ValueError("画像パスを入力してください。")
+                if not Path(value).exists():
+                    raise ValueError("画像ファイルが見つかりません。")
+                ov["image_path"] = value
+            elif key in ("start", "end"):
+                time_value = self._parse_timecode_value(value)
+                start = time_value if key == "start" else float(ov.get("start", 0.0))
+                end = time_value if key == "end" else float(ov.get("end", 0.0))
+                if end <= start:
+                    raise ValueError("終了時間は開始時間より大きくしてください。")
+                ov[key] = float(time_value)
+            elif key in ("x", "y", "w", "h"):
+                ov[key] = int(value or "0")
+            elif key == "opacity":
+                opacity = float(value or "1.0")
+                if not (0.0 <= opacity <= 1.0):
+                    raise ValueError("不透明度は 0.0〜1.0 で指定してください。")
+                ov[key] = opacity
+            else:
+                return False
+        except Exception as exc:
+            messagebox.showerror("編集エラー", str(exc))
+            return False
+
+        self.edit_overlays[idx] = ov
+        self.save_config()
+        return True
+
+    def load_selected_overlay_to_form(self):
+        """選択行の値を、上のフォーム入力欄へ反映（編集しやすくする）"""
+        idx = self._selected_overlay_index()
+        if idx is None:
+            messagebox.showinfo("選択", "編集したい行を選択してください。")
+            return
+        if idx < 0 or idx >= len(self.edit_overlays):
+            return
+
+        ov = self.edit_overlays[idx]
+        self._apply_overlay_to_form(ov, log_message=True)
 
     def update_selected_overlay_from_form(self):
         """フォーム入力欄の値で、選択行を上書き更新"""
@@ -2401,8 +2565,16 @@ class NewsShortGeneratorStudio(ctk.CTk):
         tv_frame.grid_rowconfigure(0, weight=1)
         tv_frame.grid_columnconfigure(0, weight=1)
 
+        self._setup_edit_tree_style()
+
         columns = ("image", "start", "end", "x", "y", "w", "h", "opacity")
-        self.edit_tree = ttk.Treeview(tv_frame, columns=columns, show="headings", height=10)
+        self.edit_tree = ttk.Treeview(
+            tv_frame,
+            columns=columns,
+            show="headings",
+            height=10,
+            style="Overlay.Treeview",
+        )
 
         # ヘッダ
         self.edit_tree.heading("image", text="image")
@@ -2433,6 +2605,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         # 選択イベント
         self.edit_tree.bind("<<TreeviewSelect>>", self.on_edit_overlay_select)
+        self.edit_tree.bind("<Double-1>", self.on_edit_tree_double_click)
+        self.edit_tree.tag_configure("even", background=self.COL_PANEL2)
+        self.edit_tree.tag_configure("odd", background="#0f1e34")
 
         # ---- right: thumbnail preview ----
         pv = ctk.CTkFrame(table_wrap, corner_radius=14, fg_color=self.COL_BG)
@@ -2461,6 +2636,48 @@ class NewsShortGeneratorStudio(ctk.CTk):
             justify="left",
         )
         self.edit_thumb_path.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 12))
+
+        detail = ctk.CTkFrame(pv, corner_radius=12, fg_color=self.COL_PANEL2)
+        detail.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 12))
+        detail.grid_columnconfigure(0, weight=1)
+        detail.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            detail, text="選択中の設定",
+            text_color=self.COL_TEXT,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 6))
+
+        detail_fields = [
+            ("start", "開始"),
+            ("end", "終了"),
+            ("x", "X"),
+            ("y", "Y"),
+            ("w", "幅"),
+            ("h", "高さ"),
+            ("opacity", "不透明度"),
+        ]
+        row = 1
+        for idx, (key, label) in enumerate(detail_fields):
+            col = idx % 2
+            if col == 0 and idx > 0:
+                row += 1
+            wrap = ctk.CTkFrame(detail, fg_color="transparent")
+            wrap.grid(row=row, column=col, sticky="ew", padx=10, pady=(2, 2))
+            wrap.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(
+                wrap, text=label,
+                text_color=self.COL_MUTED,
+                anchor="w",
+            ).grid(row=0, column=0, sticky="w")
+            value_label = ctk.CTkLabel(
+                wrap, text="--",
+                text_color=self.COL_TEXT,
+                anchor="e",
+            )
+            value_label.grid(row=0, column=1, sticky="e")
+            self._edit_detail_labels[key] = value_label
 
         # ---- row actions (edit/delete/update) ----
         act = ctk.CTkFrame(form, fg_color="transparent")
