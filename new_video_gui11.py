@@ -19,11 +19,13 @@ import threading
 import traceback
 import tkinter as tk
 import mimetypes
+import base64
 from tkinter import filedialog, messagebox, simpledialog
 from proglog import ProgressBarLogger
 import tkinter.font as tkfont
 import time
 from pathlib import Path
+from io import BytesIO
 from typing import List, Tuple, Optional, Dict, Any
 from itertools import cycle
 from urllib.parse import urlparse, unquote
@@ -896,9 +898,9 @@ def generate_script_with_claude(
 
 
 # ==========================
-# Gemini 資料作成
+# Gemini 画像生成
 # ==========================
-GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.0-flash"
+GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.5-flash-image"
 GEMINI_MATERIAL_MODEL_ALIASES = {
     "nanobanana": GEMINI_MATERIAL_DEFAULT_MODEL,
 }
@@ -912,26 +914,47 @@ def resolve_gemini_material_model(model: str) -> Tuple[str, Optional[str]]:
         )
     alias = GEMINI_MATERIAL_MODEL_ALIASES.get(cleaned)
     if alias:
-        return alias, f"ℹ️ {cleaned} は generateContent 非対応のため {alias} を使用します。"
+        return alias, f"ℹ️ {cleaned} は画像生成では {alias} を使用します。"
     return cleaned, None
 
 
-def generate_materials_with_gemini(api_key: str, prompt: str, model: str = "nanobanana") -> str:
+def generate_materials_with_gemini(
+    api_key: str,
+    prompt: str,
+    model: str = GEMINI_MATERIAL_DEFAULT_MODEL,
+) -> Tuple[bytes, str]:
     if not api_key:
         raise RuntimeError("Gemini APIキーが空です。")
     if not prompt.strip():
         raise RuntimeError("プロンプトが空です。")
 
-    client = genai.Client(api_key=api_key)
-    resp = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(temperature=0.4),
-    )
-    text = getattr(resp, "text", "") or ""
-    if not text.strip():
-        raise RuntimeError("Geminiからの応答が空でした。")
-    return text.strip()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    headers = {
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["Image"]},
+    }
+    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    if not response.ok:
+        raise RuntimeError(f"Gemini APIエラー: {response.status_code} {response.text}")
+    data = response.json()
+    if "error" in data:
+        raise RuntimeError(f"Gemini APIエラー: {data['error']}")
+
+    candidates = data.get("candidates", [])
+    for candidate in candidates:
+        content = candidate.get("content", {})
+        for part in content.get("parts", []):
+            inline = part.get("inlineData")
+            if inline and inline.get("data"):
+                mime_type = inline.get("mimeType", "image/png")
+                image_bytes = base64.b64decode(inline["data"])
+                return image_bytes, mime_type
+
+    raise RuntimeError("Geminiから画像が取得できませんでした。")
 
 
 # ==========================
@@ -2506,7 +2529,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._refresh_template_menu()
 
     # --------------------------
-    # Material page (Gemini + nanobanana)
+    # Material page (Gemini Image)
     # --------------------------
     def _build_material_page(self, page):
         self._build_page_header("material", page, "資料作成")
@@ -2515,10 +2538,10 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         r = 0
 
-        self._v_label(form, "Gemini API (nanobanana)").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
+        self._v_label(form, "Gemini API (Image)").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
         self._v_hint(
             form,
-            "Gemini APIを使って、プロンプトから動画用の資料を生成します。",
+            "Gemini APIを使って、プロンプトから画像を生成します。",
         ).grid(row=r, column=0, sticky="w", pady=(0, 12)); r += 1
 
         self._v_label(form, "Gemini APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
@@ -2527,11 +2550,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self._v_label(form, "モデル").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
         self.material_model_entry = self._v_entry(form)
-        self.material_model_entry.insert(0, "nanobanana")
+        self.material_model_entry.insert(0, GEMINI_MATERIAL_DEFAULT_MODEL)
         self.material_model_entry.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
 
         self._v_label(form, "プロンプト").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
-        self._v_hint(form, "動画のテーマ・対象視聴者・尺・用途などを記入してください。").grid(
+        self._v_hint(form, "生成したい画像の被写体・背景・雰囲気などを記入してください。").grid(
             row=r, column=0, sticky="w", pady=(0, 10)
         ); r += 1
 
@@ -2577,7 +2600,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self.btn_generate_material = ctk.CTkButton(
             gen_row,
-            text="▶ nanobananaで資料作成",
+            text="▶ Geminiで画像生成",
             command=self.on_generate_material_clicked,
             fg_color=self.COL_ACCENT,
             hover_color=self.COL_ACCENT_HOVER,
@@ -2589,7 +2612,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self.btn_copy_material = ctk.CTkButton(
             gen_row,
-            text="コピー",
+            text="パスをコピー",
             command=self.copy_generated_material,
             fg_color="#172238",
             hover_color="#1b2a44",
@@ -2599,9 +2622,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
         )
         self.btn_copy_material.grid(row=0, column=1, sticky="e", padx=(12, 0))
 
-        self._v_label(form, "生成結果").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self._v_label(form, "生成画像").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
 
-        self.material_output_text = ctk.CTkTextbox(
+        self.material_output_frame = ctk.CTkFrame(
             form,
             height=280,
             corner_radius=14,
@@ -2609,7 +2632,18 @@ class NewsShortGeneratorStudio(ctk.CTk):
             border_width=1,
             border_color=self.COL_BORDER,
         )
-        self.material_output_text.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.material_output_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.material_output_frame.grid_propagate(False)
+        self.material_output_frame.grid_columnconfigure(0, weight=1)
+        self.material_output_frame.grid_rowconfigure(0, weight=1)
+
+        self.material_output_label = ctk.CTkLabel(
+            self.material_output_frame,
+            text="画像がここに表示されます",
+            text_color=self.COL_MUTED,
+            anchor="center",
+        )
+        self.material_output_label.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
 
         self._v_label(form, "保存").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
 
@@ -2617,7 +2651,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             form, "保存先選択", self.browse_material_save_path
         )
         self.material_save_path_entry.delete(0, "end")
-        self.material_save_path_entry.insert(0, str(Path.home() / "video_materials.txt"))
+        self.material_save_path_entry.insert(0, str(Path.home() / "video_materials.png"))
         save_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
 
         ctk.CTkButton(
@@ -3847,17 +3881,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         if hasattr(self, "material_model_entry"):
             self.material_model_entry.delete(0, "end")
-            self.material_model_entry.insert(0, data.get("material_model", "nanobanana"))
+            self.material_model_entry.insert(0, data.get("material_model", GEMINI_MATERIAL_DEFAULT_MODEL))
 
         if hasattr(self, "material_prompt_text"):
             self._set_textbox(self.material_prompt_text, data.get("material_prompt", ""))
 
-        if hasattr(self, "material_output_text"):
-            self._set_textbox(self.material_output_text, data.get("material_output", ""))
-
         if hasattr(self, "material_save_path_entry"):
             self.material_save_path_entry.delete(0, "end")
-            self.material_save_path_entry.insert(0, data.get("material_save_path", str(Path.home() / "video_materials.txt")))
+            self.material_save_path_entry.insert(0, data.get("material_save_path", str(Path.home() / "video_materials.png")))
 
         # edit (NEW)
         if hasattr(self, "edit_input_entry"):
@@ -3978,12 +4009,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "material_api_key": material_key,
             "material_model": getattr(self, "material_model_entry", None).get().strip()
             if hasattr(self, "material_model_entry")
-            else "nanobanana",
+            else GEMINI_MATERIAL_DEFAULT_MODEL,
             "material_prompt": self._get_textbox(self.material_prompt_text)
             if hasattr(self, "material_prompt_text")
-            else "",
-            "material_output": self._get_textbox(self.material_output_text)
-            if hasattr(self, "material_output_text")
             else "",
             "material_save_path": getattr(self, "material_save_path_entry", None).get().strip()
             if hasattr(self, "material_save_path_entry")
@@ -4022,6 +4050,18 @@ class NewsShortGeneratorStudio(ctk.CTk):
             tb.insert("end", text or "")
         except Exception:
             pass
+
+    def _set_material_preview(self, image_bytes: bytes):
+        if not hasattr(self, "material_output_label"):
+            return
+        try:
+            image = Image.open(BytesIO(image_bytes))
+            image.thumbnail((720, 360), Image.LANCZOS)
+        except Exception:
+            self.material_output_label.configure(text="画像の表示に失敗しました", image=None)
+            return
+        self._material_preview_imgtk = ImageTk.PhotoImage(image)
+        self.material_output_label.configure(image=self._material_preview_imgtk, text="")
 
     def log(self, text: str):
         def _append():
@@ -4111,9 +4151,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
     def browse_material_save_path(self):
         path = filedialog.asksaveasfilename(
-            title="資料の保存先を選択",
-            defaultextension=".txt",
-            filetypes=[("テキストファイル", "*.txt"), ("すべてのファイル", "*.*")],
+            title="画像の保存先を選択",
+            defaultextension=".png",
+            filetypes=[("画像ファイル", "*.png;*.jpg;*.jpeg;*.webp"), ("すべてのファイル", "*.*")],
         )
         if path:
             self.material_save_path_entry.delete(0, "end")
@@ -4139,36 +4179,35 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
     def insert_material_prompt_template(self):
         tpl = (
-            "テーマ:\n"
-            "ターゲット視聴者:\n"
-            "動画尺(目安):\n"
-            "目的(例: 解説/販促/学習):\n"
+            "主題/被写体:\n"
+            "背景/場所:\n"
+            "色味/雰囲気:\n"
+            "構図/カメラアングル:\n"
             "必ず含めたい要素:\n"
-            "トーン(例: 落ち着いた/テンポ速め):\n"
+            "避けたい要素:\n"
         )
         self._set_textbox(self.material_prompt_text, tpl)
 
     def copy_generated_material(self):
-        txt = self._get_textbox(self.material_output_text)
-        if not txt.strip():
-            messagebox.showinfo("コピー", "生成結果が空です。")
+        path = self.material_save_path_entry.get().strip()
+        if not path:
+            messagebox.showinfo("コピー", "保存先パスが空です。")
             return
         self.clipboard_clear()
-        self.clipboard_append(txt)
-        self.log("✅ 資料をクリップボードにコピーしました。")
+        self.clipboard_append(path)
+        self.log("✅ 保存先パスをクリップボードにコピーしました。")
 
     def save_generated_material(self):
-        txt = self._get_textbox(self.material_output_text)
-        if not txt.strip():
-            messagebox.showerror("エラー", "生成結果が空です。")
+        if not getattr(self, "material_generated_image_bytes", None):
+            messagebox.showerror("エラー", "生成画像がありません。")
             return
         path = self.material_save_path_entry.get().strip()
         if not path:
             messagebox.showerror("エラー", "保存先パスが空です。")
             return
         try:
-            Path(path).write_text(txt, encoding="utf-8")
-            self.log(f"✅ 資料を保存しました: {path}")
+            Path(path).write_bytes(self.material_generated_image_bytes)
+            self.log(f"✅ 画像を保存しました: {path}")
             messagebox.showinfo("保存完了", f"保存しました:\n{path}")
         except Exception as e:
             messagebox.showerror("エラー", f"保存に失敗しました:\n{e}")
@@ -4252,9 +4291,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if not api_key:
             api_key = self.api_key_entry.get().strip()
 
-        model = "nanobanana"
+        model = GEMINI_MATERIAL_DEFAULT_MODEL
         if hasattr(self, "material_model_entry"):
-            model = self.material_model_entry.get().strip() or "nanobanana"
+            model = self.material_model_entry.get().strip() or GEMINI_MATERIAL_DEFAULT_MODEL
         resolved_model, model_note = resolve_gemini_material_model(model)
 
         user_prompt = self._get_textbox(self.material_prompt_text)
@@ -4265,47 +4304,42 @@ class NewsShortGeneratorStudio(ctk.CTk):
             messagebox.showerror("エラー", "プロンプトが空です。")
             return
 
-        prompt = (
-            "あなたは動画制作の資料作成担当です。\n"
-            "以下の依頼に基づき、動画用の資料を日本語で作成してください。\n"
-            "出力は次の見出しを必ず含めてください:\n"
-            "1. 概要\n"
-            "2. 重要ポイント\n"
-            "3. 推奨ビジュアル/画像アイデア\n"
-            "4. ナレーション要点\n"
-            "5. 参考キーワード/注意点\n\n"
-            "依頼:\n"
-            f"{user_prompt}\n"
-        )
+        prompt = user_prompt.strip()
 
         self.save_config()
         self.btn_generate_material.configure(state="disabled", text="生成中...")
         self.set_status("Working", ok=True)
-        self.log("=== Gemini 資料作成 開始 ===")
+        self.log("=== Gemini 画像生成 開始 ===")
         if model_note:
             self.log(model_note)
         self.update_progress(0.02)
+        self.material_generated_image_bytes = None
+        self.material_generated_image_mime = None
+        if hasattr(self, "material_output_label"):
+            self.material_output_label.configure(text="生成中...", image=None)
 
         def worker():
             try:
                 self.update_progress(0.08)
-                out = generate_materials_with_gemini(
+                image_bytes, mime_type = generate_materials_with_gemini(
                     api_key=api_key,
                     prompt=prompt,
                     model=resolved_model,
                 )
-                self.after(0, lambda: self._set_textbox(self.material_output_text, out))
-                self.log("✅ Gemini 資料作成 完了")
+                self.material_generated_image_bytes = image_bytes
+                self.material_generated_image_mime = mime_type
+                self.after(0, lambda: self._set_material_preview(image_bytes))
+                self.log("✅ Gemini 画像生成 完了")
                 self.update_progress(1.0)
                 self.set_status("Ready", ok=True)
             except Exception as e:
                 tb = traceback.format_exc()
-                self.log("❌ Gemini 資料作成でエラー:\n" + tb)
+                self.log("❌ Gemini 画像生成でエラー:\n" + tb)
                 self.set_status("Error", ok=False)
                 self.update_progress(0.0)
-                self.after(0, lambda: messagebox.showerror("エラー", f"資料作成に失敗しました:\n{e}"))
+                self.after(0, lambda: messagebox.showerror("エラー", f"画像生成に失敗しました:\n{e}"))
             finally:
-                self.after(0, lambda: self.btn_generate_material.configure(state="normal", text="▶ nanobananaで資料作成"))
+                self.after(0, lambda: self.btn_generate_material.configure(state="normal", text="▶ Geminiで画像生成"))
 
         threading.Thread(target=worker, daemon=True).start()
 
