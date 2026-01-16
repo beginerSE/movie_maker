@@ -900,7 +900,8 @@ def generate_script_with_claude(
 # ==========================
 # Gemini 画像生成
 # ==========================
-GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.5-flash-image"
+# GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.5-flash-image"
+GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-3-pro-image-preview"
 GEMINI_MATERIAL_MODEL_ALIASES = {
     "nanobanana": GEMINI_MATERIAL_DEFAULT_MODEL,
 }
