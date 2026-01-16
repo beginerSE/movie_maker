@@ -898,6 +898,24 @@ def generate_script_with_claude(
 # ==========================
 # Gemini 資料作成
 # ==========================
+GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.0-flash"
+GEMINI_MATERIAL_MODEL_ALIASES = {
+    "nanobanana": GEMINI_MATERIAL_DEFAULT_MODEL,
+}
+
+
+def resolve_gemini_material_model(model: str) -> Tuple[str, Optional[str]]:
+    cleaned = (model or "").strip()
+    if not cleaned:
+        return GEMINI_MATERIAL_DEFAULT_MODEL, (
+            f"ℹ️ モデル未指定のため {GEMINI_MATERIAL_DEFAULT_MODEL} を使用します。"
+        )
+    alias = GEMINI_MATERIAL_MODEL_ALIASES.get(cleaned)
+    if alias:
+        return alias, f"ℹ️ {cleaned} は generateContent 非対応のため {alias} を使用します。"
+    return cleaned, None
+
+
 def generate_materials_with_gemini(api_key: str, prompt: str, model: str = "nanobanana") -> str:
     if not api_key:
         raise RuntimeError("Gemini APIキーが空です。")
@@ -4237,6 +4255,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         model = "nanobanana"
         if hasattr(self, "material_model_entry"):
             model = self.material_model_entry.get().strip() or "nanobanana"
+        resolved_model, model_note = resolve_gemini_material_model(model)
 
         user_prompt = self._get_textbox(self.material_prompt_text)
         if not api_key:
@@ -4263,12 +4282,18 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.btn_generate_material.configure(state="disabled", text="生成中...")
         self.set_status("Working", ok=True)
         self.log("=== Gemini 資料作成 開始 ===")
+        if model_note:
+            self.log(model_note)
         self.update_progress(0.02)
 
         def worker():
             try:
                 self.update_progress(0.08)
-                out = generate_materials_with_gemini(api_key=api_key, prompt=prompt, model=model)
+                out = generate_materials_with_gemini(
+                    api_key=api_key,
+                    prompt=prompt,
+                    model=resolved_model,
+                )
                 self.after(0, lambda: self._set_textbox(self.material_output_text, out))
                 self.log("✅ Gemini 資料作成 完了")
                 self.update_progress(1.0)
