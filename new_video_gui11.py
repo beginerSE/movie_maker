@@ -974,6 +974,11 @@ def parse_srt_file(path: str) -> List[Dict[str, Any]]:
 
 
 def search_images_serpapi(api_key: str, query: str, provider: str = "Google") -> List[str]:
+    if api_key.startswith("AIza"):
+        raise RuntimeError(
+            "SerpAPIのAPIキーではなくGoogle APIキーが入力されています。"
+            "SerpAPIの管理画面で発行したAPIキーを使用してください。"
+        )
     engine = "google_images" if provider == "Google" else "bing_images"
     resp = requests.get(
         "https://serpapi.com/search.json",
@@ -985,6 +990,10 @@ def search_images_serpapi(api_key: str, query: str, provider: str = "Google") ->
         },
         timeout=20,
     )
+    if resp.status_code == 401:
+        raise RuntimeError(
+            "SerpAPIの認証に失敗しました。APIキーが無効か、SerpAPIの画像検索が有効化されていません。"
+        )
     resp.raise_for_status()
     data = resp.json()
     results = data.get("images_results", []) or []
