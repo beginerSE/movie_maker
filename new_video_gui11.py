@@ -2,7 +2,7 @@
 """
 News Short Generator Studio（Windows向け）
 - 左：React風サイドバー（アイコン＋メニュー）
-- 中央：フォーム（「動画生成」「台本生成」「動画編集」ページ切替）
+- 中央：フォーム（「動画生成」「台本生成」「資料作成」「動画編集」ページ切替）
 - 右：ログ（+ 進捗）
 
 [動画編集（NEW）]
@@ -893,6 +893,27 @@ def generate_script_with_claude(
 
     s = str(response)
     return s.strip()
+
+
+# ==========================
+# Gemini 資料作成
+# ==========================
+def generate_materials_with_gemini(api_key: str, prompt: str, model: str = "nanobanana") -> str:
+    if not api_key:
+        raise RuntimeError("Gemini APIキーが空です。")
+    if not prompt.strip():
+        raise RuntimeError("プロンプトが空です。")
+
+    client = genai.Client(api_key=api_key)
+    resp = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=0.4),
+    )
+    text = getattr(resp, "text", "") or ""
+    if not text.strip():
+        raise RuntimeError("Geminiからの応答が空でした。")
+    return text.strip()
 
 
 # ==========================
@@ -1835,12 +1856,15 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.btn_script = self._nav_button(menu, "✍️台本生成", lambda: self.switch_page("script"))
         self.btn_script.grid(row=1, column=0, sticky="ew", pady=6)
 
+        self.btn_material = self._nav_button(menu, "📚 資料作成", lambda: self.switch_page("material"))
+        self.btn_material.grid(row=2, column=0, sticky="ew", pady=6)
+
         # NEW: 動画編集
         self.btn_edit = self._nav_button(menu, "🧩 動画編集", lambda: self.switch_page("edit"))
-        self.btn_edit.grid(row=2, column=0, sticky="ew", pady=6)
+        self.btn_edit.grid(row=3, column=0, sticky="ew", pady=6)
 
         self.btn_about = self._nav_button(menu, "ℹ️ About", lambda: self.switch_page("about"))
-        self.btn_about.grid(row=3, column=0, sticky="ew", pady=6)
+        self.btn_about.grid(row=4, column=0, sticky="ew", pady=6)
 
         bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         bottom.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
@@ -1880,6 +1904,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         style(self.btn_video, key == "video")
         style(self.btn_script, key == "script")
+        style(self.btn_material, key == "material")
         style(self.btn_edit, key == "edit")
         style(self.btn_about, key == "about")
 
@@ -1896,11 +1921,13 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self.pages["video"] = self._make_page(self.page_container)
         self.pages["script"] = self._make_page(self.page_container)
+        self.pages["material"] = self._make_page(self.page_container)
         self.pages["edit"] = self._make_page(self.page_container)  # NEW
         self.pages["about"] = self._make_page(self.page_container)
 
         self._build_video_page(self.pages["video"])
         self._build_script_page(self.pages["script"])
+        self._build_material_page(self.pages["material"])
         self._build_edit_page(self.pages["edit"])  # NEW
         self._build_about_page(self.pages["about"])
 
@@ -1919,7 +1946,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             if k == key:
                 page.tkraise()
 
-        title_map = {"video": "動画生成", "script": "台本生成", "edit": "動画編集", "about": "About"}
+        title_map = {"video": "動画生成", "script": "台本生成", "material": "資料作成", "edit": "動画編集", "about": "About"}
         self.log(f"--- ページ切替: {title_map.get(key, key)} ---")
 
     def _build_page_header(self, page_key: str, page: ctk.CTkFrame, title: str):
@@ -2461,6 +2488,131 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._refresh_template_menu()
 
     # --------------------------
+    # Material page (Gemini + nanobanana)
+    # --------------------------
+    def _build_material_page(self, page):
+        self._build_page_header("material", page, "資料作成")
+        form = self._make_scroll_form(page)
+        form.grid_columnconfigure(0, weight=1)
+
+        r = 0
+
+        self._v_label(form, "Gemini API (nanobanana)").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
+        self._v_hint(
+            form,
+            "Gemini APIを使って、プロンプトから動画用の資料を生成します。",
+        ).grid(row=r, column=0, sticky="w", pady=(0, 12)); r += 1
+
+        self._v_label(form, "Gemini APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self.material_api_key_entry = self._v_entry(form, show="*")
+        self.material_api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+
+        self._v_label(form, "モデル").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self.material_model_entry = self._v_entry(form)
+        self.material_model_entry.insert(0, "nanobanana")
+        self.material_model_entry.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+
+        self._v_label(form, "プロンプト").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self._v_hint(form, "動画のテーマ・対象視聴者・尺・用途などを記入してください。").grid(
+            row=r, column=0, sticky="w", pady=(0, 10)
+        ); r += 1
+
+        self.material_prompt_text = ctk.CTkTextbox(
+            form,
+            height=220,
+            corner_radius=14,
+            fg_color=self.COL_BG,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
+        self.material_prompt_text.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+
+        prompt_btn_row = ctk.CTkFrame(form, fg_color="transparent")
+        prompt_btn_row.grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
+        prompt_btn_row.grid_columnconfigure(0, weight=1)
+        prompt_btn_row.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(
+            prompt_btn_row,
+            text="雛形を挿入",
+            command=self.insert_material_prompt_template,
+            height=38,
+            corner_radius=12,
+            fg_color="#172238",
+            hover_color="#1b2a44",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+        ctk.CTkButton(
+            prompt_btn_row,
+            text="クリア",
+            command=lambda: self._set_textbox(self.material_prompt_text, ""),
+            height=38,
+            corner_radius=12,
+            fg_color="#3b1d1d",
+            hover_color="#4a2323",
+        ).grid(row=0, column=1, sticky="ew", padx=(8, 0))
+
+        gen_row = ctk.CTkFrame(form, fg_color="transparent")
+        gen_row.grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
+        gen_row.grid_columnconfigure(0, weight=1)
+        gen_row.grid_columnconfigure(1, weight=0)
+
+        self.btn_generate_material = ctk.CTkButton(
+            gen_row,
+            text="▶ nanobananaで資料作成",
+            command=self.on_generate_material_clicked,
+            fg_color=self.COL_ACCENT,
+            hover_color=self.COL_ACCENT_HOVER,
+            height=44,
+            corner_radius=14,
+            font=ctk.CTkFont(size=14, weight="bold"),
+        )
+        self.btn_generate_material.grid(row=0, column=0, sticky="ew")
+
+        self.btn_copy_material = ctk.CTkButton(
+            gen_row,
+            text="コピー",
+            command=self.copy_generated_material,
+            fg_color="#172238",
+            hover_color="#1b2a44",
+            height=44,
+            corner_radius=14,
+            width=120,
+        )
+        self.btn_copy_material.grid(row=0, column=1, sticky="e", padx=(12, 0))
+
+        self._v_label(form, "生成結果").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+
+        self.material_output_text = ctk.CTkTextbox(
+            form,
+            height=280,
+            corner_radius=14,
+            fg_color=self.COL_BG,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
+        self.material_output_text.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+
+        self._v_label(form, "保存").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+
+        save_row, self.material_save_path_entry = self._v_path_row(
+            form, "保存先選択", self.browse_material_save_path
+        )
+        self.material_save_path_entry.delete(0, "end")
+        self.material_save_path_entry.insert(0, str(Path.home() / "video_materials.txt"))
+        save_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+
+        ctk.CTkButton(
+            form,
+            text="生成結果を保存",
+            command=self.save_generated_material,
+            height=40,
+            corner_radius=12,
+            fg_color=self.COL_OK,
+            hover_color=self.COL_OK_HOVER,
+        ).grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
+
+    # --------------------------
     # Edit page (NEW)
     # --------------------------
     def _build_edit_page(self, page):
@@ -2840,13 +2992,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             form, "保存先", self.browse_edit_image_output_dir
         )
         out_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-
-        json_row, self.edit_json_output_entry = self._v_path_row(
-            form, "JSON保存先", self.browse_edit_json_output
-        )
-        json_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
         self.edit_image_output_entry.insert(0, str(Path.home() / "srt_images"))
-        self.edit_json_output_entry.insert(0, str(Path.home() / "srt_images"))
 
         api_row = ctk.CTkFrame(form, fg_color="transparent")
         api_row.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
@@ -3149,12 +3295,6 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_image_output_entry.delete(0, "end")
             self.edit_image_output_entry.insert(0, path)
 
-    def browse_edit_json_output(self):
-        path = filedialog.askdirectory(title="JSONの保存フォルダを選択")
-        if path and hasattr(self, "edit_json_output_entry"):
-            self.edit_json_output_entry.delete(0, "end")
-            self.edit_json_output_entry.insert(0, path)
-
     def add_edit_overlay(self):
         try:
             img = self.edit_overlay_img_entry.get().strip()
@@ -3274,7 +3414,6 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self,
         srt_path: str,
         output_dir: str,
-        json_output: str,
         provider: str,
         search_key: str,
     ):
@@ -3291,11 +3430,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             srt_stem = Path(srt_path).stem
             output_dir_path = Path(output_dir) / srt_stem
             output_dir_path.mkdir(parents=True, exist_ok=True)
-            json_dir_path = Path(json_output)
-            if json_dir_path.suffix:
-                json_dir_path = json_dir_path.parent
-            json_dir_path.mkdir(parents=True, exist_ok=True)
-            json_output_path = json_dir_path / f"{srt_stem}.json"
+            json_output_path = output_dir_path / f"{srt_stem}.json"
             results = []
             url_to_image: Dict[str, Path] = {}
             total = len(items)
@@ -3364,10 +3499,6 @@ class NewsShortGeneratorStudio(ctk.CTk):
             if not output_dir:
                 raise RuntimeError("画像の保存先フォルダを指定してください。")
 
-            json_output = self.edit_json_output_entry.get().strip()
-            if not json_output:
-                raise RuntimeError("JSONの保存先フォルダを指定してください。")
-
             provider = self.edit_search_provider_var.get() if hasattr(self, "edit_search_provider_var") else "Google"
             search_key = self.edit_search_api_key_entry.get().strip()
             if not search_key:
@@ -3376,7 +3507,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.update_progress(0.0)
             worker = threading.Thread(
                 target=self._collect_images_from_srt_worker,
-                args=(srt_path, output_dir, json_output, provider, search_key),
+                args=(srt_path, output_dir, provider, search_key),
                 daemon=True,
             )
             worker.start()
@@ -3526,7 +3657,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "end",
             "News Short Generator Studio\n\n"
             "- 左：サイドバー\n"
-            "- 中央：フォーム（動画生成 / 台本生成 / 動画編集）\n"
+            "- 中央：フォーム（動画生成 / 台本生成 / 資料作成 / 動画編集）\n"
             "- 右：ログ（進捗）\n\n"
             "[動画編集]\n"
             "- 指定時間帯に画像を座標指定で重ねる（複数対応）\n"
@@ -3691,6 +3822,25 @@ class NewsShortGeneratorStudio(ctk.CTk):
         else:
             self.prompt_template_var.set(next(iter(self.prompt_templates.keys()), "（テンプレなし）"))
 
+        # material
+        if hasattr(self, "material_api_key_entry"):
+            self.material_api_key_entry.delete(0, "end")
+            self.material_api_key_entry.insert(0, data.get("material_api_key", data.get("gemini_api_key", "")))
+
+        if hasattr(self, "material_model_entry"):
+            self.material_model_entry.delete(0, "end")
+            self.material_model_entry.insert(0, data.get("material_model", "nanobanana"))
+
+        if hasattr(self, "material_prompt_text"):
+            self._set_textbox(self.material_prompt_text, data.get("material_prompt", ""))
+
+        if hasattr(self, "material_output_text"):
+            self._set_textbox(self.material_output_text, data.get("material_output", ""))
+
+        if hasattr(self, "material_save_path_entry"):
+            self.material_save_path_entry.delete(0, "end")
+            self.material_save_path_entry.insert(0, data.get("material_save_path", str(Path.home() / "video_materials.txt")))
+
         # edit (NEW)
         if hasattr(self, "edit_input_entry"):
             self.edit_input_entry.delete(0, "end")
@@ -3708,11 +3858,6 @@ class NewsShortGeneratorStudio(ctk.CTk):
             current = self.edit_image_output_entry.get()
             self.edit_image_output_entry.delete(0, "end")
             self.edit_image_output_entry.insert(0, data.get("edit_image_output_dir", "") or current)
-
-        if hasattr(self, "edit_json_output_entry"):
-            current = self.edit_json_output_entry.get()
-            self.edit_json_output_entry.delete(0, "end")
-            self.edit_json_output_entry.insert(0, data.get("edit_json_output_path", "") or current)
 
         if hasattr(self, "edit_search_provider_var"):
             self.edit_search_provider_var.set(data.get("edit_search_provider", DEFAULT_IMAGE_SEARCH_PROVIDER))
@@ -3768,8 +3913,17 @@ class NewsShortGeneratorStudio(ctk.CTk):
             except Exception:
                 return default
 
+        material_key = (
+            self.material_api_key_entry.get().strip()
+            if hasattr(self, "material_api_key_entry")
+            else ""
+        )
+        gemini_key = self.api_key_entry.get().strip()
+        if material_key:
+            gemini_key = material_key
+
         data = {
-            "gemini_api_key": self.api_key_entry.get().strip(),
+            "gemini_api_key": gemini_key,
             "script_path": self.script_entry.get().strip(),
             "output_dir": self.output_entry.get().strip(),
             "image_paths": self.image_paths,
@@ -3803,13 +3957,25 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "claude_output": self._get_textbox(self.claude_output_text),
             "prompt_templates": self.prompt_templates,
             "prompt_template_selected": self.prompt_template_var.get(),
+            "material_api_key": material_key,
+            "material_model": getattr(self, "material_model_entry", None).get().strip()
+            if hasattr(self, "material_model_entry")
+            else "nanobanana",
+            "material_prompt": self._get_textbox(self.material_prompt_text)
+            if hasattr(self, "material_prompt_text")
+            else "",
+            "material_output": self._get_textbox(self.material_output_text)
+            if hasattr(self, "material_output_text")
+            else "",
+            "material_save_path": getattr(self, "material_save_path_entry", None).get().strip()
+            if hasattr(self, "material_save_path_entry")
+            else "",
             # edit (NEW)
             "edit_input_mp4": getattr(self, "edit_input_entry", None).get().strip() if hasattr(self, "edit_input_entry") else "",
             "edit_output_mp4": getattr(self, "edit_output_entry", None).get().strip() if hasattr(self, "edit_output_entry") else "",
             "edit_overlays": self.edit_overlays,
             "edit_srt_path": getattr(self, "edit_srt_entry", None).get().strip() if hasattr(self, "edit_srt_entry") else "",
             "edit_image_output_dir": getattr(self, "edit_image_output_entry", None).get().strip() if hasattr(self, "edit_image_output_entry") else "",
-            "edit_json_output_path": getattr(self, "edit_json_output_entry", None).get().strip() if hasattr(self, "edit_json_output_entry") else "",
             "edit_search_provider": self.edit_search_provider_var.get() if hasattr(self, "edit_search_provider_var") else DEFAULT_IMAGE_SEARCH_PROVIDER,
             "edit_search_api_key": getattr(self, "edit_search_api_key_entry", None).get().strip() if hasattr(self, "edit_search_api_key_entry") else "",
             "edit_default_x": _safe_int(getattr(self, "edit_default_x_entry", None).get().strip() if hasattr(self, "edit_default_x_entry") else DEFAULT_EDIT_IMPORT_X, DEFAULT_EDIT_IMPORT_X),
@@ -3925,6 +4091,16 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.script_save_path_entry.delete(0, "end")
             self.script_save_path_entry.insert(0, path)
 
+    def browse_material_save_path(self):
+        path = filedialog.asksaveasfilename(
+            title="資料の保存先を選択",
+            defaultextension=".txt",
+            filetypes=[("テキストファイル", "*.txt"), ("すべてのファイル", "*.*")],
+        )
+        if path:
+            self.material_save_path_entry.delete(0, "end")
+            self.material_save_path_entry.insert(0, path)
+
     # --------------------------
     # Script generation actions
     # --------------------------
@@ -3942,6 +4118,42 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "（必要なら）\n"
         )
         self._set_textbox(self.claude_prompt_text, tpl)
+
+    def insert_material_prompt_template(self):
+        tpl = (
+            "テーマ:\n"
+            "ターゲット視聴者:\n"
+            "動画尺(目安):\n"
+            "目的(例: 解説/販促/学習):\n"
+            "必ず含めたい要素:\n"
+            "トーン(例: 落ち着いた/テンポ速め):\n"
+        )
+        self._set_textbox(self.material_prompt_text, tpl)
+
+    def copy_generated_material(self):
+        txt = self._get_textbox(self.material_output_text)
+        if not txt.strip():
+            messagebox.showinfo("コピー", "生成結果が空です。")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(txt)
+        self.log("✅ 資料をクリップボードにコピーしました。")
+
+    def save_generated_material(self):
+        txt = self._get_textbox(self.material_output_text)
+        if not txt.strip():
+            messagebox.showerror("エラー", "生成結果が空です。")
+            return
+        path = self.material_save_path_entry.get().strip()
+        if not path:
+            messagebox.showerror("エラー", "保存先パスが空です。")
+            return
+        try:
+            Path(path).write_text(txt, encoding="utf-8")
+            self.log(f"✅ 資料を保存しました: {path}")
+            messagebox.showinfo("保存完了", f"保存しました:\n{path}")
+        except Exception as e:
+            messagebox.showerror("エラー", f"保存に失敗しました:\n{e}")
 
     def copy_generated_script(self):
         txt = self._get_textbox(self.claude_output_text)
@@ -4012,6 +4224,63 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 self.after(0, lambda: messagebox.showerror("エラー", f"台本生成に失敗しました:\n{e}"))
             finally:
                 self.after(0, lambda: self.btn_generate_script.configure(state="normal", text="▶ Claudeで台本生成"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_generate_material_clicked(self):
+        api_key = ""
+        if hasattr(self, "material_api_key_entry"):
+            api_key = self.material_api_key_entry.get().strip()
+        if not api_key:
+            api_key = self.api_key_entry.get().strip()
+
+        model = "nanobanana"
+        if hasattr(self, "material_model_entry"):
+            model = self.material_model_entry.get().strip() or "nanobanana"
+
+        user_prompt = self._get_textbox(self.material_prompt_text)
+        if not api_key:
+            messagebox.showerror("エラー", "Gemini APIキーを入力してください。")
+            return
+        if not user_prompt.strip():
+            messagebox.showerror("エラー", "プロンプトが空です。")
+            return
+
+        prompt = (
+            "あなたは動画制作の資料作成担当です。\n"
+            "以下の依頼に基づき、動画用の資料を日本語で作成してください。\n"
+            "出力は次の見出しを必ず含めてください:\n"
+            "1. 概要\n"
+            "2. 重要ポイント\n"
+            "3. 推奨ビジュアル/画像アイデア\n"
+            "4. ナレーション要点\n"
+            "5. 参考キーワード/注意点\n\n"
+            "依頼:\n"
+            f"{user_prompt}\n"
+        )
+
+        self.save_config()
+        self.btn_generate_material.configure(state="disabled", text="生成中...")
+        self.set_status("Working", ok=True)
+        self.log("=== Gemini 資料作成 開始 ===")
+        self.update_progress(0.02)
+
+        def worker():
+            try:
+                self.update_progress(0.08)
+                out = generate_materials_with_gemini(api_key=api_key, prompt=prompt, model=model)
+                self.after(0, lambda: self._set_textbox(self.material_output_text, out))
+                self.log("✅ Gemini 資料作成 完了")
+                self.update_progress(1.0)
+                self.set_status("Ready", ok=True)
+            except Exception as e:
+                tb = traceback.format_exc()
+                self.log("❌ Gemini 資料作成でエラー:\n" + tb)
+                self.set_status("Error", ok=False)
+                self.update_progress(0.0)
+                self.after(0, lambda: messagebox.showerror("エラー", f"資料作成に失敗しました:\n{e}"))
+            finally:
+                self.after(0, lambda: self.btn_generate_material.configure(state="normal", text="▶ nanobananaで資料作成"))
 
         threading.Thread(target=worker, daemon=True).start()
 
