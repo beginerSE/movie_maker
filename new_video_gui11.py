@@ -156,6 +156,14 @@ DEFAULT_VV_SPEED = 1.0  # 話速
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101"
 DEFAULT_CLAUDE_MAX_TOKENS = 20000
 
+# 動画編集：JSONインポート時の既定値
+DEFAULT_EDIT_IMPORT_X = 100
+DEFAULT_EDIT_IMPORT_Y = 200
+DEFAULT_EDIT_IMPORT_W = 0
+DEFAULT_EDIT_IMPORT_H = 0
+DEFAULT_EDIT_IMPORT_OPACITY = 1.0
+DEFAULT_IMAGE_SEARCH_PROVIDER = "Google"
+
 
 SPEAKER_ALIASES = {
     "キャスター": ["キャスター", "司会", "アナウンサー", "MC", "Caster"],
@@ -912,6 +920,107 @@ def parse_timecode_to_seconds(s: str) -> float:
         return h * 3600 + m * 60 + sec
 
     raise ValueError(f"時間形式が不正です: {s}")
+
+
+def parse_srt_timecode_to_seconds(s: str) -> float:
+    """SRT形式 (00:00:01,234) を秒に変換する。"""
+    if not s:
+        raise ValueError("SRT 時間が空です。")
+    cleaned = s.replace(",", ".")
+    return parse_timecode_to_seconds(cleaned)
+
+
+def parse_srt_file(path: str) -> List[Dict[str, Any]]:
+    """SRT を読み込んで start/end/text の配列にする。"""
+    content = Path(path).read_text(encoding="utf-8").splitlines()
+    items: List[Dict[str, Any]] = []
+    i = 0
+    time_re = re.compile(r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})")
+
+    while i < len(content):
+        line = content[i].strip()
+        if not line:
+            i += 1
+            continue
+        if line.isdigit():
+            i += 1
+            if i >= len(content):
+                break
+            line = content[i].strip()
+
+        match = time_re.search(line)
+        if not match:
+            i += 1
+            continue
+
+        start_s, end_s = match.groups()
+        i += 1
+        text_lines = []
+        while i < len(content) and content[i].strip():
+            text_lines.append(content[i].strip())
+            i += 1
+        text = " ".join(text_lines).strip()
+        if text:
+            items.append(
+                {
+                    "start": parse_srt_timecode_to_seconds(start_s),
+                    "end": parse_srt_timecode_to_seconds(end_s),
+                    "text": text,
+                }
+            )
+        i += 1
+
+    return items
+
+
+def search_images_serpapi(api_key: str, query: str, provider: str = "Google") -> List[str]:
+    engine = "google_images" if provider == "Google" else "bing_images"
+    resp = requests.get(
+        "https://serpapi.com/search.json",
+        params={
+            "engine": engine,
+            "q": query,
+            "api_key": api_key,
+            "num": 5,
+        },
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    results = data.get("images_results", []) or []
+    urls = []
+    for item in results:
+        url = item.get("original") or item.get("thumbnail")
+        if url:
+            urls.append(url)
+    return urls
+
+
+def download_image(url: str, output_dir: Path, basename: str) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    parsed = urlparse(url)
+    name = Path(unquote(parsed.path)).name
+    ext = Path(name).suffix.lower()
+    if not ext or len(ext) > 5:
+        ext = ""
+
+    resp = requests.get(url, timeout=20)
+    resp.raise_for_status()
+    content_type = resp.headers.get("content-type", "")
+    if not ext and content_type:
+        ext = mimetypes.guess_extension(content_type.split(";")[0].strip()) or ""
+    if not ext:
+        ext = ".jpg"
+
+    safe_base = re.sub(r"[^\w\-]+", "_", basename).strip("_") or "image"
+    filename = f"{safe_base}{ext}"
+    out_path = output_dir / filename
+    counter = 1
+    while out_path.exists():
+        out_path = output_dir / f"{safe_base}_{counter}{ext}"
+        counter += 1
+    out_path.write_bytes(resp.content)
+    return out_path
 
 
 def apply_image_overlays_to_video(
@@ -2707,6 +2816,111 @@ class NewsShortGeneratorStudio(ctk.CTk):
             fg_color="#3b1d1d", hover_color="#4a2323",
         ).grid(row=0, column=2, sticky="ew", padx=(8, 0))
 
+        # ---- SRT -> 画像収集 + JSON ----
+        self._v_label(form, "SRTから画像収集").grid(row=r, column=0, sticky="w", pady=(6, 6)); r += 1
+        self._v_hint(form, "字幕ごとに検索キーワードを生成し、Google/Bing画像検索から取得します。").grid(
+            row=r, column=0, sticky="w", pady=(0, 8)
+        ); r += 1
+
+        srt_row, self.edit_srt_entry = self._v_path_row(form, "SRT選択", self.browse_edit_srt)
+        srt_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+
+        out_row, self.edit_image_output_entry = self._v_path_row(
+            form, "保存先", self.browse_edit_image_output_dir
+        )
+        out_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+
+        json_row, self.edit_json_output_entry = self._v_path_row(
+            form, "JSON保存", self.browse_edit_json_output
+        )
+        json_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        self.edit_image_output_entry.insert(0, str(Path.home() / "srt_images"))
+        self.edit_json_output_entry.insert(0, str(Path.home() / "srt_images" / "overlays.json"))
+
+        api_row = ctk.CTkFrame(form, fg_color="transparent")
+        api_row.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        api_row.grid_columnconfigure(0, weight=1)
+        api_row.grid_columnconfigure(1, weight=1)
+
+        left = ctk.CTkFrame(api_row, fg_color="transparent")
+        left.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        left.grid_columnconfigure(0, weight=1)
+
+        right = ctk.CTkFrame(api_row, fg_color="transparent")
+        right.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        right.grid_columnconfigure(0, weight=1)
+
+        self._v_hint(left, "画像検索プロバイダ").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.edit_search_provider_var = ctk.StringVar(value=DEFAULT_IMAGE_SEARCH_PROVIDER)
+        self.edit_search_provider_menu = ctk.CTkOptionMenu(
+            left,
+            values=["Google", "Bing"],
+            variable=self.edit_search_provider_var,
+        )
+        self.edit_search_provider_menu.grid(row=1, column=0, sticky="ew")
+
+        self._v_hint(right, "画像検索 APIキー（SerpAPI）").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.edit_search_api_key_entry = self._v_entry(right, show="*")
+        self.edit_search_api_key_entry.grid(row=1, column=0, sticky="ew")
+
+        defaults = ctk.CTkFrame(form, fg_color="transparent")
+        defaults.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        defaults.grid_columnconfigure(0, weight=1)
+        defaults.grid_columnconfigure(1, weight=1)
+        defaults.grid_columnconfigure(2, weight=1)
+        defaults.grid_columnconfigure(3, weight=1)
+        defaults.grid_columnconfigure(4, weight=1)
+
+        self._v_hint(defaults, "既定X").grid(row=0, column=0, sticky="w")
+        self.edit_default_x_entry = self._v_entry(defaults)
+        self.edit_default_x_entry.insert(0, str(DEFAULT_EDIT_IMPORT_X))
+        self.edit_default_x_entry.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+
+        self._v_hint(defaults, "既定Y").grid(row=0, column=1, sticky="w")
+        self.edit_default_y_entry = self._v_entry(defaults)
+        self.edit_default_y_entry.insert(0, str(DEFAULT_EDIT_IMPORT_Y))
+        self.edit_default_y_entry.grid(row=1, column=1, sticky="ew", padx=(6, 6))
+
+        self._v_hint(defaults, "既定W").grid(row=0, column=2, sticky="w")
+        self.edit_default_w_entry = self._v_entry(defaults)
+        self.edit_default_w_entry.insert(0, str(DEFAULT_EDIT_IMPORT_W))
+        self.edit_default_w_entry.grid(row=1, column=2, sticky="ew", padx=(6, 6))
+
+        self._v_hint(defaults, "既定H").grid(row=0, column=3, sticky="w")
+        self.edit_default_h_entry = self._v_entry(defaults)
+        self.edit_default_h_entry.insert(0, str(DEFAULT_EDIT_IMPORT_H))
+        self.edit_default_h_entry.grid(row=1, column=3, sticky="ew", padx=(6, 6))
+
+        self._v_hint(defaults, "既定Opacity").grid(row=0, column=4, sticky="w")
+        self.edit_default_opacity_entry = self._v_entry(defaults)
+        self.edit_default_opacity_entry.insert(0, str(DEFAULT_EDIT_IMPORT_OPACITY))
+        self.edit_default_opacity_entry.grid(row=1, column=4, sticky="ew", padx=(6, 0))
+
+        srt_action = ctk.CTkFrame(form, fg_color="transparent")
+        srt_action.grid(row=r, column=0, sticky="ew", pady=(0, 14)); r += 1
+        srt_action.grid_columnconfigure(0, weight=1)
+        srt_action.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(
+            srt_action,
+            text="SRTから画像収集",
+            command=self.on_collect_images_from_srt,
+            height=40,
+            corner_radius=12,
+            fg_color="#1f5d8f",
+            hover_color="#1b527f",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+        ctk.CTkButton(
+            srt_action,
+            text="JSON読み込み",
+            command=self.import_edit_overlays_from_json,
+            height=40,
+            corner_radius=12,
+            fg_color="#172238",
+            hover_color="#1b2a44",
+        ).grid(row=0, column=1, sticky="ew", padx=(8, 0))
+
         # render button（既存のまま）
         self.edit_render_button = ctk.CTkButton(
             form,
@@ -2909,6 +3123,31 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_overlay_img_entry.insert(0, path)
             self._load_edit_overlay_preview(path)
 
+    def browse_edit_srt(self):
+        path = filedialog.askopenfilename(
+            title="SRTファイルを選択",
+            filetypes=[("SRT", "*.srt"), ("すべて", "*.*")],
+        )
+        if path and hasattr(self, "edit_srt_entry"):
+            self.edit_srt_entry.delete(0, "end")
+            self.edit_srt_entry.insert(0, path)
+
+    def browse_edit_image_output_dir(self):
+        path = filedialog.askdirectory(title="画像の保存先フォルダを選択")
+        if path and hasattr(self, "edit_image_output_entry"):
+            self.edit_image_output_entry.delete(0, "end")
+            self.edit_image_output_entry.insert(0, path)
+
+    def browse_edit_json_output(self):
+        path = filedialog.asksaveasfilename(
+            title="JSONの保存先を選択",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json"), ("すべて", "*.*")],
+        )
+        if path and hasattr(self, "edit_json_output_entry"):
+            self.edit_json_output_entry.delete(0, "end")
+            self.edit_json_output_entry.insert(0, path)
+
     def add_edit_overlay(self):
         try:
             img = self.edit_overlay_img_entry.get().strip()
@@ -2958,6 +3197,196 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.refresh_edit_overlay_table()
         self.save_config()
         self.log("🧹 オーバーレイ一覧をクリアしました。")
+
+    def _get_edit_import_defaults(self) -> Dict[str, Any]:
+        try:
+            x = int(self.edit_default_x_entry.get().strip() or DEFAULT_EDIT_IMPORT_X)
+        except Exception:
+            x = DEFAULT_EDIT_IMPORT_X
+        try:
+            y = int(self.edit_default_y_entry.get().strip() or DEFAULT_EDIT_IMPORT_Y)
+        except Exception:
+            y = DEFAULT_EDIT_IMPORT_Y
+        try:
+            w = int(self.edit_default_w_entry.get().strip() or DEFAULT_EDIT_IMPORT_W)
+        except Exception:
+            w = DEFAULT_EDIT_IMPORT_W
+        try:
+            h = int(self.edit_default_h_entry.get().strip() or DEFAULT_EDIT_IMPORT_H)
+        except Exception:
+            h = DEFAULT_EDIT_IMPORT_H
+        try:
+            opacity = float(self.edit_default_opacity_entry.get().strip() or DEFAULT_EDIT_IMPORT_OPACITY)
+        except Exception:
+            opacity = DEFAULT_EDIT_IMPORT_OPACITY
+
+        return {"x": x, "y": y, "w": w, "h": h, "opacity": opacity}
+
+    def _generate_search_queries(self, items: List[Dict[str, Any]]) -> List[str]:
+        api_key = self.api_key_entry.get().strip()
+        if not api_key:
+            raise RuntimeError("Gemini APIキーを入力してください。")
+
+        client = genai.Client(api_key=api_key)
+        prompt = (
+            "あなたは動画編集の画像リサーチ担当です。\n"
+            "次の字幕テキストごとに、Google/Bing画像検索向けの日本語検索クエリを1つずつ作成してください。\n"
+            "出力は JSON 配列のみで、要素はクエリ文字列にしてください。\n"
+            "字幕一覧:\n"
+        )
+        for idx, item in enumerate(items, 1):
+            prompt += f"{idx}. {item.get('text', '')}\n"
+
+        resp = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                response_mime_type="application/json",
+            ),
+        )
+
+        text = getattr(resp, "text", "") or ""
+        if not text:
+            raise RuntimeError("検索クエリ生成に失敗しました。")
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\[[\s\S]*\]", text)
+            if not match:
+                raise RuntimeError("検索クエリのJSON解析に失敗しました。")
+            data = json.loads(match.group(0))
+        if not isinstance(data, list):
+            raise RuntimeError("検索クエリは配列形式で返してください。")
+        queries = [str(x).strip() for x in data if str(x).strip()]
+        if not queries:
+            raise RuntimeError("検索クエリが空でした。")
+        return queries
+
+    def on_collect_images_from_srt(self):
+        try:
+            srt_path = self.edit_srt_entry.get().strip()
+            if not srt_path or not Path(srt_path).exists():
+                raise RuntimeError("有効なSRTファイルを指定してください。")
+
+            output_dir = self.edit_image_output_entry.get().strip()
+            if not output_dir:
+                raise RuntimeError("画像の保存先フォルダを指定してください。")
+
+            json_output = self.edit_json_output_entry.get().strip()
+            if not json_output:
+                raise RuntimeError("JSONの保存先を指定してください。")
+
+            provider = self.edit_search_provider_var.get() if hasattr(self, "edit_search_provider_var") else "Google"
+            search_key = self.edit_search_api_key_entry.get().strip()
+            if not search_key:
+                raise RuntimeError("画像検索 APIキーを入力してください。")
+
+            items = parse_srt_file(srt_path)
+            if not items:
+                raise RuntimeError("SRTから字幕が見つかりませんでした。")
+
+            self.log(f"🔍 SRTから {len(items)} 件の字幕を読み込みました。")
+            queries = self._generate_search_queries(items)
+            if len(queries) < len(items):
+                queries.extend(queries[-1:] * (len(items) - len(queries)))
+
+            output_dir_path = Path(output_dir)
+            results = []
+            for idx, (item, query) in enumerate(zip(items, queries), 1):
+                try:
+                    self.log(f"[画像検索] {idx}/{len(items)} {query}")
+                    urls = search_images_serpapi(search_key, query, provider=provider)
+                    if not urls:
+                        self.log(f"⚠️ 画像が見つかりませんでした: {query}")
+                        continue
+                    saved = download_image(urls[0], output_dir_path, f"overlay_{idx:03d}")
+                    results.append(
+                        {
+                            "start": float(item["start"]),
+                            "end": float(item["end"]),
+                            "image": saved.name,
+                        }
+                    )
+                except Exception as exc:
+                    self.log(f"⚠️ 画像取得失敗: {query} ({exc})")
+                    continue
+
+            if not results:
+                raise RuntimeError("画像を取得できませんでした。")
+
+            Path(json_output).write_text(
+                json.dumps(results, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            self.log(f"✅ 画像 {len(results)} 件を保存し、JSONを書き出しました: {json_output}")
+            messagebox.showinfo("完了", "画像収集とJSON出力が完了しました。")
+            self.save_config()
+        except Exception as exc:
+            messagebox.showerror("エラー", str(exc))
+
+    def import_edit_overlays_from_json(self):
+        path = filedialog.askopenfilename(
+            title="JSONを読み込む",
+            filetypes=[("JSON", "*.json"), ("すべて", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except Exception as exc:
+            messagebox.showerror("エラー", f"JSONの読み込みに失敗しました: {exc}")
+            return
+
+        if isinstance(payload, dict):
+            items = payload.get("overlays", [])
+        else:
+            items = payload
+
+        if not isinstance(items, list):
+            messagebox.showerror("エラー", "JSON形式が不正です。")
+            return
+
+        defaults = self._get_edit_import_defaults()
+        base_dir = Path(path).parent
+        imported = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            start = item.get("start")
+            end = item.get("end")
+            image_name = item.get("image") or item.get("image_path")
+            if start is None or end is None or not image_name:
+                continue
+            image_path = Path(image_name)
+            if not image_path.is_absolute():
+                image_path = base_dir / image_path
+            if not image_path.exists():
+                continue
+
+            self.edit_overlays.append(
+                {
+                    "image_path": str(image_path),
+                    "start": float(start),
+                    "end": float(end),
+                    "x": defaults["x"],
+                    "y": defaults["y"],
+                    "w": defaults["w"],
+                    "h": defaults["h"],
+                    "opacity": defaults["opacity"],
+                }
+            )
+            imported += 1
+
+        if imported == 0:
+            messagebox.showerror("エラー", "インポートできる行がありませんでした。")
+            return
+
+        self.refresh_edit_overlay_table()
+        self.save_config()
+        self.log(f"✅ JSONから {imported} 件をインポートしました。")
+        messagebox.showinfo("完了", f"{imported} 件のオーバーレイをインポートしました。")
 
     def refresh_edit_overlay_list(self):
         if not hasattr(self, "edit_overlay_list"):
@@ -3214,6 +3643,47 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_output_entry.delete(0, "end")
             self.edit_output_entry.insert(0, data.get("edit_output_mp4", ""))
 
+        if hasattr(self, "edit_srt_entry"):
+            self.edit_srt_entry.delete(0, "end")
+            self.edit_srt_entry.insert(0, data.get("edit_srt_path", "") or "")
+
+        if hasattr(self, "edit_image_output_entry"):
+            current = self.edit_image_output_entry.get()
+            self.edit_image_output_entry.delete(0, "end")
+            self.edit_image_output_entry.insert(0, data.get("edit_image_output_dir", "") or current)
+
+        if hasattr(self, "edit_json_output_entry"):
+            current = self.edit_json_output_entry.get()
+            self.edit_json_output_entry.delete(0, "end")
+            self.edit_json_output_entry.insert(0, data.get("edit_json_output_path", "") or current)
+
+        if hasattr(self, "edit_search_provider_var"):
+            self.edit_search_provider_var.set(data.get("edit_search_provider", DEFAULT_IMAGE_SEARCH_PROVIDER))
+
+        if hasattr(self, "edit_search_api_key_entry"):
+            self.edit_search_api_key_entry.delete(0, "end")
+            self.edit_search_api_key_entry.insert(0, data.get("edit_search_api_key", ""))
+
+        if hasattr(self, "edit_default_x_entry"):
+            self.edit_default_x_entry.delete(0, "end")
+            self.edit_default_x_entry.insert(0, str(data.get("edit_default_x", DEFAULT_EDIT_IMPORT_X)))
+
+        if hasattr(self, "edit_default_y_entry"):
+            self.edit_default_y_entry.delete(0, "end")
+            self.edit_default_y_entry.insert(0, str(data.get("edit_default_y", DEFAULT_EDIT_IMPORT_Y)))
+
+        if hasattr(self, "edit_default_w_entry"):
+            self.edit_default_w_entry.delete(0, "end")
+            self.edit_default_w_entry.insert(0, str(data.get("edit_default_w", DEFAULT_EDIT_IMPORT_W)))
+
+        if hasattr(self, "edit_default_h_entry"):
+            self.edit_default_h_entry.delete(0, "end")
+            self.edit_default_h_entry.insert(0, str(data.get("edit_default_h", DEFAULT_EDIT_IMPORT_H)))
+
+        if hasattr(self, "edit_default_opacity_entry"):
+            self.edit_default_opacity_entry.delete(0, "end")
+            self.edit_default_opacity_entry.insert(0, str(data.get("edit_default_opacity", DEFAULT_EDIT_IMPORT_OPACITY)))
+
         ovs = data.get("edit_overlays", [])
         if isinstance(ovs, list):
             safe = []
@@ -3280,6 +3750,16 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "edit_input_mp4": getattr(self, "edit_input_entry", None).get().strip() if hasattr(self, "edit_input_entry") else "",
             "edit_output_mp4": getattr(self, "edit_output_entry", None).get().strip() if hasattr(self, "edit_output_entry") else "",
             "edit_overlays": self.edit_overlays,
+            "edit_srt_path": getattr(self, "edit_srt_entry", None).get().strip() if hasattr(self, "edit_srt_entry") else "",
+            "edit_image_output_dir": getattr(self, "edit_image_output_entry", None).get().strip() if hasattr(self, "edit_image_output_entry") else "",
+            "edit_json_output_path": getattr(self, "edit_json_output_entry", None).get().strip() if hasattr(self, "edit_json_output_entry") else "",
+            "edit_search_provider": self.edit_search_provider_var.get() if hasattr(self, "edit_search_provider_var") else DEFAULT_IMAGE_SEARCH_PROVIDER,
+            "edit_search_api_key": getattr(self, "edit_search_api_key_entry", None).get().strip() if hasattr(self, "edit_search_api_key_entry") else "",
+            "edit_default_x": _safe_int(getattr(self, "edit_default_x_entry", None).get().strip() if hasattr(self, "edit_default_x_entry") else DEFAULT_EDIT_IMPORT_X, DEFAULT_EDIT_IMPORT_X),
+            "edit_default_y": _safe_int(getattr(self, "edit_default_y_entry", None).get().strip() if hasattr(self, "edit_default_y_entry") else DEFAULT_EDIT_IMPORT_Y, DEFAULT_EDIT_IMPORT_Y),
+            "edit_default_w": _safe_int(getattr(self, "edit_default_w_entry", None).get().strip() if hasattr(self, "edit_default_w_entry") else DEFAULT_EDIT_IMPORT_W, DEFAULT_EDIT_IMPORT_W),
+            "edit_default_h": _safe_int(getattr(self, "edit_default_h_entry", None).get().strip() if hasattr(self, "edit_default_h_entry") else DEFAULT_EDIT_IMPORT_H, DEFAULT_EDIT_IMPORT_H),
+            "edit_default_opacity": _safe_float(getattr(self, "edit_default_opacity_entry", None).get().strip() if hasattr(self, "edit_default_opacity_entry") else DEFAULT_EDIT_IMPORT_OPACITY, DEFAULT_EDIT_IMPORT_OPACITY),
         }
         try:
             CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
