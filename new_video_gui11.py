@@ -2649,10 +2649,10 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._v_label(form, "保存").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
 
         save_row, self.material_save_path_entry = self._v_path_row(
-            form, "保存先選択", self.browse_material_save_path
+            form, "保存先フォルダ", self.browse_material_save_path
         )
         self.material_save_path_entry.delete(0, "end")
-        self.material_save_path_entry.insert(0, str(Path.home() / "video_materials.png"))
+        self.material_save_path_entry.insert(0, str(self._default_material_save_dir()))
         save_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
 
         ctk.CTkButton(
@@ -3889,7 +3889,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         if hasattr(self, "material_save_path_entry"):
             self.material_save_path_entry.delete(0, "end")
-            self.material_save_path_entry.insert(0, data.get("material_save_path", str(Path.home() / "video_materials.png")))
+            default_dir = str(self._default_material_save_dir())
+            self.material_save_path_entry.insert(0, data.get("material_save_path", default_dir))
 
         # edit (NEW)
         if hasattr(self, "edit_input_entry"):
@@ -4064,6 +4065,21 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._material_preview_imgtk = ImageTk.PhotoImage(image)
         self.material_output_label.configure(image=self._material_preview_imgtk, text="")
 
+    def _default_material_save_dir(self) -> Path:
+        downloads = Path.home() / "Downloads"
+        return downloads if downloads.exists() else Path.home()
+
+    def _resolve_material_save_dir(self) -> Optional[Path]:
+        raw = self.material_save_path_entry.get().strip()
+        if raw:
+            candidate = Path(raw).expanduser()
+            if candidate.is_dir():
+                return candidate
+            if candidate.suffix:
+                return candidate.parent if candidate.parent.exists() else None
+            return candidate if candidate.exists() else None
+        return self._default_material_save_dir()
+
     def log(self, text: str):
         def _append():
             self.log_text.insert("end", text + "\n")
@@ -4151,11 +4167,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.script_save_path_entry.insert(0, path)
 
     def browse_material_save_path(self):
-        path = filedialog.asksaveasfilename(
-            title="画像の保存先を選択",
-            defaultextension=".png",
-            filetypes=[("画像ファイル", "*.png;*.jpg;*.jpeg;*.webp"), ("すべてのファイル", "*.*")],
-        )
+        path = filedialog.askdirectory(title="画像の保存先フォルダを選択")
         if path:
             self.material_save_path_entry.delete(0, "end")
             self.material_save_path_entry.insert(0, path)
@@ -4202,12 +4214,19 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if not getattr(self, "material_generated_image_bytes", None):
             messagebox.showerror("エラー", "生成画像がありません。")
             return
-        path = self.material_save_path_entry.get().strip()
-        if not path:
-            messagebox.showerror("エラー", "保存先パスが空です。")
+        save_dir = self._resolve_material_save_dir()
+        if not save_dir:
+            messagebox.showerror("エラー", "保存先フォルダが見つかりません。")
             return
+        filename = time.strftime("%Y%m%d_%H%M%S") + ".jpg"
+        path = save_dir / filename
         try:
-            Path(path).write_bytes(self.material_generated_image_bytes)
+            image = Image.open(BytesIO(self.material_generated_image_bytes))
+            if image.mode not in ("RGB", "L"):
+                image = image.convert("RGB")
+            image.save(path, format="JPEG", quality=95)
+            self.material_save_path_entry.delete(0, "end")
+            self.material_save_path_entry.insert(0, str(path))
             self.log(f"✅ 画像を保存しました: {path}")
             messagebox.showinfo("保存完了", f"保存しました:\n{path}")
         except Exception as e:
