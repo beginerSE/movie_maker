@@ -3274,25 +3274,15 @@ class NewsShortGeneratorStudio(ctk.CTk):
             raise RuntimeError("検索クエリが空でした。")
         return queries
 
-    def on_collect_images_from_srt(self):
+    def _collect_images_from_srt_worker(
+        self,
+        srt_path: str,
+        output_dir: str,
+        json_output: str,
+        provider: str,
+        search_key: str,
+    ):
         try:
-            srt_path = self.edit_srt_entry.get().strip()
-            if not srt_path or not Path(srt_path).exists():
-                raise RuntimeError("有効なSRTファイルを指定してください。")
-
-            output_dir = self.edit_image_output_entry.get().strip()
-            if not output_dir:
-                raise RuntimeError("画像の保存先フォルダを指定してください。")
-
-            json_output = self.edit_json_output_entry.get().strip()
-            if not json_output:
-                raise RuntimeError("JSONの保存先を指定してください。")
-
-            provider = self.edit_search_provider_var.get() if hasattr(self, "edit_search_provider_var") else "Google"
-            search_key = self.edit_search_api_key_entry.get().strip()
-            if not search_key:
-                raise RuntimeError("画像検索 APIキーを入力してください。")
-
             items = parse_srt_file(srt_path)
             if not items:
                 raise RuntimeError("SRTから字幕が見つかりませんでした。")
@@ -3304,14 +3294,38 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
             output_dir_path = Path(output_dir)
             results = []
+            url_to_image: Dict[str, Path] = {}
+            total = len(items)
+
             for idx, (item, query) in enumerate(zip(items, queries), 1):
                 try:
-                    self.log(f"[画像検索] {idx}/{len(items)} {query}")
+                    self.log(f"収集中です・・・(検索ワード：{query} {len(results)}件取得済み)")
+                    self.update_progress(idx / total)
                     urls = search_images_serpapi(search_key, query, provider=provider)
                     if not urls:
                         self.log(f"⚠️ 画像が見つかりませんでした: {query}")
                         continue
-                    saved = download_image(urls[0], output_dir_path, f"overlay_{idx:03d}")
+
+                    saved = None
+                    for url in urls:
+                        if url in url_to_image:
+                            saved = url_to_image[url]
+                            self.log(f"🔁 画像を再利用しました: {query} -> {saved.name}")
+                            break
+
+                    if saved is None:
+                        selected_url = None
+                        for url in urls:
+                            if url not in url_to_image:
+                                selected_url = url
+                                break
+                        if selected_url is None:
+                            selected_url = urls[0]
+                            saved = url_to_image.get(selected_url)
+                        if saved is None:
+                            saved = download_image(selected_url, output_dir_path, f"overlay_{idx:03d}")
+                            url_to_image[selected_url] = saved
+
                     results.append(
                         {
                             "start": float(item["start"]),
@@ -3332,8 +3346,37 @@ class NewsShortGeneratorStudio(ctk.CTk):
             )
 
             self.log(f"✅ 画像 {len(results)} 件を保存し、JSONを書き出しました: {json_output}")
-            messagebox.showinfo("完了", "画像収集とJSON出力が完了しました。")
-            self.save_config()
+            self.after(0, lambda: messagebox.showinfo("完了", "画像収集とJSON出力が完了しました。"))
+            self.after(0, self.save_config)
+        except Exception as exc:
+            self.after(0, lambda: messagebox.showerror("エラー", str(exc)))
+
+    def on_collect_images_from_srt(self):
+        try:
+            srt_path = self.edit_srt_entry.get().strip()
+            if not srt_path or not Path(srt_path).exists():
+                raise RuntimeError("有効なSRTファイルを指定してください。")
+
+            output_dir = self.edit_image_output_entry.get().strip()
+            if not output_dir:
+                raise RuntimeError("画像の保存先フォルダを指定してください。")
+
+            json_output = self.edit_json_output_entry.get().strip()
+            if not json_output:
+                raise RuntimeError("JSONの保存先を指定してください。")
+
+            provider = self.edit_search_provider_var.get() if hasattr(self, "edit_search_provider_var") else "Google"
+            search_key = self.edit_search_api_key_entry.get().strip()
+            if not search_key:
+                raise RuntimeError("画像検索 APIキーを入力してください。")
+
+            self.update_progress(0.0)
+            worker = threading.Thread(
+                target=self._collect_images_from_srt_worker,
+                args=(srt_path, output_dir, json_output, provider, search_key),
+                daemon=True,
+            )
+            worker.start()
         except Exception as exc:
             messagebox.showerror("エラー", str(exc))
 
