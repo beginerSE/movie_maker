@@ -18,6 +18,7 @@ import json
 import threading
 import traceback
 import tkinter as tk
+import mimetypes
 from tkinter import filedialog, messagebox, simpledialog
 from proglog import ProgressBarLogger
 import tkinter.font as tkfont
@@ -25,6 +26,7 @@ import time
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 from itertools import cycle
+from urllib.parse import urlparse, unquote
 
 import customtkinter as ctk
 
