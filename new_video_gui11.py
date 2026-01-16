@@ -10,6 +10,7 @@ News Short Generator Studio（Windows向け）
 - 指定時間帯（例: 00:12〜00:18）に、選択した画像を指定座標（例: x=100,y=200）へ重ねる
 - 複数オーバーレイに対応（リストに追加して一括書き出し）
 - 書き出しは moviepy の CompositeVideoClip を使用
+- 詳細編集: フレーム単位でSE/テキスト/画像を追加し、簡易アニメーションやプレビューに対応
 """
 
 import os
@@ -1207,6 +1208,234 @@ def apply_image_overlays_to_video(
         base.close()
 
 
+def frames_to_seconds(frame: int, fps: float) -> float:
+    if fps <= 0:
+        return 0.0
+    return float(frame) / float(fps)
+
+
+def seconds_to_frames(seconds: float, fps: float) -> int:
+    if fps <= 0:
+        return 0
+    return int(round(float(seconds) * float(fps)))
+
+
+def build_text_image(
+    text: str,
+    font_size: int,
+    color_hex: str = "#FFFFFF",
+    stroke_width: int = 2,
+    stroke_fill: str = "#000000",
+) -> Image.Image:
+    font = pick_font(font_size)
+    color = parse_hex_color(color_hex, default=(255, 255, 255, 255))
+    stroke = parse_hex_color(stroke_fill, default=(0, 0, 0, 255))
+
+    lines = text.splitlines() or [text]
+    dummy = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(dummy)
+    max_w = 1
+    line_h = 1
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font, stroke_width=stroke_width)
+        max_w = max(max_w, bbox[2] - bbox[0])
+        line_h = max(line_h, bbox[3] - bbox[1])
+
+    padding = 8
+    img_w = max_w + padding * 2
+    img_h = line_h * len(lines) + padding * 2 + 2
+    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    y = padding
+    for line in lines:
+        draw.text(
+            (padding, y),
+            line,
+            font=font,
+            fill=color,
+            stroke_width=stroke_width,
+            stroke_fill=stroke,
+        )
+        y += line_h
+
+    return img
+
+
+def apply_detailed_edits_to_video(
+    input_mp4: str,
+    overlays: List[Dict[str, Any]],
+    detail_edits: List[Dict[str, Any]],
+    output_mp4: str,
+    log_fn,
+    progress_fn=None,
+    preview_range: Tuple[float, float] | None = None,
+    preview_scale: float = 1.0,
+):
+    def update_progress(v: float, eta: float | None = None):
+        if progress_fn is not None:
+            try:
+                progress_fn(v, eta)
+            except TypeError:
+                progress_fn(v)
+
+    if not input_mp4 or not Path(input_mp4).exists():
+        raise RuntimeError("入力MP4が見つかりません。")
+    out_path = Path(output_mp4)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    log_fn(f"[DETAIL] 入力: {input_mp4}")
+    log_fn(f"[DETAIL] 出力: {output_mp4}")
+    update_progress(0.05, None)
+
+    base = VideoFileClip(input_mp4)
+    try:
+        base_fps = float(base.fps or 30)
+        dur = float(base.duration or 0)
+        if dur <= 0:
+            raise RuntimeError("入力動画のdurationが取得できません。")
+
+        if preview_range:
+            start_p, end_p = preview_range
+            start_p = max(0.0, min(start_p, dur))
+            end_p = max(start_p, min(end_p, dur))
+            if hasattr(base, "subclip"):
+                base = base.subclip(start_p, end_p)
+            else:
+                base = base.subclipped(start_p, end_p)
+            dur = float(base.duration or 0)
+            log_fn(f"[DETAIL] プレビュー範囲: {start_p:.2f}s〜{end_p:.2f}s")
+
+        comps = [base]
+        audio_layers = []
+        if base.audio is not None:
+            audio_layers.append(base.audio)
+
+        # existing overlays
+        for ov in overlays:
+            img_path = Path(ov["image_path"])
+            if not img_path.exists():
+                raise RuntimeError(f"画像が見つかりません: {img_path}")
+            start = float(ov["start"])
+            end = float(ov["end"])
+            if end <= start:
+                raise RuntimeError(f"時間帯が不正です（end<=start）: {start}〜{end}")
+            x = int(ov.get("x", 0))
+            y = int(ov.get("y", 0))
+            w = int(ov.get("w", 0) or 0)
+            h = int(ov.get("h", 0) or 0)
+            opacity = float(ov.get("opacity", 1.0) or 1.0)
+            opacity = max(0.0, min(1.0, opacity))
+            ic = ImageClip(str(img_path))
+            if w > 0 and h > 0:
+                ic = ic.resized(new_size=(w, h))
+            elif w > 0:
+                ic = ic.resized(width=w)
+            elif h > 0:
+                ic = ic.resized(height=h)
+            ic = ic.with_start(start).with_end(end).with_position((x, y)).with_opacity(opacity)
+            comps.append(ic)
+
+        # detailed edits
+        for i, item in enumerate(detail_edits, 1):
+            dtype = str(item.get("type", "image"))
+            start = float(item.get("start_sec", 0))
+            end = float(item.get("end_sec", 0))
+            if end <= start:
+                raise RuntimeError(f"詳細編集の時間が不正です: {start}〜{end}")
+            duration = end - start
+            if dtype == "se":
+                audio_path = Path(item.get("audio_path", ""))
+                if not audio_path.exists():
+                    raise RuntimeError(f"SEファイルが見つかりません: {audio_path}")
+                clip = AudioFileClip(str(audio_path))
+                clip_dur = float(clip.duration or 0)
+                if clip_dur <= 0:
+                    raise RuntimeError(f"SEのdurationが取得できません: {audio_path}")
+                if duration <= 0:
+                    duration = clip_dur
+                if hasattr(clip, "subclip"):
+                    clip = clip.subclip(0, min(clip_dur, duration))
+                else:
+                    clip = clip.subclipped(0, min(clip_dur, duration))
+                volume = float(item.get("volume", 1.0) or 1.0)
+                clip = clip.volumex(volume)
+                clip = clip.with_start(start)
+                audio_layers.append(clip)
+                log_fn(f"[DETAIL] {i} SE: {audio_path.name} t={start:.2f}〜{end:.2f} vol={volume}")
+                continue
+
+            start_x = int(item.get("start_x", 0))
+            start_y = int(item.get("start_y", 0))
+            end_x = int(item.get("end_x", start_x))
+            end_y = int(item.get("end_y", start_y))
+            scale = float(item.get("scale", 100.0) or 100.0)
+            opacity = float(item.get("opacity", 1.0) or 1.0)
+            opacity = max(0.0, min(1.0, opacity))
+
+            if dtype == "text":
+                text = str(item.get("text", "")).strip()
+                font_size = int(item.get("font_size", 36) or 36)
+                color = str(item.get("color", "#FFFFFF") or "#FFFFFF")
+                img = build_text_image(text or " ", font_size, color)
+                source = "テキスト"
+            else:
+                img_path = Path(item.get("image_path", ""))
+                if not img_path.exists():
+                    raise RuntimeError(f"画像が見つかりません: {img_path}")
+                img = Image.open(img_path).convert("RGBA")
+                source = img_path.name
+
+            arr = np.array(img)
+            clip = ImageClip(arr).with_duration(duration)
+            if scale != 100:
+                nw = max(1, int(img.width * scale / 100))
+                nh = max(1, int(img.height * scale / 100))
+                clip = clip.resized(new_size=(nw, nh))
+
+            if start_x != end_x or start_y != end_y:
+                def pos_fn(t, sx=start_x, sy=start_y, ex=end_x, ey=end_y, d=duration):
+                    if d <= 0:
+                        return (sx, sy)
+                    p = min(max(t / d, 0.0), 1.0)
+                    x = int(sx + (ex - sx) * p)
+                    y = int(sy + (ey - sy) * p)
+                    return (x, y)
+                clip = clip.with_position(pos_fn)
+            else:
+                clip = clip.with_position((start_x, start_y))
+
+            clip = clip.with_start(start).with_end(end).with_opacity(opacity)
+            comps.append(clip)
+            log_fn(f"[DETAIL] {i} {dtype}: {source} t={start:.2f}〜{end:.2f} pos=({start_x},{start_y})→({end_x},{end_y})")
+
+        final = CompositeVideoClip(comps, size=base.size)
+        final = final.with_duration(dur)
+        if preview_scale and preview_scale != 1.0:
+            new_w = max(1, int(final.w * preview_scale))
+            new_h = max(1, int(final.h * preview_scale))
+            final = final.resized(new_size=(new_w, new_h))
+
+        if audio_layers:
+            final = final.with_audio(CompositeAudioClip(audio_layers))
+
+        update_progress(0.70, None)
+        log_fn("[DETAIL] 書き出し開始...")
+        mp_logger = TkMoviePyLogger(progress_fn=progress_fn, base=0.70, span=0.30)
+        final.write_videofile(
+            str(out_path),
+            codec="libx264",
+            audio_codec="aac",
+            fps=int(base_fps or 30),
+            logger=mp_logger,
+        )
+        update_progress(1.0, 0)
+        log_fn("[DETAIL] ✅ 完了しました。")
+        final.close()
+
+    finally:
+        base.close()
+
 # ==========================
 # GUI
 # ==========================
@@ -1278,6 +1507,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.prompt_template_var = ctk.StringVar(value="")
 
         self.edit_overlays: List[Dict[str, Any]] = []
+        self.detail_edits: List[Dict[str, Any]] = []
         self._edit_preview_base: Image.Image | None = None
         self._edit_preview_overlay: Image.Image | None = None
         self._edit_preview_imgtk = None
@@ -1285,6 +1515,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._edit_preview_size = None
         self._edit_cell_entry = None
         self._edit_detail_labels: Dict[str, ctk.CTkLabel] = {}
+        self._edit_video_fps = 30.0
+        self._edit_video_duration = 0.0
 
         # build UI
         self._build_layout()
@@ -2751,6 +2983,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
         )
         self.edit_preview_scale_value.grid(row=2, column=2, sticky="e", pady=(6, 0))
 
+        self.edit_video_info_label = ctk.CTkLabel(
+            preview_wrap,
+            text="FPS: -- / Duration: --",
+            text_color=self.COL_MUTED,
+            anchor="w",
+        )
+        self.edit_video_info_label.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 12))
+
         self._v_label(form, "入力動画").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
         self._v_hint(form, "MP4 を読み込んで、指定時間帯に画像を重ねて加工します。").grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
 
@@ -3032,6 +3272,265 @@ class NewsShortGeneratorStudio(ctk.CTk):
             fg_color="#3b1d1d", hover_color="#4a2323",
         ).grid(row=0, column=2, sticky="ew", padx=(8, 0))
 
+        # ==========================
+        # NEW: 詳細動画編集（フレーム単位）
+        # ==========================
+        self._v_label(form, "詳細動画編集（フレーム単位）").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
+        self._v_hint(
+            form,
+            "入力動画のFPSに合わせてフレーム単位でSE/表示内容/アニメーションを編集します。",
+        ).grid(row=r, column=0, sticky="w", pady=(0, 8)); r += 1
+
+        info_frame = ctk.CTkFrame(form, fg_color="transparent")
+        info_frame.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        info_frame.grid_columnconfigure(0, weight=1)
+        self.edit_detail_info_label = ctk.CTkLabel(
+            info_frame,
+            text="FPS: -- / Duration: --",
+            text_color=self.COL_MUTED,
+            anchor="w",
+        )
+        self.edit_detail_info_label.grid(row=0, column=0, sticky="w")
+
+        type_row = ctk.CTkFrame(form, fg_color="transparent")
+        type_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        type_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(type_row, text="種類", text_color=self.COL_MUTED).grid(row=0, column=0, sticky="w")
+        self.detail_type_var = ctk.StringVar(value="画像")
+        self.detail_type_menu = ctk.CTkOptionMenu(
+            type_row,
+            values=["画像", "テキスト", "SE"],
+            variable=self.detail_type_var,
+            command=lambda _v: self._update_detail_edit_form_visibility(),
+        )
+        self.detail_type_menu.grid(row=0, column=1, sticky="w", padx=(12, 0))
+
+        fr = ctk.CTkFrame(form, fg_color="transparent")
+        fr.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        fr.grid_columnconfigure(0, weight=1)
+        fr.grid_columnconfigure(1, weight=1)
+
+        fr_left = ctk.CTkFrame(fr, fg_color="transparent")
+        fr_left.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        fr_left.grid_columnconfigure(0, weight=1)
+        self._v_hint(fr_left, "開始フレーム").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.detail_start_frame_entry = self._v_entry(fr_left)
+        self.detail_start_frame_entry.insert(0, "0")
+        self.detail_start_frame_entry.grid(row=1, column=0, sticky="ew")
+
+        fr_right = ctk.CTkFrame(fr, fg_color="transparent")
+        fr_right.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        fr_right.grid_columnconfigure(0, weight=1)
+        self._v_hint(fr_right, "終了フレーム").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.detail_end_frame_entry = self._v_entry(fr_right)
+        self.detail_end_frame_entry.insert(0, "30")
+        self.detail_end_frame_entry.grid(row=1, column=0, sticky="ew")
+
+        # detail content: image/text/se
+        self.detail_content_wrap = ctk.CTkFrame(form, fg_color="transparent")
+        self.detail_content_wrap.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        self.detail_content_wrap.grid_columnconfigure(0, weight=1)
+
+        self.detail_image_frame = ctk.CTkFrame(self.detail_content_wrap, fg_color="transparent")
+        self.detail_image_frame.grid(row=0, column=0, sticky="ew")
+        self.detail_image_frame.grid_columnconfigure(0, weight=1)
+        self._v_hint(self.detail_image_frame, "画像パス").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        img_row, self.detail_image_entry = self._v_path_row(
+            self.detail_image_frame,
+            "選択",
+            self.browse_detail_image,
+        )
+        img_row.grid(row=1, column=0, sticky="ew")
+
+        self.detail_text_frame = ctk.CTkFrame(self.detail_content_wrap, fg_color="transparent")
+        self.detail_text_frame.grid(row=0, column=0, sticky="ew")
+        self.detail_text_frame.grid_columnconfigure(0, weight=1)
+        self._v_hint(self.detail_text_frame, "表示テキスト").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.detail_text_entry = ctk.CTkTextbox(
+            self.detail_text_frame,
+            height=80,
+            fg_color=self.COL_BG,
+            text_color=self.COL_TEXT,
+            border_width=1,
+            border_color=self.COL_BORDER,
+            corner_radius=10,
+        )
+        self.detail_text_entry.grid(row=1, column=0, sticky="ew")
+
+        self.detail_audio_frame = ctk.CTkFrame(self.detail_content_wrap, fg_color="transparent")
+        self.detail_audio_frame.grid(row=0, column=0, sticky="ew")
+        self.detail_audio_frame.grid_columnconfigure(0, weight=1)
+        self._v_hint(self.detail_audio_frame, "SEファイル").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        audio_row, self.detail_audio_entry = self._v_path_row(
+            self.detail_audio_frame,
+            "選択",
+            self.browse_detail_audio,
+        )
+        audio_row.grid(row=1, column=0, sticky="ew")
+
+        anim_row = ctk.CTkFrame(form, fg_color="transparent")
+        anim_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        for col in range(4):
+            anim_row.grid_columnconfigure(col, weight=1)
+
+        self._v_hint(anim_row, "開始X").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.detail_start_x_entry = self._v_entry(anim_row)
+        self.detail_start_x_entry.insert(0, "100")
+        self.detail_start_x_entry.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+
+        self._v_hint(anim_row, "開始Y").grid(row=0, column=1, sticky="w", pady=(0, 4))
+        self.detail_start_y_entry = self._v_entry(anim_row)
+        self.detail_start_y_entry.insert(0, "100")
+        self.detail_start_y_entry.grid(row=1, column=1, sticky="ew", padx=(6, 6))
+
+        self._v_hint(anim_row, "終了X").grid(row=0, column=2, sticky="w", pady=(0, 4))
+        self.detail_end_x_entry = self._v_entry(anim_row)
+        self.detail_end_x_entry.insert(0, "100")
+        self.detail_end_x_entry.grid(row=1, column=2, sticky="ew", padx=(6, 6))
+
+        self._v_hint(anim_row, "終了Y").grid(row=0, column=3, sticky="w", pady=(0, 4))
+        self.detail_end_y_entry = self._v_entry(anim_row)
+        self.detail_end_y_entry.insert(0, "100")
+        self.detail_end_y_entry.grid(row=1, column=3, sticky="ew", padx=(6, 0))
+
+        style_row = ctk.CTkFrame(form, fg_color="transparent")
+        style_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        style_row.grid_columnconfigure(0, weight=1)
+        style_row.grid_columnconfigure(1, weight=1)
+        style_row.grid_columnconfigure(2, weight=1)
+
+        self._v_hint(style_row, "スケール(%)").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.detail_scale_entry = self._v_entry(style_row)
+        self.detail_scale_entry.insert(0, "100")
+        self.detail_scale_entry.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+
+        self._v_hint(style_row, "不透明度(0-1)").grid(row=0, column=1, sticky="w", pady=(0, 4))
+        self.detail_opacity_entry = self._v_entry(style_row)
+        self.detail_opacity_entry.insert(0, "1.0")
+        self.detail_opacity_entry.grid(row=1, column=1, sticky="ew", padx=(6, 6))
+
+        self._v_hint(style_row, "SE音量(0-2)").grid(row=0, column=2, sticky="w", pady=(0, 4))
+        self.detail_volume_entry = self._v_entry(style_row)
+        self.detail_volume_entry.insert(0, "1.0")
+        self.detail_volume_entry.grid(row=1, column=2, sticky="ew", padx=(6, 0))
+
+        text_style_row = ctk.CTkFrame(form, fg_color="transparent")
+        text_style_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        text_style_row.grid_columnconfigure(0, weight=1)
+        text_style_row.grid_columnconfigure(1, weight=1)
+
+        self._v_hint(text_style_row, "文字サイズ").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.detail_font_size_entry = self._v_entry(text_style_row)
+        self.detail_font_size_entry.insert(0, "36")
+        self.detail_font_size_entry.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+
+        self._v_hint(text_style_row, "文字色(#RRGGBB)").grid(row=0, column=1, sticky="w", pady=(0, 4))
+        self.detail_text_color_entry = self._v_entry(text_style_row)
+        self.detail_text_color_entry.insert(0, "#FFFFFF")
+        self.detail_text_color_entry.grid(row=1, column=1, sticky="ew", padx=(6, 0))
+
+        detail_actions = ctk.CTkFrame(form, fg_color="transparent")
+        detail_actions.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        detail_actions.grid_columnconfigure(0, weight=1)
+        detail_actions.grid_columnconfigure(1, weight=1)
+        detail_actions.grid_columnconfigure(2, weight=1)
+
+        ctk.CTkButton(
+            detail_actions,
+            text="＋ 詳細編集を追加",
+            command=self.add_detail_edit,
+            height=38,
+            corner_radius=12,
+            fg_color="#1f5d8f",
+            hover_color="#1b527f",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+        ctk.CTkButton(
+            detail_actions,
+            text="選択行を更新",
+            command=self.update_selected_detail_edit_from_form,
+            height=38,
+            corner_radius=12,
+            fg_color=self.COL_OK,
+            hover_color=self.COL_OK_HOVER,
+        ).grid(row=0, column=1, sticky="ew", padx=8)
+
+        ctk.CTkButton(
+            detail_actions,
+            text="選択行を削除",
+            command=self.delete_selected_detail_edit,
+            height=38,
+            corner_radius=12,
+            fg_color="#3b1d1d",
+            hover_color="#4a2323",
+        ).grid(row=0, column=2, sticky="ew", padx=(8, 0))
+
+        self._v_label(form, "詳細編集一覧").grid(row=r, column=0, sticky="w", pady=(4, 6)); r += 1
+        detail_table = ctk.CTkFrame(form, corner_radius=14, fg_color=self.COL_BG)
+        detail_table.grid(row=r, column=0, sticky="nsew", pady=(0, 12)); r += 1
+        detail_table.grid_rowconfigure(0, weight=1)
+        detail_table.grid_columnconfigure(0, weight=1)
+
+        detail_columns = ("type", "start", "end", "content")
+        self.detail_tree = ttk.Treeview(
+            detail_table,
+            columns=detail_columns,
+            show="headings",
+            height=8,
+            style="Overlay.Treeview",
+        )
+        self.detail_tree.heading("type", text="type")
+        self.detail_tree.heading("start", text="start(frame)")
+        self.detail_tree.heading("end", text="end(frame)")
+        self.detail_tree.heading("content", text="content")
+        self.detail_tree.column("type", width=80, anchor="w")
+        self.detail_tree.column("start", width=100, anchor="e")
+        self.detail_tree.column("end", width=100, anchor="e")
+        self.detail_tree.column("content", width=320, anchor="w")
+        detail_vsb = ttk.Scrollbar(detail_table, orient="vertical", command=self.detail_tree.yview)
+        self.detail_tree.configure(yscrollcommand=detail_vsb.set)
+        self.detail_tree.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        detail_vsb.grid(row=0, column=1, sticky="ns", pady=10)
+        self.detail_tree.bind("<<TreeviewSelect>>", self.on_detail_edit_select)
+        self.detail_tree.tag_configure("even", background=self.COL_PANEL2)
+        self.detail_tree.tag_configure("odd", background="#0f1e34")
+
+        preview_row = ctk.CTkFrame(form, fg_color="transparent")
+        preview_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        preview_row.grid_columnconfigure(0, weight=1)
+        preview_row.grid_columnconfigure(1, weight=1)
+        preview_row.grid_columnconfigure(2, weight=1)
+
+        self._v_hint(preview_row, "プレビュー開始フレーム").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.detail_preview_start_entry = self._v_entry(preview_row)
+        self.detail_preview_start_entry.insert(0, "0")
+        self.detail_preview_start_entry.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+
+        self._v_hint(preview_row, "プレビュー終了フレーム").grid(row=0, column=1, sticky="w", pady=(0, 4))
+        self.detail_preview_end_entry = self._v_entry(preview_row)
+        self.detail_preview_end_entry.insert(0, "90")
+        self.detail_preview_end_entry.grid(row=1, column=1, sticky="ew", padx=(6, 6))
+
+        ctk.CTkButton(
+            preview_row,
+            text="プレビュー生成",
+            command=self.render_detail_preview_clip,
+            height=38,
+            corner_radius=12,
+            fg_color="#172238",
+            hover_color="#1b2a44",
+        ).grid(row=1, column=2, sticky="ew", padx=(6, 0))
+
+        ctk.CTkButton(
+            form,
+            text="▶ 詳細編集を書き出す",
+            command=self.on_render_detail_edit_video_clicked,
+            height=42,
+            corner_radius=12,
+            fg_color=self.COL_ACCENT,
+            hover_color=self.COL_ACCENT_HOVER,
+        ).grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+
         # ---- SRT -> 画像収集 + JSON ----
         self._v_label(form, "SRTから画像収集").grid(row=r, column=0, sticky="w", pady=(6, 6)); r += 1
         self._v_hint(form, "字幕ごとに検索キーワードを生成し、Google/Bing画像検索から取得します。").grid(
@@ -3145,6 +3644,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.edit_render_button.grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
 
         self.refresh_edit_overlay_table()
+        self.refresh_detail_edit_table()
+        self._update_detail_edit_form_visibility()
 
 
         # 多分要らない
@@ -3247,11 +3748,25 @@ class NewsShortGeneratorStudio(ctk.CTk):
             img = Image.fromarray(frame).convert("RGBA")
             self._edit_preview_base = img
             self._edit_preview_size = img.size
+            self._edit_video_fps = float(clip.fps or 30)
+            self._edit_video_duration = float(clip.duration or 0)
+            if hasattr(self, "edit_video_info_label"):
+                self.edit_video_info_label.configure(
+                    text=f"FPS: {self._edit_video_fps:.2f} / Duration: {self._edit_video_duration:.2f}s"
+                )
+            if hasattr(self, "edit_detail_info_label"):
+                self.edit_detail_info_label.configure(
+                    text=f"FPS: {self._edit_video_fps:.2f} / Duration: {self._edit_video_duration:.2f}s"
+                )
             self._update_edit_preview_slider_ranges()
             self._sync_edit_preview_from_sliders()
         except Exception as e:
             self._edit_preview_base = None
             self._edit_preview_size = None
+            self._edit_video_fps = 30.0
+            self._edit_video_duration = 0.0
+            if hasattr(self, "edit_detail_info_label"):
+                self.edit_detail_info_label.configure(text="FPS: -- / Duration: --")
             if hasattr(self, "edit_preview_label"):
                 self.edit_preview_label.configure(text=f"プレビュー取得失敗: {e}", image="")
             self._edit_preview_imgtk = None
@@ -3397,6 +3912,295 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.refresh_edit_overlay_table()
         self.save_config()
         self.log("🧹 オーバーレイ一覧をクリアしました。")
+
+    def _update_detail_edit_form_visibility(self):
+        if not hasattr(self, "detail_type_var"):
+            return
+        mode = self.detail_type_var.get()
+        self.detail_image_frame.grid_remove()
+        self.detail_text_frame.grid_remove()
+        self.detail_audio_frame.grid_remove()
+
+        if mode == "画像":
+            self.detail_image_frame.grid()
+        elif mode == "テキスト":
+            self.detail_text_frame.grid()
+        else:
+            self.detail_audio_frame.grid()
+
+    def _detail_selected_index(self) -> int | None:
+        if not hasattr(self, "detail_tree"):
+            return None
+        sel = self.detail_tree.selection()
+        if not sel:
+            return None
+        try:
+            return int(sel[0])
+        except Exception:
+            return None
+
+    def refresh_detail_edit_table(self):
+        if not hasattr(self, "detail_tree"):
+            return
+        for item in self.detail_tree.get_children():
+            self.detail_tree.delete(item)
+
+        for idx, item in enumerate(self.detail_edits):
+            tag = "even" if idx % 2 == 0 else "odd"
+            dtype = item.get("type", "image")
+            start_f = int(item.get("start_frame", 0))
+            end_f = int(item.get("end_frame", 0))
+            if dtype == "se":
+                content = Path(item.get("audio_path", "")).name
+            elif dtype == "text":
+                text = str(item.get("text", "")).replace("\n", " ")
+                content = (text[:30] + "…") if len(text) > 30 else text
+            else:
+                content = Path(item.get("image_path", "")).name
+            self.detail_tree.insert(
+                "", "end",
+                iid=str(idx),
+                tags=(tag,),
+                values=(dtype, start_f, end_f, content),
+            )
+
+    def _detail_frames_to_seconds(self, frame: int) -> float:
+        return frames_to_seconds(frame, self._edit_video_fps or 30.0)
+
+    def _build_detail_item_from_form(self) -> Dict[str, Any]:
+        dtype = self.detail_type_var.get()
+        start_frame = int(self.detail_start_frame_entry.get().strip() or "0")
+        end_frame = int(self.detail_end_frame_entry.get().strip() or "0")
+        if end_frame <= start_frame:
+            raise ValueError("終了フレームは開始フレームより大きくしてください。")
+
+        item: Dict[str, Any] = {
+            "type": "image" if dtype == "画像" else "text" if dtype == "テキスト" else "se",
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "start_sec": self._detail_frames_to_seconds(start_frame),
+            "end_sec": self._detail_frames_to_seconds(end_frame),
+        }
+
+        if dtype == "画像":
+            path = self.detail_image_entry.get().strip()
+            if not path or not Path(path).exists():
+                raise ValueError("有効な画像ファイルを選択してください。")
+            item["image_path"] = path
+        elif dtype == "テキスト":
+            text = self.detail_text_entry.get("1.0", "end").rstrip("\n")
+            if not text.strip():
+                raise ValueError("テキストを入力してください。")
+            item["text"] = text
+            item["font_size"] = int(self.detail_font_size_entry.get().strip() or "36")
+            item["color"] = self.detail_text_color_entry.get().strip() or "#FFFFFF"
+        else:
+            audio_path = self.detail_audio_entry.get().strip()
+            if not audio_path or not Path(audio_path).exists():
+                raise ValueError("有効なSEファイルを選択してください。")
+            item["audio_path"] = audio_path
+
+        item["start_x"] = int(self.detail_start_x_entry.get().strip() or "0")
+        item["start_y"] = int(self.detail_start_y_entry.get().strip() or "0")
+        item["end_x"] = int(self.detail_end_x_entry.get().strip() or "0")
+        item["end_y"] = int(self.detail_end_y_entry.get().strip() or "0")
+        item["scale"] = float(self.detail_scale_entry.get().strip() or "100")
+        item["opacity"] = float(self.detail_opacity_entry.get().strip() or "1.0")
+        item["volume"] = float(self.detail_volume_entry.get().strip() or "1.0")
+        return item
+
+    def add_detail_edit(self):
+        try:
+            item = self._build_detail_item_from_form()
+            self.detail_edits.append(item)
+            self.refresh_detail_edit_table()
+            self.save_config()
+            self.log("✅ 詳細編集を追加しました。")
+        except Exception as e:
+            messagebox.showerror("エラー", f"詳細編集の追加に失敗しました:\n{e}")
+
+    def on_detail_edit_select(self, _event=None):
+        idx = self._detail_selected_index()
+        if idx is None or idx < 0 or idx >= len(self.detail_edits):
+            return
+        item = self.detail_edits[idx]
+        dtype = item.get("type", "image")
+        if dtype == "image":
+            self.detail_type_var.set("画像")
+        elif dtype == "text":
+            self.detail_type_var.set("テキスト")
+        else:
+            self.detail_type_var.set("SE")
+        self._update_detail_edit_form_visibility()
+
+        self.detail_start_frame_entry.delete(0, "end")
+        self.detail_start_frame_entry.insert(0, str(item.get("start_frame", 0)))
+        self.detail_end_frame_entry.delete(0, "end")
+        self.detail_end_frame_entry.insert(0, str(item.get("end_frame", 0)))
+
+        if dtype == "image":
+            self.detail_image_entry.delete(0, "end")
+            self.detail_image_entry.insert(0, item.get("image_path", ""))
+        elif dtype == "text":
+            self.detail_text_entry.delete("1.0", "end")
+            self.detail_text_entry.insert("1.0", item.get("text", ""))
+            self.detail_font_size_entry.delete(0, "end")
+            self.detail_font_size_entry.insert(0, str(item.get("font_size", 36)))
+            self.detail_text_color_entry.delete(0, "end")
+            self.detail_text_color_entry.insert(0, item.get("color", "#FFFFFF"))
+        else:
+            self.detail_audio_entry.delete(0, "end")
+            self.detail_audio_entry.insert(0, item.get("audio_path", ""))
+
+        self.detail_start_x_entry.delete(0, "end")
+        self.detail_start_x_entry.insert(0, str(item.get("start_x", 0)))
+        self.detail_start_y_entry.delete(0, "end")
+        self.detail_start_y_entry.insert(0, str(item.get("start_y", 0)))
+        self.detail_end_x_entry.delete(0, "end")
+        self.detail_end_x_entry.insert(0, str(item.get("end_x", 0)))
+        self.detail_end_y_entry.delete(0, "end")
+        self.detail_end_y_entry.insert(0, str(item.get("end_y", 0)))
+        self.detail_scale_entry.delete(0, "end")
+        self.detail_scale_entry.insert(0, str(item.get("scale", 100)))
+        self.detail_opacity_entry.delete(0, "end")
+        self.detail_opacity_entry.insert(0, str(item.get("opacity", 1.0)))
+        self.detail_volume_entry.delete(0, "end")
+        self.detail_volume_entry.insert(0, str(item.get("volume", 1.0)))
+
+    def update_selected_detail_edit_from_form(self):
+        idx = self._detail_selected_index()
+        if idx is None or idx < 0 or idx >= len(self.detail_edits):
+            messagebox.showinfo("選択", "更新する行を選択してください。")
+            return
+        try:
+            item = self._build_detail_item_from_form()
+            self.detail_edits[idx] = item
+            self.refresh_detail_edit_table()
+            self.save_config()
+            self.log("✅ 詳細編集を更新しました。")
+        except Exception as e:
+            messagebox.showerror("エラー", f"詳細編集の更新に失敗しました:\n{e}")
+
+    def delete_selected_detail_edit(self):
+        idx = self._detail_selected_index()
+        if idx is None or idx < 0 or idx >= len(self.detail_edits):
+            messagebox.showinfo("選択", "削除する行を選択してください。")
+            return
+        del self.detail_edits[idx]
+        self.refresh_detail_edit_table()
+        self.save_config()
+        self.log("🧹 詳細編集を削除しました。")
+
+    def browse_detail_image(self):
+        path = filedialog.askopenfilename(
+            title="詳細編集用画像を選択",
+            filetypes=[("画像", "*.png;*.jpg;*.jpeg;*.webp;*.bmp"), ("すべて", "*.*")],
+        )
+        if path:
+            self.detail_image_entry.delete(0, "end")
+            self.detail_image_entry.insert(0, path)
+
+    def browse_detail_audio(self):
+        path = filedialog.askopenfilename(
+            title="SEファイルを選択",
+            filetypes=[("音声", "*.wav;*.mp3;*.aac;*.m4a;*.ogg"), ("すべて", "*.*")],
+        )
+        if path:
+            self.detail_audio_entry.delete(0, "end")
+            self.detail_audio_entry.insert(0, path)
+
+    def render_detail_preview_clip(self):
+        in_mp4 = self.edit_input_entry.get().strip()
+        if not in_mp4 or not Path(in_mp4).exists():
+            messagebox.showerror("エラー", "有効な入力MP4を選択してください。")
+            return
+        if not self.detail_edits and not self.edit_overlays:
+            messagebox.showerror("エラー", "詳細編集またはオーバーレイがありません。")
+            return
+
+        try:
+            start_f = int(self.detail_preview_start_entry.get().strip() or "0")
+            end_f = int(self.detail_preview_end_entry.get().strip() or "0")
+            if end_f <= start_f:
+                messagebox.showerror("エラー", "プレビュー終了フレームは開始フレームより大きくしてください。")
+                return
+            start_s = self._detail_frames_to_seconds(start_f)
+            end_s = self._detail_frames_to_seconds(end_f)
+        except Exception as e:
+            messagebox.showerror("エラー", f"プレビュー範囲が不正です:\n{e}")
+            return
+
+        base_path = Path(in_mp4)
+        preview_name = base_path.stem + "_preview.mp4"
+        preview_path = base_path.parent / preview_name
+
+        self.save_config()
+        self.log("=== 詳細編集プレビュー生成 ===")
+        self.set_status("Working", ok=True)
+
+        def worker():
+            try:
+                apply_detailed_edits_to_video(
+                    input_mp4=in_mp4,
+                    overlays=self.edit_overlays,
+                    detail_edits=self.detail_edits,
+                    output_mp4=str(preview_path),
+                    log_fn=self.log,
+                    progress_fn=self.update_progress,
+                    preview_range=(start_s, end_s),
+                    preview_scale=0.6,
+                )
+                self.set_status("Ready", ok=True)
+                self.log(f"✅ プレビュー生成完了: {preview_path}")
+                messagebox.showinfo("完了", f"プレビューを生成しました:\n{preview_path}")
+            except Exception as e:
+                self.set_status("Error", ok=False)
+                tb = traceback.format_exc()
+                self.log("❌ プレビュー生成でエラー:\n" + tb)
+                messagebox.showerror("エラー", f"プレビュー生成に失敗しました:\n{e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_render_detail_edit_video_clicked(self):
+        in_mp4 = self.edit_input_entry.get().strip()
+        out_mp4 = self.edit_output_entry.get().strip()
+
+        if not in_mp4 or not Path(in_mp4).exists():
+            messagebox.showerror("エラー", "有効な入力MP4を選択してください。")
+            return
+        if not out_mp4:
+            messagebox.showerror("エラー", "出力MP4の保存先を指定してください。")
+            return
+        if not self.detail_edits and not self.edit_overlays:
+            messagebox.showerror("エラー", "詳細編集またはオーバーレイがありません。")
+            return
+
+        self.save_config()
+        self.log_text.delete("1.0", "end")
+        self.update_progress(0.0)
+        self.set_status("Working", ok=True)
+        self.log("=== 詳細動画編集 書き出し開始 ===")
+
+        def worker():
+            try:
+                apply_detailed_edits_to_video(
+                    input_mp4=in_mp4,
+                    overlays=self.edit_overlays,
+                    detail_edits=self.detail_edits,
+                    output_mp4=out_mp4,
+                    log_fn=self.log,
+                    progress_fn=self.update_progress,
+                )
+                self.set_status("Ready", ok=True)
+                self.log("=== 詳細動画編集 完了 ===")
+                messagebox.showinfo("完了", "詳細編集の書き出しが完了しました。")
+            except Exception as e:
+                self.set_status("Error", ok=False)
+                tb = traceback.format_exc()
+                self.log("❌ 詳細動画編集でエラー:\n" + tb)
+                messagebox.showerror("エラー", f"詳細動画編集に失敗しました:\n{e}")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _get_edit_import_defaults(self) -> Dict[str, Any]:
         try:
@@ -3714,6 +4518,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "- 右：ログ（進捗）\n\n"
             "[動画編集]\n"
             "- 指定時間帯に画像を座標指定で重ねる（複数対応）\n"
+            "- 詳細編集: フレーム単位でSE/テキスト/画像を追加し、簡易アニメーションも設定\n"
+            "- プレビュー生成で指定フレーム範囲を確認\n"
             "- CompositeVideoClip により合成\n\n"
             "Tips:\n"
             "- 中央フォームが崩れる場合、ScrollableFrame内をgrid統一し、入力列の weight=1 を徹底してください。\n"
@@ -3896,6 +4702,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if hasattr(self, "edit_input_entry"):
             self.edit_input_entry.delete(0, "end")
             self.edit_input_entry.insert(0, data.get("edit_input_mp4", ""))
+            edit_path = self.edit_input_entry.get().strip()
+            if edit_path and Path(edit_path).exists():
+                self._load_edit_video_preview(edit_path)
 
         if hasattr(self, "edit_output_entry"):
             self.edit_output_entry.delete(0, "end")
@@ -3948,6 +4757,18 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 safe.append(ov)
             self.edit_overlays = safe
             self.refresh_edit_overlay_table()
+
+        detail_items = data.get("detail_edits", [])
+        if isinstance(detail_items, list):
+            safe_items = []
+            for item in detail_items:
+                if not isinstance(item, dict):
+                    continue
+                if "type" not in item:
+                    continue
+                safe_items.append(item)
+            self.detail_edits = safe_items
+            self.refresh_detail_edit_table()
 
         self._refresh_template_menu()
 
@@ -4022,6 +4843,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "edit_input_mp4": getattr(self, "edit_input_entry", None).get().strip() if hasattr(self, "edit_input_entry") else "",
             "edit_output_mp4": getattr(self, "edit_output_entry", None).get().strip() if hasattr(self, "edit_output_entry") else "",
             "edit_overlays": self.edit_overlays,
+            "detail_edits": self.detail_edits,
             "edit_srt_path": getattr(self, "edit_srt_entry", None).get().strip() if hasattr(self, "edit_srt_entry") else "",
             "edit_image_output_dir": getattr(self, "edit_image_output_entry", None).get().strip() if hasattr(self, "edit_image_output_entry") else "",
             "edit_search_provider": self.edit_search_provider_var.get() if hasattr(self, "edit_search_provider_var") else DEFAULT_IMAGE_SEARCH_PROVIDER,
