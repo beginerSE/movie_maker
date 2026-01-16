@@ -18,8 +18,6 @@ import json
 import threading
 import traceback
 import tkinter as tk
-import mimetypes
-from urllib.parse import urlparse, unquote
 from tkinter import filedialog, messagebox, simpledialog
 from proglog import ProgressBarLogger
 import tkinter.font as tkfont
