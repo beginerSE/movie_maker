@@ -2842,11 +2842,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
         out_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
 
         json_row, self.edit_json_output_entry = self._v_path_row(
-            form, "JSON保存", self.browse_edit_json_output
+            form, "JSON保存先", self.browse_edit_json_output
         )
         json_row.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
         self.edit_image_output_entry.insert(0, str(Path.home() / "srt_images"))
-        self.edit_json_output_entry.insert(0, str(Path.home() / "srt_images" / "overlays.json"))
+        self.edit_json_output_entry.insert(0, str(Path.home() / "srt_images"))
 
         api_row = ctk.CTkFrame(form, fg_color="transparent")
         api_row.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
@@ -3150,11 +3150,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_image_output_entry.insert(0, path)
 
     def browse_edit_json_output(self):
-        path = filedialog.asksaveasfilename(
-            title="JSONの保存先を選択",
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json"), ("すべて", "*.*")],
-        )
+        path = filedialog.askdirectory(title="JSONの保存フォルダを選択")
         if path and hasattr(self, "edit_json_output_entry"):
             self.edit_json_output_entry.delete(0, "end")
             self.edit_json_output_entry.insert(0, path)
@@ -3292,7 +3288,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
             if len(queries) < len(items):
                 queries.extend(queries[-1:] * (len(items) - len(queries)))
 
-            output_dir_path = Path(output_dir)
+            srt_stem = Path(srt_path).stem
+            output_dir_path = Path(output_dir) / srt_stem
+            output_dir_path.mkdir(parents=True, exist_ok=True)
+            json_dir_path = Path(json_output)
+            if json_dir_path.suffix:
+                json_dir_path = json_dir_path.parent
+            json_dir_path.mkdir(parents=True, exist_ok=True)
+            json_output_path = json_dir_path / f"{srt_stem}.json"
             results = []
             url_to_image: Dict[str, Path] = {}
             total = len(items)
@@ -3340,12 +3343,12 @@ class NewsShortGeneratorStudio(ctk.CTk):
             if not results:
                 raise RuntimeError("画像を取得できませんでした。")
 
-            Path(json_output).write_text(
+            json_output_path.write_text(
                 json.dumps(results, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
 
-            self.log(f"✅ 画像 {len(results)} 件を保存し、JSONを書き出しました: {json_output}")
+            self.log(f"✅ 画像 {len(results)} 件を保存し、JSONを書き出しました: {json_output_path}")
             self.after(0, lambda: messagebox.showinfo("完了", "画像収集とJSON出力が完了しました。"))
             self.after(0, self.save_config)
         except Exception as exc:
@@ -3363,7 +3366,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
             json_output = self.edit_json_output_entry.get().strip()
             if not json_output:
-                raise RuntimeError("JSONの保存先を指定してください。")
+                raise RuntimeError("JSONの保存先フォルダを指定してください。")
 
             provider = self.edit_search_provider_var.get() if hasattr(self, "edit_search_provider_var") else "Google"
             search_key = self.edit_search_api_key_entry.get().strip()
