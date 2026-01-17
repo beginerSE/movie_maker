@@ -49,7 +49,7 @@ from moviepy import (
     concatenate_videoclips,
     concatenate_audioclips,
 )
-from moviepy.audio.fx import all as afx
+from moviepy.audio.fx.all import audio_fadein, audio_fadeout, audio_loop
 from moviepy.audio.AudioClip import CompositeAudioClip
 
 from PIL import Image, ImageDraw, ImageFont
@@ -5487,16 +5487,16 @@ class NewsShortGeneratorStudio(ctk.CTk):
             if bgm_path:
                 bgm = AudioFileClip(bgm_path).volumex(float(self.detailed_bgm_volume_slider.get()))
                 if bgm.duration < final.duration:
-                    bgm = afx.audio_loop(bgm, duration=final.duration)
+                    bgm = audio_loop(bgm, duration=final.duration)
                 audio_tracks.append(bgm)
             if audio_tracks:
                 mixed = CompositeAudioClip(audio_tracks)
                 fade_in = self._safe_float(self.detailed_fade_in_entry.get().strip(), 0.0)
                 fade_out = self._safe_float(self.detailed_fade_out_entry.get().strip(), 0.0)
                 if fade_in > 0:
-                    mixed = afx.audio_fadein(mixed, fade_in)
+                    mixed = audio_fadein(mixed, fade_in)
                 if fade_out > 0:
-                    mixed = afx.audio_fadeout(mixed, fade_out)
+                    mixed = audio_fadeout(mixed, fade_out)
                 final = final.with_audio(mixed)
             else:
                 final = final.with_audio(None)
