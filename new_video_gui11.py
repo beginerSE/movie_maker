@@ -2,7 +2,7 @@
 """
 News Short Generator Studio（Windows向け）
 - 左：React風サイドバー（アイコン＋メニュー）
-- 中央：フォーム（「動画生成」「台本生成」「資料作成」「動画編集」ページ切替）
+- 中央：フォーム（「動画生成」「台本生成」「資料作成」「動画編集」「詳細動画編集」ページ切替）
 - 右：ログ（+ 進捗）
 
 [動画編集（NEW）]
@@ -49,6 +49,7 @@ from moviepy import (
     concatenate_videoclips,
     concatenate_audioclips,
 )
+from moviepy.audio.fx import all as afx
 from moviepy.audio.AudioClip import CompositeAudioClip
 
 from PIL import Image, ImageDraw, ImageFont
@@ -167,6 +168,10 @@ DEFAULT_EDIT_IMPORT_W = 0
 DEFAULT_EDIT_IMPORT_H = 0
 DEFAULT_EDIT_IMPORT_OPACITY = 1.0
 DEFAULT_IMAGE_SEARCH_PROVIDER = "Google"
+
+# 詳細動画編集（プロジェクト）
+DETAILED_PROJECT_EXT = ".mmproj"
+DETAILED_AUTOSAVE_INTERVAL_MS = 30000
 
 
 SPEAKER_ALIASES = {
@@ -1285,6 +1290,20 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._edit_preview_size = None
         self._edit_cell_entry = None
         self._edit_detail_labels: Dict[str, ctk.CTkLabel] = {}
+        self.detailed_project_path: Optional[Path] = None
+        self.detailed_project_data: Dict[str, Any] = self._default_detailed_project()
+        self.detailed_assets: List[Dict[str, Any]] = []
+        self.detailed_timeline: List[Dict[str, Any]] = []
+        self.detailed_overlays: List[Dict[str, Any]] = []
+        self._detailed_preview_clip: Optional[VideoFileClip] = None
+        self._detailed_preview_playing = False
+        self._detailed_preview_job = None
+        self._detailed_preview_time = 0.0
+        self._detailed_preview_imgtk = None
+        self._detailed_asset_imgtk = None
+        self._detailed_drag_timeline_iid = None
+        self._detailed_autosave_job = None
+        self._detailed_dirty = False
 
         # build UI
         self._build_layout()
@@ -1296,6 +1315,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.switch_page("video")
         self._edit_thumb_imgtk = None
         self._sync_edit_preview_state()
+        self._schedule_detailed_autosave()
 
     def _pick_font_family(self, candidates: list[str]) -> str:
         try:
@@ -1307,6 +1327,31 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 return name
         # 最後の砦
         return "TkDefaultFont"
+
+    def _default_detailed_project(self) -> Dict[str, Any]:
+        return {
+            "name": "",
+            "root_dir": "",
+            "input_dir": "",
+            "output_dir": "",
+            "assets": [],
+            "main_video": "",
+            "timeline": [],
+            "overlays": [],
+            "audio": {
+                "bgm_path": "",
+                "bgm_volume": 0.7,
+                "video_audio": True,
+                "video_volume": 1.0,
+                "fade_in": 0.0,
+                "fade_out": 0.0,
+            },
+            "export": {
+                "output_path": "",
+                "resolution": "1920x1080",
+                "fps": 30,
+            },
+        }
 
     
 
@@ -1381,6 +1426,41 @@ class NewsShortGeneratorStudio(ctk.CTk):
             foreground=[("active", "#ffffff")],
         )
 
+    def _setup_detailed_asset_tree_style(self):
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure(
+            "Detailed.Treeview",
+            background=self.COL_PANEL2,
+            fieldbackground=self.COL_PANEL2,
+            foreground=self.COL_TEXT,
+            bordercolor=self.COL_BORDER,
+            rowheight=28,
+            font=(self.FONT_FAMILY, 10),
+        )
+        style.configure(
+            "Detailed.Treeview.Heading",
+            background=self.COL_CARD,
+            foreground=self.COL_TEXT,
+            relief="flat",
+            font=(self.FONT_FAMILY, 10, "bold"),
+        )
+        style.map(
+            "Detailed.Treeview",
+            background=[("selected", "#1c3a68")],
+            foreground=[("selected", "#ffffff")],
+        )
+        style.map(
+            "Detailed.Treeview.Heading",
+            background=[("active", "#1b2a44")],
+            foreground=[("active", "#ffffff")],
+        )
+
+    def _setup_detailed_timeline_tree_style(self):
+        self._setup_detailed_asset_tree_style()
 
 
     def refresh_edit_overlay_table(self):
@@ -1905,8 +1985,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.btn_edit = self._nav_button(menu, "🧩 動画編集", lambda: self.switch_page("edit"))
         self.btn_edit.grid(row=3, column=0, sticky="ew", pady=6)
 
+        self.btn_detailed_edit = self._nav_button(menu, "🎛️ 詳細動画編集", lambda: self.switch_page("detailed_edit"))
+        self.btn_detailed_edit.grid(row=4, column=0, sticky="ew", pady=6)
+
         self.btn_about = self._nav_button(menu, "ℹ️ About", lambda: self.switch_page("about"))
-        self.btn_about.grid(row=4, column=0, sticky="ew", pady=6)
+        self.btn_about.grid(row=5, column=0, sticky="ew", pady=6)
 
         bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         bottom.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
@@ -1948,6 +2031,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         style(self.btn_script, key == "script")
         style(self.btn_material, key == "material")
         style(self.btn_edit, key == "edit")
+        style(self.btn_detailed_edit, key == "detailed_edit")
         style(self.btn_about, key == "about")
 
     # --------------------------
@@ -1965,12 +2049,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.pages["script"] = self._make_page(self.page_container)
         self.pages["material"] = self._make_page(self.page_container)
         self.pages["edit"] = self._make_page(self.page_container)  # NEW
+        self.pages["detailed_edit"] = self._make_page(self.page_container)
         self.pages["about"] = self._make_page(self.page_container)
 
         self._build_video_page(self.pages["video"])
         self._build_script_page(self.pages["script"])
         self._build_material_page(self.pages["material"])
         self._build_edit_page(self.pages["edit"])  # NEW
+        self._build_detailed_edit_page(self.pages["detailed_edit"])
         self._build_about_page(self.pages["about"])
 
     def _make_page(self, parent):
@@ -1988,7 +2074,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
             if k == key:
                 page.tkraise()
 
-        title_map = {"video": "動画生成", "script": "台本生成", "material": "資料作成", "edit": "動画編集", "about": "About"}
+        title_map = {
+            "video": "動画生成",
+            "script": "台本生成",
+            "material": "資料作成",
+            "edit": "動画編集",
+            "detailed_edit": "詳細動画編集",
+            "about": "About",
+        }
         self.log(f"--- ページ切替: {title_map.get(key, key)} ---")
 
     def _build_page_header(self, page_key: str, page: ctk.CTkFrame, title: str):
@@ -3101,6 +3194,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.edit_default_h_entry.insert(0, str(DEFAULT_EDIT_IMPORT_H))
         self.edit_default_h_entry.grid(row=1, column=3, sticky="ew", padx=(6, 6))
 
+
         self._v_hint(defaults, "既定Opacity").grid(row=0, column=4, sticky="w")
         self.edit_default_opacity_entry = self._v_entry(defaults)
         self.edit_default_opacity_entry.insert(0, str(DEFAULT_EDIT_IMPORT_OPACITY))
@@ -3174,6 +3268,503 @@ class NewsShortGeneratorStudio(ctk.CTk):
         # self.edit_render_button.grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
 
         # self.refresh_edit_overlay_table()
+
+    # --------------------------
+    # Detailed Edit page
+    # --------------------------
+    def _build_detailed_edit_page(self, page):
+        self._build_page_header("detailed_edit", page, "詳細動画編集")
+        form = self._make_scroll_form(page)
+        form.grid_columnconfigure(0, weight=1)
+
+        r = 0
+        # Project management
+        proj = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_PANEL)
+        proj.grid(row=r, column=0, sticky="ew", padx=10, pady=(10, 16)); r += 1
+        proj.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            proj, text="プロジェクト管理",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.COL_TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=3, sticky="ew", padx=14, pady=(12, 6))
+
+        ctk.CTkLabel(proj, text="プロジェクト名", text_color=self.COL_MUTED, anchor="w").grid(
+            row=1, column=0, sticky="w", padx=14, pady=(0, 6)
+        )
+        self.detailed_project_name_entry = ctk.CTkEntry(proj, height=34, corner_radius=12)
+        self.detailed_project_name_entry.grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=(0, 6))
+
+        btn_row = ctk.CTkFrame(proj, fg_color="transparent")
+        btn_row.grid(row=1, column=2, sticky="e", padx=14, pady=(0, 6))
+        ctk.CTkButton(
+            btn_row, text="新規", command=self.new_detailed_project,
+            height=32, corner_radius=12, fg_color="#1f5d8f",
+        ).grid(row=0, column=0, padx=(0, 6))
+        ctk.CTkButton(
+            btn_row, text="保存", command=self.save_detailed_project,
+            height=32, corner_radius=12, fg_color=self.COL_OK,
+        ).grid(row=0, column=1, padx=(0, 6))
+        ctk.CTkButton(
+            btn_row, text="開く", command=self.open_detailed_project,
+            height=32, corner_radius=12, fg_color="#172238",
+        ).grid(row=0, column=2)
+
+        path_row, self.detailed_project_path_entry = self._v_path_row(
+            proj, "保存先", self.browse_detailed_project_path
+        )
+        path_row.grid(row=2, column=0, columnspan=3, sticky="ew", padx=14, pady=(0, 12))
+
+        dirs = ctk.CTkFrame(proj, fg_color="transparent")
+        dirs.grid(row=3, column=0, columnspan=3, sticky="ew", padx=14, pady=(0, 12))
+        dirs.grid_columnconfigure((0, 1, 2), weight=1)
+
+        self._v_hint(dirs, "プロジェクトルート").grid(row=0, column=0, sticky="w")
+        self._v_hint(dirs, "入力素材フォルダ").grid(row=0, column=1, sticky="w")
+        self._v_hint(dirs, "出力フォルダ").grid(row=0, column=2, sticky="w")
+
+        self.detailed_root_entry = self._v_entry(dirs)
+        self.detailed_root_entry.grid(row=1, column=0, sticky="ew", padx=(0, 8))
+        self.detailed_input_entry = self._v_entry(dirs)
+        self.detailed_input_entry.grid(row=1, column=1, sticky="ew", padx=8)
+        self.detailed_output_entry = self._v_entry(dirs)
+        self.detailed_output_entry.grid(row=1, column=2, sticky="ew", padx=(8, 0))
+
+        self.detailed_autosave_label = ctk.CTkLabel(
+            proj, text="自動保存: 未設定", text_color=self.COL_MUTED, anchor="w"
+        )
+        self.detailed_autosave_label.grid(row=4, column=0, columnspan=3, sticky="w", padx=14, pady=(0, 12))
+
+        # Asset management
+        assets = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_PANEL)
+        assets.grid(row=r, column=0, sticky="ew", padx=10, pady=(0, 16)); r += 1
+        assets.grid_columnconfigure(0, weight=1)
+        assets.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            assets, text="素材（アセット）管理",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.COL_TEXT, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
+
+        asset_body = ctk.CTkFrame(assets, fg_color="transparent")
+        asset_body.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
+        asset_body.grid_columnconfigure(0, weight=3)
+        asset_body.grid_columnconfigure(1, weight=2)
+        asset_body.grid_rowconfigure(0, weight=1)
+
+        asset_table_frame = ctk.CTkFrame(asset_body, corner_radius=12, fg_color=self.COL_BG)
+        asset_table_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        asset_table_frame.grid_rowconfigure(0, weight=1)
+        asset_table_frame.grid_columnconfigure(0, weight=1)
+
+        self._setup_detailed_asset_tree_style()
+        asset_columns = ("name", "type", "duration", "resolution", "status")
+        self.detailed_asset_tree = ttk.Treeview(
+            asset_table_frame,
+            columns=asset_columns,
+            show="headings",
+            height=8,
+            style="Detailed.Treeview",
+        )
+        for col, text in zip(asset_columns, ["ファイル", "種別", "長さ", "解像度", "状態"], strict=False):
+            self.detailed_asset_tree.heading(col, text=text)
+        self.detailed_asset_tree.column("name", width=260, anchor="w")
+        self.detailed_asset_tree.column("type", width=80, anchor="center")
+        self.detailed_asset_tree.column("duration", width=90, anchor="e")
+        self.detailed_asset_tree.column("resolution", width=110, anchor="e")
+        self.detailed_asset_tree.column("status", width=80, anchor="center")
+
+        asset_scroll = ttk.Scrollbar(asset_table_frame, orient="vertical", command=self.detailed_asset_tree.yview)
+        self.detailed_asset_tree.configure(yscrollcommand=asset_scroll.set)
+        self.detailed_asset_tree.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        asset_scroll.grid(row=0, column=1, sticky="ns", pady=10)
+        self.detailed_asset_tree.bind("<<TreeviewSelect>>", self.on_detailed_asset_select)
+
+        asset_preview = ctk.CTkFrame(asset_body, corner_radius=12, fg_color=self.COL_BG)
+        asset_preview.grid(row=0, column=1, sticky="nsew")
+        asset_preview.grid_columnconfigure(0, weight=1)
+        asset_preview.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            asset_preview, text="サムネイル",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=self.COL_TEXT, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        self.detailed_asset_thumb = ctk.CTkLabel(
+            asset_preview, text="（素材を選択）", text_color=self.COL_MUTED, anchor="center"
+        )
+        self.detailed_asset_thumb.grid(row=1, column=0, sticky="nsew", padx=12, pady=12)
+        self.detailed_asset_path_label = ctk.CTkLabel(
+            asset_preview, text="", text_color=self.COL_MUTED, anchor="w", justify="left"
+        )
+        self.detailed_asset_path_label.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 12))
+
+        asset_btns = ctk.CTkFrame(assets, fg_color="transparent")
+        asset_btns.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 12))
+        asset_btns.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        ctk.CTkButton(
+            asset_btns, text="素材を追加", command=self.add_detailed_assets,
+            height=36, corner_radius=12, fg_color="#1f5d8f",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ctk.CTkButton(
+            asset_btns, text="選択を削除", command=self.remove_detailed_asset,
+            height=36, corner_radius=12, fg_color="#3b1d1d",
+        ).grid(row=0, column=1, sticky="ew", padx=6)
+        ctk.CTkButton(
+            asset_btns, text="再リンク", command=self.relink_detailed_asset,
+            height=36, corner_radius=12, fg_color="#172238",
+        ).grid(row=0, column=2, sticky="ew", padx=6)
+        ctk.CTkButton(
+            asset_btns, text="状態更新", command=self.refresh_detailed_assets,
+            height=36, corner_radius=12, fg_color="#172238",
+        ).grid(row=0, column=3, sticky="ew", padx=(6, 0))
+
+        # Timeline
+        timeline = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_PANEL)
+        timeline.grid(row=r, column=0, sticky="ew", padx=10, pady=(0, 16)); r += 1
+        timeline.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            timeline, text="タイムライン編集（基本）",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.COL_TEXT, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
+
+        main_row, self.detailed_main_video_entry = self._v_path_row(
+            timeline, "読み込み", self.browse_detailed_main_video
+        )
+        main_row.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+
+        self._setup_detailed_timeline_tree_style()
+        clip_cols = ("clip", "start", "end", "duration")
+        self.detailed_timeline_tree = ttk.Treeview(
+            timeline,
+            columns=clip_cols,
+            show="headings",
+            height=6,
+            style="Detailed.Treeview",
+        )
+        for col, text in zip(clip_cols, ["クリップ", "In", "Out", "長さ"], strict=False):
+            self.detailed_timeline_tree.heading(col, text=text)
+        self.detailed_timeline_tree.column("clip", width=140, anchor="w")
+        self.detailed_timeline_tree.column("start", width=90, anchor="e")
+        self.detailed_timeline_tree.column("end", width=90, anchor="e")
+        self.detailed_timeline_tree.column("duration", width=90, anchor="e")
+        self.detailed_timeline_tree.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 10))
+        self.detailed_timeline_tree.bind("<ButtonPress-1>", self.on_timeline_drag_start)
+        self.detailed_timeline_tree.bind("<B1-Motion>", self.on_timeline_drag_motion)
+        self.detailed_timeline_tree.bind("<<TreeviewSelect>>", self.on_timeline_select)
+
+        trim_row = ctk.CTkFrame(timeline, fg_color="transparent")
+        trim_row.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 10))
+        trim_row.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        self._v_hint(trim_row, "In").grid(row=0, column=0, sticky="w")
+        self._v_hint(trim_row, "Out").grid(row=0, column=1, sticky="w")
+        self._v_hint(trim_row, "Split位置").grid(row=0, column=2, sticky="w")
+
+        self.detailed_trim_in_entry = self._v_entry(trim_row)
+        self.detailed_trim_in_entry.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+        self.detailed_trim_out_entry = self._v_entry(trim_row)
+        self.detailed_trim_out_entry.grid(row=1, column=1, sticky="ew", padx=6)
+        self.detailed_split_entry = self._v_entry(trim_row)
+        self.detailed_split_entry.grid(row=1, column=2, sticky="ew", padx=6)
+
+        ctk.CTkButton(
+            trim_row, text="適用", command=self.apply_timeline_trim,
+            height=32, corner_radius=12, fg_color=self.COL_OK,
+        ).grid(row=1, column=3, sticky="ew", padx=(6, 0))
+
+        clip_btns = ctk.CTkFrame(timeline, fg_color="transparent")
+        clip_btns.grid(row=4, column=0, sticky="ew", padx=14, pady=(0, 12))
+        clip_btns.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        ctk.CTkButton(
+            clip_btns, text="Split", command=self.split_timeline_clip,
+            height=34, corner_radius=12, fg_color="#1f5d8f",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ctk.CTkButton(
+            clip_btns, text="削除", command=self.delete_timeline_clip,
+            height=34, corner_radius=12, fg_color="#3b1d1d",
+        ).grid(row=0, column=1, sticky="ew", padx=6)
+        ctk.CTkButton(
+            clip_btns, text="▲ 上へ", command=lambda: self.move_timeline_clip(-1),
+            height=34, corner_radius=12, fg_color="#172238",
+        ).grid(row=0, column=2, sticky="ew", padx=6)
+        ctk.CTkButton(
+            clip_btns, text="▼ 下へ", command=lambda: self.move_timeline_clip(1),
+            height=34, corner_radius=12, fg_color="#172238",
+        ).grid(row=0, column=3, sticky="ew", padx=(6, 0))
+
+        # Overlay section
+        overlays = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_PANEL)
+        overlays.grid(row=r, column=0, sticky="ew", padx=10, pady=(0, 16)); r += 1
+        overlays.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            overlays, text="オーバーレイ（画像・テキスト）",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.COL_TEXT, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
+
+        overlay_form = ctk.CTkFrame(overlays, fg_color="transparent")
+        overlay_form.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 8))
+        overlay_form.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        self._v_hint(overlay_form, "種別").grid(row=0, column=0, sticky="w")
+        self._v_hint(overlay_form, "開始").grid(row=0, column=1, sticky="w")
+        self._v_hint(overlay_form, "終了").grid(row=0, column=2, sticky="w")
+        self._v_hint(overlay_form, "X / Y").grid(row=0, column=3, sticky="w")
+
+        self.detailed_overlay_type_var = ctk.StringVar(value="image")
+        self.detailed_overlay_type_menu = ctk.CTkOptionMenu(
+            overlay_form, values=["image", "text"], variable=self.detailed_overlay_type_var
+        )
+        self.detailed_overlay_type_menu.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+        self.detailed_overlay_start_entry = self._v_entry(overlay_form)
+        self.detailed_overlay_start_entry.grid(row=1, column=1, sticky="ew", padx=6)
+        self.detailed_overlay_end_entry = self._v_entry(overlay_form)
+        self.detailed_overlay_end_entry.grid(row=1, column=2, sticky="ew", padx=6)
+
+        pos_wrap = ctk.CTkFrame(overlay_form, fg_color="transparent")
+        pos_wrap.grid(row=1, column=3, sticky="ew", padx=(6, 0))
+        pos_wrap.grid_columnconfigure((0, 1), weight=1)
+        self.detailed_overlay_x_entry = self._v_entry(pos_wrap)
+        self.detailed_overlay_x_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.detailed_overlay_y_entry = self._v_entry(pos_wrap)
+        self.detailed_overlay_y_entry.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+        overlay_form2 = ctk.CTkFrame(overlays, fg_color="transparent")
+        overlay_form2.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 8))
+        overlay_form2.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        self._v_hint(overlay_form2, "画像パス / テキスト").grid(row=0, column=0, sticky="w")
+        self._v_hint(overlay_form2, "サイズ w/h").grid(row=0, column=1, sticky="w")
+        self._v_hint(overlay_form2, "不透明度").grid(row=0, column=2, sticky="w")
+        self._v_hint(overlay_form2, "文字サイズ/色/縁").grid(row=0, column=3, sticky="w")
+
+        self.detailed_overlay_source_entry = self._v_entry(overlay_form2)
+        self.detailed_overlay_source_entry.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+
+        size_wrap = ctk.CTkFrame(overlay_form2, fg_color="transparent")
+        size_wrap.grid(row=1, column=1, sticky="ew", padx=6)
+        size_wrap.grid_columnconfigure((0, 1), weight=1)
+        self.detailed_overlay_w_entry = self._v_entry(size_wrap)
+        self.detailed_overlay_w_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.detailed_overlay_h_entry = self._v_entry(size_wrap)
+        self.detailed_overlay_h_entry.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+        self.detailed_overlay_opacity_entry = self._v_entry(overlay_form2)
+        self.detailed_overlay_opacity_entry.grid(row=1, column=2, sticky="ew", padx=6)
+
+        text_wrap = ctk.CTkFrame(overlay_form2, fg_color="transparent")
+        text_wrap.grid(row=1, column=3, sticky="ew", padx=(6, 0))
+        text_wrap.grid_columnconfigure((0, 1, 2), weight=1)
+        self.detailed_overlay_font_entry = self._v_entry(text_wrap)
+        self.detailed_overlay_font_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.detailed_overlay_color_entry = self._v_entry(text_wrap)
+        self.detailed_overlay_color_entry.grid(row=0, column=1, sticky="ew", padx=4)
+        self.detailed_overlay_outline_entry = self._v_entry(text_wrap)
+        self.detailed_overlay_outline_entry.grid(row=0, column=2, sticky="ew", padx=(4, 0))
+
+        overlay_btns = ctk.CTkFrame(overlays, fg_color="transparent")
+        overlay_btns.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 10))
+        overlay_btns.grid_columnconfigure((0, 1, 2), weight=1)
+
+        ctk.CTkButton(
+            overlay_btns, text="追加", command=self.add_detailed_overlay,
+            height=34, corner_radius=12, fg_color="#1f5d8f",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ctk.CTkButton(
+            overlay_btns, text="複製", command=self.duplicate_detailed_overlay,
+            height=34, corner_radius=12, fg_color="#172238",
+        ).grid(row=0, column=1, sticky="ew", padx=6)
+        ctk.CTkButton(
+            overlay_btns, text="削除", command=self.delete_detailed_overlay,
+            height=34, corner_radius=12, fg_color="#3b1d1d",
+        ).grid(row=0, column=2, sticky="ew", padx=(6, 0))
+
+        overlay_columns = ("type", "start", "end", "x", "y", "w", "h", "opacity", "source")
+        self.detailed_overlay_tree = ttk.Treeview(
+            overlays,
+            columns=overlay_columns,
+            show="headings",
+            height=6,
+            style="Detailed.Treeview",
+        )
+        for col, text in zip(
+            overlay_columns,
+            ["種別", "開始", "終了", "X", "Y", "W", "H", "透過", "内容"],
+            strict=False,
+        ):
+            self.detailed_overlay_tree.heading(col, text=text)
+        self.detailed_overlay_tree.column("type", width=70, anchor="center")
+        self.detailed_overlay_tree.column("start", width=80, anchor="e")
+        self.detailed_overlay_tree.column("end", width=80, anchor="e")
+        self.detailed_overlay_tree.column("x", width=60, anchor="e")
+        self.detailed_overlay_tree.column("y", width=60, anchor="e")
+        self.detailed_overlay_tree.column("w", width=60, anchor="e")
+        self.detailed_overlay_tree.column("h", width=60, anchor="e")
+        self.detailed_overlay_tree.column("opacity", width=70, anchor="e")
+        self.detailed_overlay_tree.column("source", width=260, anchor="w")
+        self.detailed_overlay_tree.grid(row=4, column=0, sticky="ew", padx=14, pady=(0, 12))
+        self.detailed_overlay_tree.bind("<<TreeviewSelect>>", self.on_detailed_overlay_select)
+
+        # Audio
+        audio = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_PANEL)
+        audio.grid(row=r, column=0, sticky="ew", padx=10, pady=(0, 16)); r += 1
+        audio.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            audio, text="音声",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.COL_TEXT, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
+
+        bgm_row, self.detailed_bgm_entry = self._v_path_row(audio, "BGM追加", self.browse_detailed_bgm)
+        bgm_row.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+
+        audio_row = ctk.CTkFrame(audio, fg_color="transparent")
+        audio_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 10))
+        audio_row.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        self._v_hint(audio_row, "BGM音量").grid(row=0, column=0, sticky="w")
+        self._v_hint(audio_row, "動画音声").grid(row=0, column=1, sticky="w")
+        self._v_hint(audio_row, "動画音量").grid(row=0, column=2, sticky="w")
+        self._v_hint(audio_row, "フェード").grid(row=0, column=3, sticky="w")
+
+        self.detailed_bgm_volume_slider = ctk.CTkSlider(audio_row, from_=0.0, to=1.0)
+        self.detailed_bgm_volume_slider.set(0.7)
+        self.detailed_bgm_volume_slider.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+
+        self.detailed_video_audio_var = tk.BooleanVar(value=True)
+        self.detailed_video_audio_check = ctk.CTkCheckBox(
+            audio_row, text="ON", variable=self.detailed_video_audio_var
+        )
+        self.detailed_video_audio_check.grid(row=1, column=1, sticky="w", padx=6)
+
+        self.detailed_video_volume_slider = ctk.CTkSlider(audio_row, from_=0.0, to=1.0)
+        self.detailed_video_volume_slider.set(1.0)
+        self.detailed_video_volume_slider.grid(row=1, column=2, sticky="ew", padx=6)
+
+        fade_wrap = ctk.CTkFrame(audio_row, fg_color="transparent")
+        fade_wrap.grid(row=1, column=3, sticky="ew", padx=(6, 0))
+        fade_wrap.grid_columnconfigure((0, 1), weight=1)
+        self.detailed_fade_in_entry = self._v_entry(fade_wrap)
+        self.detailed_fade_in_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.detailed_fade_out_entry = self._v_entry(fade_wrap)
+        self.detailed_fade_out_entry.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+        # Preview
+        preview = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_PANEL)
+        preview.grid(row=r, column=0, sticky="ew", padx=10, pady=(0, 16)); r += 1
+        preview.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            preview, text="プレビュー",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.COL_TEXT, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
+
+        self.detailed_preview_label = ctk.CTkLabel(
+            preview, text="タイムラインを読み込むと表示されます",
+            text_color=self.COL_MUTED, anchor="center",
+            width=640, height=360,
+        )
+        self.detailed_preview_label.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+
+        preview_controls = ctk.CTkFrame(preview, fg_color="transparent")
+        preview_controls.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 12))
+        preview_controls.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(
+            preview_controls, text="▶ 再生", command=self.start_detailed_preview,
+            height=32, corner_radius=12, fg_color="#1f5d8f",
+        ).grid(row=0, column=0, padx=(0, 6))
+        ctk.CTkButton(
+            preview_controls, text="■ 停止", command=self.stop_detailed_preview,
+            height=32, corner_radius=12, fg_color="#3b1d1d",
+        ).grid(row=0, column=1, padx=6)
+        ctk.CTkButton(
+            preview_controls, text="◀ 1フレ", command=lambda: self.step_preview(-1),
+            height=32, corner_radius=12, fg_color="#172238",
+        ).grid(row=0, column=2, padx=6)
+        ctk.CTkButton(
+            preview_controls, text="1フレ ▶", command=lambda: self.step_preview(1),
+            height=32, corner_radius=12, fg_color="#172238",
+        ).grid(row=0, column=3, padx=(6, 0))
+
+        self.detailed_seek_slider = ctk.CTkSlider(
+            preview, from_=0, to=1, command=self.on_preview_seek
+        )
+        self.detailed_seek_slider.set(0)
+        self.detailed_seek_slider.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
+
+        # Export
+        export = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_PANEL)
+        export.grid(row=r, column=0, sticky="ew", padx=10, pady=(0, 16)); r += 1
+        export.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            export, text="書き出し",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.COL_TEXT, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
+
+        out_row, self.detailed_export_path_entry = self._v_path_row(
+            export, "出力先", self.browse_detailed_export_path
+        )
+        out_row.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+
+        export_row = ctk.CTkFrame(export, fg_color="transparent")
+        export_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 10))
+        export_row.grid_columnconfigure((0, 1, 2), weight=1)
+
+        self._v_hint(export_row, "解像度").grid(row=0, column=0, sticky="w")
+        self._v_hint(export_row, "FPS").grid(row=0, column=1, sticky="w")
+        self._v_hint(export_row, "書き出し").grid(row=0, column=2, sticky="w")
+
+        self.detailed_export_res_var = ctk.StringVar(value="1920x1080")
+        self.detailed_export_res_menu = ctk.CTkOptionMenu(
+            export_row,
+            values=["1920x1080", "1080x1920", "1280x720", "720x1280", "元サイズ"],
+            variable=self.detailed_export_res_var,
+        )
+        self.detailed_export_res_menu.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+        self.detailed_export_fps_entry = self._v_entry(export_row)
+        self.detailed_export_fps_entry.insert(0, "30")
+        self.detailed_export_fps_entry.grid(row=1, column=1, sticky="ew", padx=6)
+        ctk.CTkButton(
+            export_row, text="書き出し開始", command=self.export_detailed_video,
+            height=36, corner_radius=12, fg_color=self.COL_OK,
+        ).grid(row=1, column=2, sticky="ew", padx=(6, 0))
+
+        self.detailed_export_progress = ctk.CTkProgressBar(export)
+        self.detailed_export_progress.set(0)
+        self.detailed_export_progress.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 6))
+        self.detailed_export_label = ctk.CTkLabel(
+            export, text="進捗: 0%", text_color=self.COL_MUTED, anchor="w"
+        )
+        self.detailed_export_label.grid(row=4, column=0, sticky="w", padx=14, pady=(0, 12))
+
+        self.detailed_trim_in_entry.insert(0, "00:00")
+        self.detailed_trim_out_entry.insert(0, "00:05")
+        self.detailed_split_entry.insert(0, "00:02")
+        self.detailed_overlay_start_entry.insert(0, "00:00")
+        self.detailed_overlay_end_entry.insert(0, "00:05")
+        self.detailed_overlay_x_entry.insert(0, "0")
+        self.detailed_overlay_y_entry.insert(0, "0")
+        self.detailed_overlay_w_entry.insert(0, "0")
+        self.detailed_overlay_h_entry.insert(0, "0")
+        self.detailed_overlay_opacity_entry.insert(0, "1.0")
+        self.detailed_overlay_font_entry.insert(0, "32")
+        self.detailed_overlay_color_entry.insert(0, "#ffffff")
+        self.detailed_overlay_outline_entry.insert(0, "2")
+        self.detailed_fade_in_entry.insert(0, "0.0")
+        self.detailed_fade_out_entry.insert(0, "0.0")
 
     def _sync_edit_preview_state(self):
         if not hasattr(self, "edit_preview_label"):
@@ -3710,7 +4301,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "end",
             "News Short Generator Studio\n\n"
             "- 左：サイドバー\n"
-            "- 中央：フォーム（動画生成 / 台本生成 / 資料作成 / 動画編集）\n"
+            "- 中央：フォーム（動画生成 / 台本生成 / 資料作成 / 動画編集 / 詳細動画編集）\n"
             "- 右：ログ（進捗）\n\n"
             "[動画編集]\n"
             "- 指定時間帯に画像を座標指定で重ねる（複数対応）\n"
@@ -4109,6 +4700,871 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.progress_label.configure(text=f"進捗: {percent}%（残り {eta_txt}）")
 
         self.after(0, _set)
+
+    # --------------------------
+    # 詳細動画編集: プロジェクト管理
+    # --------------------------
+    def browse_detailed_project_path(self):
+        path = filedialog.asksaveasfilename(
+            title="プロジェクト保存先",
+            defaultextension=DETAILED_PROJECT_EXT,
+            filetypes=[("Movie Maker Project", f"*{DETAILED_PROJECT_EXT}"), ("すべてのファイル", "*.*")],
+        )
+        if path:
+            self.detailed_project_path_entry.delete(0, "end")
+            self.detailed_project_path_entry.insert(0, path)
+            self.detailed_project_path = Path(path)
+            self._mark_detailed_dirty()
+            self._schedule_detailed_autosave()
+
+    def _project_root_dir(self) -> str:
+        return self.detailed_root_entry.get().strip()
+
+    def _to_project_relative(self, path: str, root_dir: str) -> str:
+        if not path:
+            return ""
+        root = Path(root_dir).expanduser() if root_dir else None
+        p = Path(path).expanduser()
+        if root:
+            try:
+                return f"$ROOT/{p.relative_to(root).as_posix()}"
+            except Exception:
+                return str(p)
+        return str(p)
+
+    def _from_project_relative(self, path: str, root_dir: str) -> str:
+        if not path:
+            return ""
+        if path.startswith("$ROOT/") and root_dir:
+            suffix = path.replace("$ROOT/", "", 1)
+            return str(Path(root_dir).expanduser() / suffix)
+        return path
+
+    def _collect_detailed_project_data(self) -> Dict[str, Any]:
+        root_dir = self._project_root_dir()
+        data = {
+            "name": self.detailed_project_name_entry.get().strip(),
+            "root_dir": root_dir,
+            "input_dir": self.detailed_input_entry.get().strip(),
+            "output_dir": self.detailed_output_entry.get().strip(),
+            "assets": [
+                {
+                    **asset,
+                    "path": self._to_project_relative(asset.get("path", ""), root_dir),
+                }
+                for asset in self.detailed_assets
+            ],
+            "main_video": self._to_project_relative(self.detailed_main_video_entry.get().strip(), root_dir),
+            "timeline": self.detailed_timeline,
+            "overlays": [
+                {
+                    **ov,
+                    "source": self._to_project_relative(ov.get("source", ""), root_dir)
+                    if ov.get("type") == "image"
+                    else ov.get("source", ""),
+                }
+                for ov in self.detailed_overlays
+            ],
+            "audio": {
+                "bgm_path": self._to_project_relative(self.detailed_bgm_entry.get().strip(), root_dir),
+                "bgm_volume": float(self.detailed_bgm_volume_slider.get()),
+                "video_audio": bool(self.detailed_video_audio_var.get()),
+                "video_volume": float(self.detailed_video_volume_slider.get()),
+                "fade_in": float(self._safe_float(self.detailed_fade_in_entry.get().strip(), 0.0)),
+                "fade_out": float(self._safe_float(self.detailed_fade_out_entry.get().strip(), 0.0)),
+            },
+            "export": {
+                "output_path": self._to_project_relative(self.detailed_export_path_entry.get().strip(), root_dir),
+                "resolution": self.detailed_export_res_var.get(),
+                "fps": int(self._safe_int(self.detailed_export_fps_entry.get().strip(), 30)),
+            },
+        }
+        return data
+
+    def _apply_detailed_project_data(self, data: Dict[str, Any]):
+        self.detailed_project_data = data
+        self.detailed_project_name_entry.delete(0, "end")
+        self.detailed_project_name_entry.insert(0, data.get("name", ""))
+        self.detailed_root_entry.delete(0, "end")
+        self.detailed_root_entry.insert(0, data.get("root_dir", ""))
+        self.detailed_input_entry.delete(0, "end")
+        self.detailed_input_entry.insert(0, data.get("input_dir", ""))
+        self.detailed_output_entry.delete(0, "end")
+        self.detailed_output_entry.insert(0, data.get("output_dir", ""))
+
+        root_dir = data.get("root_dir", "")
+        self.detailed_assets = []
+        for asset in data.get("assets", []):
+            asset_path = self._from_project_relative(asset.get("path", ""), root_dir)
+            self.detailed_assets.append({**asset, "path": asset_path})
+        self.refresh_detailed_assets()
+
+        main_video = self._from_project_relative(data.get("main_video", ""), root_dir)
+        self.detailed_main_video_entry.delete(0, "end")
+        self.detailed_main_video_entry.insert(0, main_video)
+        self.detailed_timeline = data.get("timeline", [])
+        self.refresh_detailed_timeline()
+
+        self.detailed_overlays = []
+        for ov in data.get("overlays", []):
+            source = ov.get("source", "")
+            if ov.get("type") == "image":
+                source = self._from_project_relative(source, root_dir)
+            self.detailed_overlays.append({**ov, "source": source})
+        self.refresh_detailed_overlays()
+
+        audio = data.get("audio", {})
+        self.detailed_bgm_entry.delete(0, "end")
+        self.detailed_bgm_entry.insert(0, self._from_project_relative(audio.get("bgm_path", ""), root_dir))
+        self.detailed_bgm_volume_slider.set(float(audio.get("bgm_volume", 0.7)))
+        self.detailed_video_audio_var.set(bool(audio.get("video_audio", True)))
+        self.detailed_video_volume_slider.set(float(audio.get("video_volume", 1.0)))
+        self.detailed_fade_in_entry.delete(0, "end")
+        self.detailed_fade_in_entry.insert(0, str(audio.get("fade_in", 0.0)))
+        self.detailed_fade_out_entry.delete(0, "end")
+        self.detailed_fade_out_entry.insert(0, str(audio.get("fade_out", 0.0)))
+
+        export = data.get("export", {})
+        self.detailed_export_path_entry.delete(0, "end")
+        self.detailed_export_path_entry.insert(
+            0, self._from_project_relative(export.get("output_path", ""), root_dir)
+        )
+        self.detailed_export_res_var.set(export.get("resolution", "1920x1080"))
+        self.detailed_export_fps_entry.delete(0, "end")
+        self.detailed_export_fps_entry.insert(0, str(export.get("fps", 30)))
+
+        self._mark_detailed_dirty(False)
+        self._schedule_detailed_autosave()
+
+    def new_detailed_project(self):
+        self.detailed_project_path = None
+        self.detailed_project_path_entry.delete(0, "end")
+        self._apply_detailed_project_data(self._default_detailed_project())
+        self.log("🆕 詳細動画編集プロジェクトを新規作成しました。")
+        self.detailed_autosave_label.configure(text="自動保存: 未設定")
+
+    def save_detailed_project(self):
+        if not self.detailed_project_path:
+            raw = self.detailed_project_path_entry.get().strip()
+            if raw:
+                self.detailed_project_path = Path(raw)
+            else:
+                self.browse_detailed_project_path()
+        if not self.detailed_project_path:
+            return
+
+        data = self._collect_detailed_project_data()
+        try:
+            self.detailed_project_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._mark_detailed_dirty(False)
+            self.detailed_autosave_label.configure(text=f"自動保存: {self.detailed_project_path.name}")
+            self.log("💾 詳細動画編集プロジェクトを保存しました。")
+        except Exception as exc:
+            messagebox.showerror("保存エラー", f"プロジェクトの保存に失敗しました:\n{exc}")
+
+    def open_detailed_project(self):
+        path = filedialog.askopenfilename(
+            title="プロジェクトを開く",
+            filetypes=[("Movie Maker Project", f"*{DETAILED_PROJECT_EXT}"), ("すべてのファイル", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except Exception as exc:
+            messagebox.showerror("読み込みエラー", f"プロジェクトの読み込みに失敗しました:\n{exc}")
+            return
+
+        self.detailed_project_path = Path(path)
+        self.detailed_project_path_entry.delete(0, "end")
+        self.detailed_project_path_entry.insert(0, path)
+        self._apply_detailed_project_data(data)
+        self.detailed_autosave_label.configure(text=f"自動保存: {self.detailed_project_path.name}")
+        self.log("📂 詳細動画編集プロジェクトを開きました。")
+
+    def _schedule_detailed_autosave(self):
+        if self._detailed_autosave_job:
+            try:
+                self.after_cancel(self._detailed_autosave_job)
+            except Exception:
+                pass
+
+        def _auto():
+            if self.detailed_project_path and self._detailed_dirty:
+                self.save_detailed_project()
+            self._schedule_detailed_autosave()
+
+        self._detailed_autosave_job = self.after(DETAILED_AUTOSAVE_INTERVAL_MS, _auto)
+
+    def _mark_detailed_dirty(self, dirty: bool = True):
+        self._detailed_dirty = dirty
+
+    # --------------------------
+    # 詳細動画編集: 素材管理
+    # --------------------------
+    def add_detailed_assets(self):
+        paths = filedialog.askopenfilenames(
+            title="素材を追加",
+            filetypes=[
+                ("メディアファイル", "*.mp4;*.mov;*.mkv;*.mp3;*.wav;*.m4a;*.flac;*.png;*.jpg;*.jpeg;*.webp;*.bmp"),
+                ("すべてのファイル", "*.*"),
+            ],
+        )
+        if not paths:
+            return
+        for path in paths:
+            asset = self._build_asset_metadata(path)
+            self.detailed_assets.append(asset)
+        self.refresh_detailed_assets()
+        self._mark_detailed_dirty()
+
+    def _build_asset_metadata(self, path: str) -> Dict[str, Any]:
+        p = Path(path)
+        mime, _ = mimetypes.guess_type(str(p))
+        kind = "other"
+        if mime:
+            if mime.startswith("video"):
+                kind = "video"
+            elif mime.startswith("image"):
+                kind = "image"
+            elif mime.startswith("audio"):
+                kind = "audio"
+
+        duration = None
+        resolution = ""
+        try:
+            if kind == "video":
+                clip = VideoFileClip(str(p))
+                duration = clip.duration
+                resolution = f"{clip.w}x{clip.h}"
+                clip.close()
+            elif kind == "audio":
+                clip = AudioFileClip(str(p))
+                duration = clip.duration
+                clip.close()
+            elif kind == "image":
+                img = Image.open(str(p))
+                resolution = f"{img.width}x{img.height}"
+        except Exception:
+            pass
+
+        return {
+            "path": str(p),
+            "type": kind,
+            "duration": duration,
+            "resolution": resolution,
+            "missing": not p.exists(),
+        }
+
+    def refresh_detailed_assets(self):
+        if not hasattr(self, "detailed_asset_tree"):
+            return
+        for item in self.detailed_asset_tree.get_children():
+            self.detailed_asset_tree.delete(item)
+        for idx, asset in enumerate(self.detailed_assets):
+            path = asset.get("path", "")
+            exists = Path(path).exists()
+            asset["missing"] = not exists
+            duration = asset.get("duration")
+            duration_txt = f"{duration:.2f}s" if duration else "-"
+            resolution = asset.get("resolution") or "-"
+            status = "OK" if exists else "不足"
+            name = Path(path).name if path else ""
+            tag = "even" if idx % 2 == 0 else "odd"
+            self.detailed_asset_tree.insert(
+                "",
+                "end",
+                iid=str(idx),
+                values=(name, asset.get("type", "-"), duration_txt, resolution, status),
+                tags=(tag,),
+            )
+        self._update_asset_preview(None)
+
+    def _update_asset_preview(self, asset: Optional[Dict[str, Any]]):
+        if not hasattr(self, "detailed_asset_thumb"):
+            return
+        if not asset:
+            self.detailed_asset_thumb.configure(text="（素材を選択）", image="")
+            self.detailed_asset_path_label.configure(text="")
+            self._detailed_asset_imgtk = None
+            return
+        path = asset.get("path", "")
+        self.detailed_asset_path_label.configure(text=path)
+        if not path or not Path(path).exists():
+            self.detailed_asset_thumb.configure(text="（ファイルが見つかりません）", image="")
+            self._detailed_asset_imgtk = None
+            return
+        try:
+            if asset.get("type") == "image":
+                img = Image.open(path)
+            elif asset.get("type") == "video":
+                clip = VideoFileClip(path)
+                frame = clip.get_frame(0)
+                img = Image.fromarray(frame)
+                clip.close()
+            else:
+                self.detailed_asset_thumb.configure(text="（プレビューなし）", image="")
+                self._detailed_preview_imgtk = None
+                return
+            img.thumbnail((320, 180), Image.LANCZOS)
+            self._detailed_asset_imgtk = ImageTk.PhotoImage(img)
+            self.detailed_asset_thumb.configure(image=self._detailed_asset_imgtk, text="")
+        except Exception:
+            self.detailed_asset_thumb.configure(text="（プレビュー失敗）", image="")
+            self._detailed_asset_imgtk = None
+
+    def on_detailed_asset_select(self, _event=None):
+        sel = self.detailed_asset_tree.selection()
+        if not sel:
+            self._update_asset_preview(None)
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.detailed_assets):
+            return
+        self._update_asset_preview(self.detailed_assets[idx])
+
+    def remove_detailed_asset(self):
+        sel = self.detailed_asset_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if 0 <= idx < len(self.detailed_assets):
+            self.detailed_assets.pop(idx)
+            self.refresh_detailed_assets()
+            self._mark_detailed_dirty()
+
+    def relink_detailed_asset(self):
+        sel = self.detailed_asset_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.detailed_assets):
+            return
+        path = filedialog.askopenfilename(title="素材を再リンク")
+        if not path:
+            return
+        self.detailed_assets[idx] = self._build_asset_metadata(path)
+        self.refresh_detailed_assets()
+        self._mark_detailed_dirty()
+
+    # --------------------------
+    # 詳細動画編集: タイムライン
+    # --------------------------
+    def browse_detailed_main_video(self):
+        path = filedialog.askopenfilename(
+            title="メイン動画を選択",
+            filetypes=[("動画ファイル", "*.mp4;*.mov;*.mkv"), ("すべてのファイル", "*.*")],
+        )
+        if path:
+            self.detailed_main_video_entry.delete(0, "end")
+            self.detailed_main_video_entry.insert(0, path)
+            self._load_main_video_to_timeline(path)
+
+    def _load_main_video_to_timeline(self, path: str):
+        try:
+            clip = VideoFileClip(path)
+            duration = clip.duration
+            clip.close()
+        except Exception as exc:
+            messagebox.showerror("読み込みエラー", f"動画の読み込みに失敗しました:\n{exc}")
+            return
+        self.detailed_timeline = [
+            {"label": "clip-1", "start": 0.0, "end": float(duration)}
+        ]
+        self.refresh_detailed_timeline()
+        self._mark_detailed_dirty()
+        self._sync_preview_range(duration)
+
+    def refresh_detailed_timeline(self):
+        if not hasattr(self, "detailed_timeline_tree"):
+            return
+        for item in self.detailed_timeline_tree.get_children():
+            self.detailed_timeline_tree.delete(item)
+        for idx, clip in enumerate(self.detailed_timeline):
+            start = float(clip.get("start", 0.0))
+            end = float(clip.get("end", 0.0))
+            duration = max(0.0, end - start)
+            label = clip.get("label", f"clip-{idx + 1}")
+            self.detailed_timeline_tree.insert(
+                "", "end", iid=str(idx),
+                values=(label, f"{start:.2f}", f"{end:.2f}", f"{duration:.2f}")
+            )
+
+    def on_timeline_select(self, _event=None):
+        sel = self.detailed_timeline_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.detailed_timeline):
+            return
+        clip = self.detailed_timeline[idx]
+        self.detailed_trim_in_entry.delete(0, "end")
+        self.detailed_trim_in_entry.insert(0, f"{clip.get('start', 0.0):.2f}")
+        self.detailed_trim_out_entry.delete(0, "end")
+        self.detailed_trim_out_entry.insert(0, f"{clip.get('end', 0.0):.2f}")
+
+    def apply_timeline_trim(self):
+        sel = self.detailed_timeline_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.detailed_timeline):
+            return
+        try:
+            start = parse_timecode_to_seconds(self.detailed_trim_in_entry.get().strip())
+            end = parse_timecode_to_seconds(self.detailed_trim_out_entry.get().strip())
+        except Exception as exc:
+            messagebox.showerror("入力エラー", f"時間の形式が不正です:\n{exc}")
+            return
+        if end <= start:
+            messagebox.showerror("入力エラー", "Out は In より大きくしてください。")
+            return
+        self.detailed_timeline[idx]["start"] = start
+        self.detailed_timeline[idx]["end"] = end
+        self.refresh_detailed_timeline()
+        self._mark_detailed_dirty()
+
+    def split_timeline_clip(self):
+        sel = self.detailed_timeline_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.detailed_timeline):
+            return
+        clip = self.detailed_timeline[idx]
+        try:
+            split_time = parse_timecode_to_seconds(self.detailed_split_entry.get().strip())
+        except Exception as exc:
+            messagebox.showerror("入力エラー", f"Split 時間の形式が不正です:\n{exc}")
+            return
+        start = float(clip.get("start", 0.0))
+        end = float(clip.get("end", 0.0))
+        if split_time <= start or split_time >= end:
+            messagebox.showerror("入力エラー", "Split 時間は In/Out の間に設定してください。")
+            return
+        first = {"label": clip.get("label", f"clip-{idx + 1}") + "a", "start": start, "end": split_time}
+        second = {"label": clip.get("label", f"clip-{idx + 1}") + "b", "start": split_time, "end": end}
+        self.detailed_timeline[idx:idx + 1] = [first, second]
+        self.refresh_detailed_timeline()
+        self._mark_detailed_dirty()
+
+    def delete_timeline_clip(self):
+        sel = self.detailed_timeline_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if 0 <= idx < len(self.detailed_timeline):
+            self.detailed_timeline.pop(idx)
+            self.refresh_detailed_timeline()
+            self._mark_detailed_dirty()
+
+    def move_timeline_clip(self, delta: int):
+        sel = self.detailed_timeline_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        new_idx = idx + delta
+        if new_idx < 0 or new_idx >= len(self.detailed_timeline):
+            return
+        self.detailed_timeline.insert(new_idx, self.detailed_timeline.pop(idx))
+        self.refresh_detailed_timeline()
+        self.detailed_timeline_tree.selection_set(str(new_idx))
+        self._mark_detailed_dirty()
+
+    def on_timeline_drag_start(self, event):
+        row = self.detailed_timeline_tree.identify_row(event.y)
+        if row:
+            self._detailed_drag_timeline_iid = row
+
+    def on_timeline_drag_motion(self, event):
+        if not self._detailed_drag_timeline_iid:
+            return
+        row = self.detailed_timeline_tree.identify_row(event.y)
+        if row and row != self._detailed_drag_timeline_iid:
+            old_idx = int(self._detailed_drag_timeline_iid)
+            new_idx = int(row)
+            if 0 <= old_idx < len(self.detailed_timeline) and 0 <= new_idx < len(self.detailed_timeline):
+                self.detailed_timeline.insert(new_idx, self.detailed_timeline.pop(old_idx))
+                self.refresh_detailed_timeline()
+                self.detailed_timeline_tree.selection_set(str(new_idx))
+                self._detailed_drag_timeline_iid = str(new_idx)
+                self._mark_detailed_dirty()
+
+    # --------------------------
+    # 詳細動画編集: オーバーレイ
+    # --------------------------
+    def _collect_overlay_from_form(self) -> Dict[str, Any]:
+        return {
+            "type": self.detailed_overlay_type_var.get(),
+            "start": self._safe_float(self.detailed_overlay_start_entry.get().strip(), 0.0),
+            "end": self._safe_float(self.detailed_overlay_end_entry.get().strip(), 0.0),
+            "x": self._safe_int(self.detailed_overlay_x_entry.get().strip(), 0),
+            "y": self._safe_int(self.detailed_overlay_y_entry.get().strip(), 0),
+            "w": self._safe_int(self.detailed_overlay_w_entry.get().strip(), 0),
+            "h": self._safe_int(self.detailed_overlay_h_entry.get().strip(), 0),
+            "opacity": self._safe_float(self.detailed_overlay_opacity_entry.get().strip(), 1.0),
+            "source": self.detailed_overlay_source_entry.get().strip(),
+            "font_size": self._safe_int(self.detailed_overlay_font_entry.get().strip(), 32),
+            "color": self.detailed_overlay_color_entry.get().strip() or "#ffffff",
+            "outline": self._safe_int(self.detailed_overlay_outline_entry.get().strip(), 2),
+        }
+
+    def add_detailed_overlay(self):
+        ov = self._collect_overlay_from_form()
+        if ov["end"] <= ov["start"]:
+            messagebox.showerror("入力エラー", "終了時間は開始時間より大きくしてください。")
+            return
+        self.detailed_overlays.append(ov)
+        self.refresh_detailed_overlays()
+        self._mark_detailed_dirty()
+
+    def duplicate_detailed_overlay(self):
+        sel = self.detailed_overlay_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if 0 <= idx < len(self.detailed_overlays):
+            self.detailed_overlays.append(dict(self.detailed_overlays[idx]))
+            self.refresh_detailed_overlays()
+            self._mark_detailed_dirty()
+
+    def delete_detailed_overlay(self):
+        sel = self.detailed_overlay_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if 0 <= idx < len(self.detailed_overlays):
+            self.detailed_overlays.pop(idx)
+            self.refresh_detailed_overlays()
+            self._mark_detailed_dirty()
+
+    def on_detailed_overlay_select(self, _event=None):
+        sel = self.detailed_overlay_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.detailed_overlays):
+            return
+        ov = self.detailed_overlays[idx]
+        self.detailed_overlay_type_var.set(ov.get("type", "image"))
+        self.detailed_overlay_start_entry.delete(0, "end")
+        self.detailed_overlay_start_entry.insert(0, str(ov.get("start", 0.0)))
+        self.detailed_overlay_end_entry.delete(0, "end")
+        self.detailed_overlay_end_entry.insert(0, str(ov.get("end", 0.0)))
+        self.detailed_overlay_x_entry.delete(0, "end")
+        self.detailed_overlay_x_entry.insert(0, str(ov.get("x", 0)))
+        self.detailed_overlay_y_entry.delete(0, "end")
+        self.detailed_overlay_y_entry.insert(0, str(ov.get("y", 0)))
+        self.detailed_overlay_w_entry.delete(0, "end")
+        self.detailed_overlay_w_entry.insert(0, str(ov.get("w", 0)))
+        self.detailed_overlay_h_entry.delete(0, "end")
+        self.detailed_overlay_h_entry.insert(0, str(ov.get("h", 0)))
+        self.detailed_overlay_opacity_entry.delete(0, "end")
+        self.detailed_overlay_opacity_entry.insert(0, str(ov.get("opacity", 1.0)))
+        self.detailed_overlay_source_entry.delete(0, "end")
+        self.detailed_overlay_source_entry.insert(0, ov.get("source", ""))
+        self.detailed_overlay_font_entry.delete(0, "end")
+        self.detailed_overlay_font_entry.insert(0, str(ov.get("font_size", 32)))
+        self.detailed_overlay_color_entry.delete(0, "end")
+        self.detailed_overlay_color_entry.insert(0, str(ov.get("color", "#ffffff")))
+        self.detailed_overlay_outline_entry.delete(0, "end")
+        self.detailed_overlay_outline_entry.insert(0, str(ov.get("outline", 2)))
+
+    def refresh_detailed_overlays(self):
+        if not hasattr(self, "detailed_overlay_tree"):
+            return
+        for item in self.detailed_overlay_tree.get_children():
+            self.detailed_overlay_tree.delete(item)
+        for idx, ov in enumerate(self.detailed_overlays):
+            self.detailed_overlay_tree.insert(
+                "",
+                "end",
+                iid=str(idx),
+                values=(
+                    ov.get("type", ""),
+                    f"{ov.get('start', 0.0):.2f}",
+                    f"{ov.get('end', 0.0):.2f}",
+                    ov.get("x", 0),
+                    ov.get("y", 0),
+                    ov.get("w", 0),
+                    ov.get("h", 0),
+                    f"{ov.get('opacity', 1.0):.2f}",
+                    ov.get("source", "")[:40],
+                ),
+            )
+
+    # --------------------------
+    # 詳細動画編集: プレビュー
+    # --------------------------
+    def _get_preview_clip(self) -> Optional[VideoFileClip]:
+        path = self.detailed_main_video_entry.get().strip()
+        if not path:
+            return None
+        if self._detailed_preview_clip and getattr(self._detailed_preview_clip, "filename", "") == path:
+            return self._detailed_preview_clip
+        if self._detailed_preview_clip:
+            try:
+                self._detailed_preview_clip.close()
+            except Exception:
+                pass
+        try:
+            self._detailed_preview_clip = VideoFileClip(path)
+        except Exception:
+            self._detailed_preview_clip = None
+        return self._detailed_preview_clip
+
+    def _sync_preview_range(self, duration: float):
+        self.detailed_seek_slider.configure(from_=0, to=max(0.1, duration))
+        self.detailed_seek_slider.set(0)
+        self._detailed_preview_time = 0.0
+        self.render_preview_frame(0.0)
+
+    def render_preview_frame(self, t: float):
+        clip = self._get_preview_clip()
+        if not clip:
+            return
+        t = max(0.0, min(float(t), clip.duration))
+        try:
+            frame = clip.get_frame(t)
+            img = Image.fromarray(frame)
+            img.thumbnail((640, 360), Image.LANCZOS)
+            self._detailed_preview_imgtk = ImageTk.PhotoImage(img)
+            self.detailed_preview_label.configure(image=self._detailed_preview_imgtk, text="")
+        except Exception:
+            self.detailed_preview_label.configure(text="プレビュー生成に失敗しました", image="")
+
+    def on_preview_seek(self, value):
+        try:
+            t = float(value)
+        except Exception:
+            t = 0.0
+        self._detailed_preview_time = t
+        self.render_preview_frame(t)
+
+    def start_detailed_preview(self):
+        if self._detailed_preview_playing:
+            return
+        clip = self._get_preview_clip()
+        if not clip:
+            return
+        self._detailed_preview_playing = True
+
+        def _tick():
+            if not self._detailed_preview_playing:
+                return
+            fps = clip.fps or 30
+            self._detailed_preview_time += 1 / fps
+            if self._detailed_preview_time >= clip.duration:
+                self._detailed_preview_time = clip.duration
+                self.stop_detailed_preview()
+                return
+            self.detailed_seek_slider.set(self._detailed_preview_time)
+            self.render_preview_frame(self._detailed_preview_time)
+            self._detailed_preview_job = self.after(int(1000 / fps), _tick)
+
+        _tick()
+
+    def stop_detailed_preview(self):
+        self._detailed_preview_playing = False
+        if self._detailed_preview_job:
+            try:
+                self.after_cancel(self._detailed_preview_job)
+            except Exception:
+                pass
+            self._detailed_preview_job = None
+
+    def step_preview(self, direction: int):
+        clip = self._get_preview_clip()
+        if not clip:
+            return
+        fps = clip.fps or 30
+        self._detailed_preview_time = max(0.0, min(clip.duration, self._detailed_preview_time + direction / fps))
+        self.detailed_seek_slider.set(self._detailed_preview_time)
+        self.render_preview_frame(self._detailed_preview_time)
+
+    # --------------------------
+    # 詳細動画編集: 書き出し
+    # --------------------------
+    def browse_detailed_export_path(self):
+        path = filedialog.asksaveasfilename(
+            title="書き出し先",
+            defaultextension=".mp4",
+            filetypes=[("MP4", "*.mp4"), ("すべてのファイル", "*.*")],
+        )
+        if path:
+            self.detailed_export_path_entry.delete(0, "end")
+            self.detailed_export_path_entry.insert(0, path)
+
+    def browse_detailed_bgm(self):
+        path = filedialog.askopenfilename(
+            title="BGMを選択",
+            filetypes=[("音声ファイル", "*.mp3;*.wav;*.m4a;*.flac"), ("すべてのファイル", "*.*")],
+        )
+        if path:
+            self.detailed_bgm_entry.delete(0, "end")
+            self.detailed_bgm_entry.insert(0, path)
+            self._mark_detailed_dirty()
+
+    def export_detailed_video(self):
+        if not self.detailed_timeline:
+            messagebox.showerror("書き出しエラー", "タイムラインが空です。")
+            return
+        output_path = self.detailed_export_path_entry.get().strip()
+        if not output_path:
+            messagebox.showerror("書き出しエラー", "出力先を指定してください。")
+            return
+
+        def _worker():
+            try:
+                self._export_detailed_video_worker(output_path)
+                self.log("✅ 詳細動画編集の書き出しが完了しました。")
+                messagebox.showinfo("完了", "書き出しが完了しました。")
+            except Exception:
+                tb = traceback.format_exc()
+                self.log("❌ 詳細動画編集でエラー:\n" + tb)
+                messagebox.showerror("エラー", f"書き出しに失敗しました:\n{tb}")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _export_detailed_video_worker(self, output_path: str):
+        base_path = self.detailed_main_video_entry.get().strip()
+        if not base_path:
+            raise RuntimeError("メイン動画が指定されていません。")
+        base_clip = VideoFileClip(base_path)
+        try:
+            clips = []
+            for clip in self.detailed_timeline:
+                start = float(clip.get("start", 0.0))
+                end = float(clip.get("end", 0.0))
+                if end <= start:
+                    continue
+                clips.append(base_clip.subclip(start, end))
+            if not clips:
+                raise RuntimeError("有効なクリップがありません。")
+            merged = concatenate_videoclips(clips, method="compose")
+
+            overlay_clips = []
+            for ov in self.detailed_overlays:
+                start = float(ov.get("start", 0.0))
+                end = float(ov.get("end", 0.0))
+                if end <= start:
+                    continue
+                if ov.get("type") == "image":
+                    src = ov.get("source", "")
+                    if not src:
+                        continue
+                    img_clip = ImageClip(src)
+                    w = int(ov.get("w", 0) or 0)
+                    h = int(ov.get("h", 0) or 0)
+                    if w > 0 or h > 0:
+                        target_w = w if w > 0 else None
+                        target_h = h if h > 0 else None
+                        img_clip = img_clip.resize(newsize=(target_w, target_h))
+                    img_clip = img_clip.with_start(start).with_end(end)
+                    img_clip = img_clip.with_position((int(ov.get("x", 0)), int(ov.get("y", 0))))
+                    img_clip = img_clip.with_opacity(float(ov.get("opacity", 1.0)))
+                    overlay_clips.append(img_clip)
+                else:
+                    text_img = self._render_text_overlay(
+                        ov.get("source", ""),
+                        int(ov.get("font_size", 32)),
+                        ov.get("color", "#ffffff"),
+                        int(ov.get("outline", 2)),
+                    )
+                    img_clip = ImageClip(np.array(text_img))
+                    img_clip = img_clip.with_start(start).with_end(end)
+                    img_clip = img_clip.with_position((int(ov.get("x", 0)), int(ov.get("y", 0))))
+                    img_clip = img_clip.with_opacity(float(ov.get("opacity", 1.0)))
+                    overlay_clips.append(img_clip)
+
+            final = CompositeVideoClip([merged] + overlay_clips, size=merged.size)
+
+            # Audio
+            audio_tracks = []
+            if self.detailed_video_audio_var.get() and merged.audio:
+                audio_tracks.append(merged.audio.volumex(float(self.detailed_video_volume_slider.get())))
+            bgm_path = self.detailed_bgm_entry.get().strip()
+            if bgm_path:
+                bgm = AudioFileClip(bgm_path).volumex(float(self.detailed_bgm_volume_slider.get()))
+                if bgm.duration < final.duration:
+                    bgm = afx.audio_loop(bgm, duration=final.duration)
+                audio_tracks.append(bgm)
+            if audio_tracks:
+                mixed = CompositeAudioClip(audio_tracks)
+                fade_in = self._safe_float(self.detailed_fade_in_entry.get().strip(), 0.0)
+                fade_out = self._safe_float(self.detailed_fade_out_entry.get().strip(), 0.0)
+                if fade_in > 0:
+                    mixed = afx.audio_fadein(mixed, fade_in)
+                if fade_out > 0:
+                    mixed = afx.audio_fadeout(mixed, fade_out)
+                final = final.with_audio(mixed)
+            else:
+                final = final.with_audio(None)
+
+            # Export settings
+            res = self.detailed_export_res_var.get()
+            if res != "元サイズ" and "x" in res:
+                w, h = res.split("x", 1)
+                final = final.resize(newsize=(int(w), int(h)))
+            fps = int(self._safe_int(self.detailed_export_fps_entry.get().strip(), 30))
+
+            def _progress(value, _eta):
+                self._update_detailed_export_progress(value)
+
+            logger = TkMoviePyLogger(progress_fn=_progress, base=0, span=1.0)
+            final.write_videofile(
+                output_path,
+                codec="libx264",
+                audio_codec="aac",
+                fps=fps,
+                logger=logger,
+            )
+        finally:
+            base_clip.close()
+
+    def _update_detailed_export_progress(self, value: float):
+        def _apply():
+            v = max(0.0, min(1.0, float(value)))
+            self.detailed_export_progress.set(v)
+            self.detailed_export_label.configure(text=f"進捗: {int(v * 100)}%")
+
+        self.after(0, _apply)
+
+    def _render_text_overlay(self, text: str, font_size: int, color: str, outline: int) -> Image.Image:
+        if not text:
+            text = " "
+        font = None
+        for path in FONT_PATHS:
+            if Path(path).exists():
+                try:
+                    font = ImageFont.truetype(path, font_size)
+                    break
+                except Exception:
+                    pass
+        if not font:
+            font = ImageFont.load_default()
+        dummy = Image.new("RGBA", (10, 10))
+        draw = ImageDraw.Draw(dummy)
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=outline)
+        width = bbox[2] - bbox[0] + 20
+        height = bbox[3] - bbox[1] + 20
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        rgba = parse_hex_color(color, default=(255, 255, 255, 255))
+        draw.text((10, 10), text, font=font, fill=rgba, stroke_width=outline, stroke_fill=(0, 0, 0, 255))
+        return img
+
+    def _safe_int(self, value: str, default: int) -> int:
+        try:
+            return int(float(value))
+        except Exception:
+            return default
+
+    def _safe_float(self, value: str, default: float) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return default
 
     # --------------------------
     # File dialogs
