@@ -1584,7 +1584,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
         img_path = ov.get("image_path", "")
         if not img_path or not Path(img_path).exists():
             if hasattr(self, "edit_thumb_label"):
-                self.edit_thumb_label.configure(text="画像が見つかりません", image=None)
+                self._edit_thumb_imgtk = None
+                self.edit_thumb_label.configure(text="画像が見つかりません", image="")
             if hasattr(self, "edit_thumb_path"):
                 self.edit_thumb_path.configure(text=str(img_path))
             self._edit_thumb_imgtk = None
@@ -1598,9 +1599,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_thumb_label.configure(text="", image=self._edit_thumb_imgtk)
             self.edit_thumb_path.configure(text=str(img_path))
         except Exception as e:
-            self.edit_thumb_label.configure(text=f"サムネ生成失敗: {e}", image=None)
-            self.edit_thumb_path.configure(text=str(img_path))
             self._edit_thumb_imgtk = None
+            self.edit_thumb_label.configure(text=f"サムネ生成失敗: {e}", image="")
+            self.edit_thumb_path.configure(text=str(img_path))
 
     def on_edit_tree_double_click(self, event):
         if not hasattr(self, "edit_tree"):
