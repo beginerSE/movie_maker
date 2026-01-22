@@ -49,7 +49,9 @@ from moviepy import (
     concatenate_videoclips,
     concatenate_audioclips,
 )
-from moviepy.audio.fx.all import audio_fadein, audio_fadeout, audio_loop
+# from moviepy.audio.fx import all as afx
+import moviepy.audio.fx as afx
+
 from moviepy.audio.AudioClip import CompositeAudioClip
 
 from PIL import Image, ImageDraw, ImageFont
@@ -1218,17 +1220,14 @@ def apply_image_overlays_to_video(
 class NewsShortGeneratorStudio(ctk.CTk):
     # --- Theme ---
     COL_BG = "#0b0f19"
-    COL_PANEL = "#101826"
-    COL_PANEL2 = "#151f2f"
-    COL_CARD = "#1b263b"
-    COL_ELEVATED = "#22314a"
-    COL_BORDER = "#2b3b55"
-    COL_OUTLINE = "#3a4e6d"
-    COL_TEXT = "#eef4ff"
-    COL_MUTED = "#a8b7d3"
-    COL_ACCENT = "#4f8cff"
-    COL_ACCENT_HOVER = "#3c7af5"
-    COL_ACCENT_TONAL = "#233a5b"
+    COL_PANEL = "#111827"
+    COL_PANEL2 = "#141d2b"
+    COL_CARD = "#172235"
+    COL_BORDER = "#23324a"
+    COL_TEXT = "#e6edf7"
+    COL_MUTED = "#a3b3cc"
+    COL_ACCENT = "#3b82f6"
+    COL_ACCENT_HOVER = "#2f6fe0"
     COL_DANGER = "#ef5350"
     COL_DANGER_HOVER = "#d64543"
     COL_OK = "#10b981"
@@ -1336,36 +1335,35 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 return
             theme[widget][key] = value
 
-        _set("CTkButton", "corner_radius", 16)
-        _set("CTkButton", "border_width", 0)
+        _set("CTkButton", "corner_radius", 14)
+        _set("CTkButton", "border_width", 1)
         _set("CTkButton", "border_color", self.COL_BORDER)
-        _set("CTkButton", "fg_color", self.COL_ACCENT)
-        _set("CTkButton", "hover_color", self.COL_ACCENT_HOVER)
-        _set("CTkButton", "text_color", "#0b1120")
+        _set("CTkButton", "fg_color", self.COL_CARD)
+        _set("CTkButton", "hover_color", "#1e2a42")
+        _set("CTkButton", "text_color", self.COL_TEXT)
         _set("CTkButton", "font", (self.FONT_FAMILY, 12, "bold"))
 
-        _set("CTkEntry", "corner_radius", 14)
-        _set("CTkEntry", "border_width", 2)
-        _set("CTkEntry", "border_color", self.COL_OUTLINE)
-        _set("CTkEntry", "fg_color", self.COL_ELEVATED)
+        _set("CTkEntry", "corner_radius", 12)
+        _set("CTkEntry", "border_width", 1)
+        _set("CTkEntry", "border_color", self.COL_BORDER)
+        _set("CTkEntry", "fg_color", self.COL_PANEL)
         _set("CTkEntry", "text_color", self.COL_TEXT)
         _set("CTkEntry", "font", (self.FONT_FAMILY, 11))
-        _set("CTkEntry", "placeholder_text_color", self.COL_MUTED)
 
-        _set("CTkOptionMenu", "corner_radius", 14)
-        _set("CTkOptionMenu", "button_color", self.COL_ACCENT_TONAL)
-        _set("CTkOptionMenu", "button_hover_color", "#2b4772")
-        _set("CTkOptionMenu", "fg_color", self.COL_ELEVATED)
+        _set("CTkOptionMenu", "corner_radius", 12)
+        _set("CTkOptionMenu", "button_color", self.COL_CARD)
+        _set("CTkOptionMenu", "button_hover_color", "#233454")
+        _set("CTkOptionMenu", "fg_color", self.COL_PANEL)
         _set("CTkOptionMenu", "text_color", self.COL_TEXT)
         _set("CTkOptionMenu", "font", (self.FONT_FAMILY, 11))
 
         _set("CTkLabel", "text_color", self.COL_TEXT)
         _set("CTkLabel", "font", (self.FONT_FAMILY, 11))
 
-        _set("CTkTextbox", "corner_radius", 14)
-        _set("CTkTextbox", "border_width", 2)
-        _set("CTkTextbox", "border_color", self.COL_OUTLINE)
-        _set("CTkTextbox", "fg_color", self.COL_ELEVATED)
+        _set("CTkTextbox", "corner_radius", 12)
+        _set("CTkTextbox", "border_width", 1)
+        _set("CTkTextbox", "border_color", self.COL_BORDER)
+        _set("CTkTextbox", "fg_color", self.COL_PANEL)
         _set("CTkTextbox", "text_color", self.COL_TEXT)
         _set("CTkTextbox", "font", (self.FONT_FAMILY, 11))
 
@@ -2024,11 +2022,12 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.btn_video = self._nav_button(menu, "🎬 動画生成", lambda: self.switch_page("video"))
         self.btn_video.grid(row=0, column=0, sticky="ew", pady=6)
 
-        self.btn_script = self._nav_button(menu, "✍️台本生成", lambda: self.switch_page("script"))
+        self.btn_script = self._nav_button(menu, "✍️動画台本生成", lambda: self.switch_page("script"))
         self.btn_script.grid(row=1, column=0, sticky="ew", pady=6)
 
-        self.btn_material = self._nav_button(menu, "📚 資料作成", lambda: self.switch_page("material"))
+        self.btn_material = self._nav_button(menu, "📚 サムネイル作成", lambda: self.switch_page("material"))
         self.btn_material.grid(row=2, column=0, sticky="ew", pady=6)
+        
 
         # NEW: 動画編集
         self.btn_edit = self._nav_button(menu, "🧩 動画編集", lambda: self.switch_page("edit"))
