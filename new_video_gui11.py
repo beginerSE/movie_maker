@@ -1217,19 +1217,19 @@ def apply_image_overlays_to_video(
 # ==========================
 class NewsShortGeneratorStudio(ctk.CTk):
     # --- Theme ---
-    COL_BG = "#0a0f1a"
-    COL_PANEL = "#0b1220"
-    COL_PANEL2 = "#0d1626"
-    COL_CARD = "#0f1a2e"
-    COL_BORDER = "#18253f"
-    COL_TEXT = "#e7eefc"
-    COL_MUTED = "#9fb1d1"
-    COL_ACCENT = "#2d6cdf"
-    COL_ACCENT_HOVER = "#2a61c7"
-    COL_DANGER = "#d94b4b"
-    COL_DANGER_HOVER = "#b63e3e"
-    COL_OK = "#00b894"
-    COL_OK_HOVER = "#019870"
+    COL_BG = "#0b0f19"
+    COL_PANEL = "#111827"
+    COL_PANEL2 = "#141d2b"
+    COL_CARD = "#172235"
+    COL_BORDER = "#23324a"
+    COL_TEXT = "#e6edf7"
+    COL_MUTED = "#a3b3cc"
+    COL_ACCENT = "#3b82f6"
+    COL_ACCENT_HOVER = "#2f6fe0"
+    COL_DANGER = "#ef5350"
+    COL_DANGER_HOVER = "#d64543"
+    COL_OK = "#10b981"
+    COL_OK_HOVER = "#0f9e6d"
 
     SIDEBAR_W = 240
     LOG_W = 320
@@ -1251,24 +1251,21 @@ class NewsShortGeneratorStudio(ctk.CTk):
         # GUI用フォントを統一
         # ==========================
         self.FONT_FAMILY = self._pick_font_family([
-            "Comic Sans MS" ,
-            "Consolas",
-            # "BIZ UDゴシック",
-            # "BIZ UDGothic",
-            # "Noto Sans JP",
-            # "Yu Gothic UI",
+            "Noto Sans JP",
+            "BIZ UDGothic",
+            "BIZ UDゴシック",
+            "Yu Gothic UI",
+            "Yu Gothic",
             "Meiryo UI",
             "Meiryo",
+            "Segoe UI",
         ])
 
-
-        # Windowsで雰囲気が変わりやすいフォント
-        self.FONT_FAMILY = "Comic Sans MS" 
-
         self.FONT_TITLE = ctk.CTkFont(family=self.FONT_FAMILY, size=20, weight="bold")
-        self.FONT_SUB   = ctk.CTkFont(family=self.FONT_FAMILY, size=12)
-        self.FONT_NAV   = ctk.CTkFont(family=self.FONT_FAMILY, size=13, weight="bold")
-        self.FONT_PILL  = ctk.CTkFont(family=self.FONT_FAMILY, size=12, weight="bold")
+        self.FONT_SUB = ctk.CTkFont(family=self.FONT_FAMILY, size=12)
+        self.FONT_NAV = ctk.CTkFont(family=self.FONT_FAMILY, size=13, weight="bold")
+        self.FONT_PILL = ctk.CTkFont(family=self.FONT_FAMILY, size=12, weight="bold")
+        self._apply_theme_overrides()
         # ==========================
 
         # state
@@ -1327,6 +1324,53 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 return name
         # 最後の砦
         return "TkDefaultFont"
+
+    def _apply_theme_overrides(self) -> None:
+        theme = ctk.ThemeManager.theme
+
+        def _set(widget: str, key: str, value) -> None:
+            if widget not in theme:
+                return
+            theme[widget][key] = value
+
+        _set("CTkButton", "corner_radius", 14)
+        _set("CTkButton", "border_width", 1)
+        _set("CTkButton", "border_color", self.COL_BORDER)
+        _set("CTkButton", "fg_color", self.COL_CARD)
+        _set("CTkButton", "hover_color", "#1e2a42")
+        _set("CTkButton", "text_color", self.COL_TEXT)
+        _set("CTkButton", "font", (self.FONT_FAMILY, 12, "bold"))
+
+        _set("CTkEntry", "corner_radius", 12)
+        _set("CTkEntry", "border_width", 1)
+        _set("CTkEntry", "border_color", self.COL_BORDER)
+        _set("CTkEntry", "fg_color", self.COL_PANEL)
+        _set("CTkEntry", "text_color", self.COL_TEXT)
+        _set("CTkEntry", "font", (self.FONT_FAMILY, 11))
+
+        _set("CTkOptionMenu", "corner_radius", 12)
+        _set("CTkOptionMenu", "button_color", self.COL_CARD)
+        _set("CTkOptionMenu", "button_hover_color", "#233454")
+        _set("CTkOptionMenu", "fg_color", self.COL_PANEL)
+        _set("CTkOptionMenu", "text_color", self.COL_TEXT)
+        _set("CTkOptionMenu", "font", (self.FONT_FAMILY, 11))
+
+        _set("CTkLabel", "text_color", self.COL_TEXT)
+        _set("CTkLabel", "font", (self.FONT_FAMILY, 11))
+
+        _set("CTkTextbox", "corner_radius", 12)
+        _set("CTkTextbox", "border_width", 1)
+        _set("CTkTextbox", "border_color", self.COL_BORDER)
+        _set("CTkTextbox", "fg_color", self.COL_PANEL)
+        _set("CTkTextbox", "text_color", self.COL_TEXT)
+        _set("CTkTextbox", "font", (self.FONT_FAMILY, 11))
+
+        _set("CTkCheckBox", "font", (self.FONT_FAMILY, 11))
+        _set("CTkCheckBox", "text_color", self.COL_TEXT)
+
+        _set("CTkSlider", "button_corner_radius", 10)
+        _set("CTkSlider", "button_color", self.COL_ACCENT)
+        _set("CTkSlider", "button_hover_color", self.COL_ACCENT_HOVER)
 
     def _default_detailed_project(self) -> Dict[str, Any]:
         return {
@@ -1964,7 +2008,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         sub = ctk.CTkLabel(
             top, text="Movie Maker",
             # font=ctk.CTkFont(size=12),
-            font=self.FONT_TITLE,
+            font=self.FONT_SUB,
             text_color=self.COL_MUTED
         )
         sub.grid(row=1, column=0, sticky="w", pady=(2, 0))
@@ -2015,7 +2059,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
             height=44,
             corner_radius=14,
             fg_color=self.COL_CARD,
-            hover_color="#142545",
+            hover_color="#1d2b44",
+            border_width=1,
+            border_color=self.COL_BORDER,
             text_color=self.COL_TEXT,
             anchor="w",
             font=self.FONT_NAV,
@@ -2024,9 +2070,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
     def _set_active_nav(self, key: str):
         def style(btn, active: bool):
             if active:
-                btn.configure(fg_color="#14305f", hover_color="#17386f")
+                btn.configure(fg_color="#1f3b6a", hover_color="#26457d", border_color=self.COL_ACCENT)
             else:
-                btn.configure(fg_color=self.COL_CARD, hover_color="#142545")
+                btn.configure(fg_color=self.COL_CARD, hover_color="#1d2b44", border_color=self.COL_BORDER)
 
         style(self.btn_video, key == "video")
         style(self.btn_script, key == "script")
