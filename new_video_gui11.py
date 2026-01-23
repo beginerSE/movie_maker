@@ -2,7 +2,7 @@
 """
 News Short Generator Studio（Windows向け）
 - 左：React風サイドバー（アイコン＋メニュー）
-- 中央：フォーム（「動画生成」「台本生成」「資料作成」「動画編集」「詳細動画編集」ページ切替）
+- 中央：フォーム（「動画生成」「台本生成」「動画タイトル・説明作成」「資料作成」「動画編集」「詳細動画編集」ページ切替）
 - 右：ログ（+ 進捗）
 
 [動画編集（NEW）]
@@ -167,6 +167,7 @@ DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101"
 DEFAULT_CLAUDE_MAX_TOKENS = 20000
 DEFAULT_SCRIPT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_SCRIPT_OPENAI_MODEL = "gpt-4.1-mini"
+DEFAULT_TITLE_MAX_TOKENS = 2000
 
 # 動画編集：JSONインポート時の既定値
 DEFAULT_EDIT_IMPORT_X = 100
@@ -1307,6 +1308,26 @@ def parse_srt_file(path: str) -> List[Dict[str, Any]]:
     return items
 
 
+def extract_script_text(path: str) -> str:
+    if not path:
+        raise ValueError("台本ファイルのパスが空です。")
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError("台本ファイルが見つかりません。")
+    suffix = target.suffix.lower()
+    if suffix == ".srt":
+        items = parse_srt_file(str(target))
+        if not items:
+            raise ValueError("SRTに字幕が見つかりませんでした。")
+        text = "\n".join(item.get("text", "") for item in items if item.get("text"))
+    else:
+        text = target.read_text(encoding="utf-8")
+    cleaned = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if not cleaned:
+        raise ValueError("台本テキストが空です。")
+    return cleaned
+
+
 def search_images_serpapi(api_key: str, query: str, provider: str = "Google") -> List[str]:
     if api_key.startswith("AIza"):
         raise RuntimeError(
@@ -1546,6 +1567,10 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.script_gemini_model_var = ctk.StringVar(value=DEFAULT_SCRIPT_GEMINI_MODEL)
         self.script_chatgpt_model_var = ctk.StringVar(value=DEFAULT_SCRIPT_OPENAI_MODEL)
         self.script_claude_model_var = ctk.StringVar(value=DEFAULT_CLAUDE_MODEL)
+        self.title_engine_var = ctk.StringVar(value="Gemini")
+        self.title_gemini_model_var = ctk.StringVar(value=DEFAULT_SCRIPT_GEMINI_MODEL)
+        self.title_chatgpt_model_var = ctk.StringVar(value=DEFAULT_SCRIPT_OPENAI_MODEL)
+        self.title_claude_model_var = ctk.StringVar(value=DEFAULT_CLAUDE_MODEL)
 
         self.edit_overlays: List[Dict[str, Any]] = []
         self._edit_preview_base: Image.Image | None = None
@@ -1721,6 +1746,33 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 self.script_claude_model_var,
                 values,
                 self.script_claude_model_var.get(),
+                DEFAULT_CLAUDE_MODEL,
+            )
+        if hasattr(self, "title_gemini_model_menu"):
+            values = gemini_models or SCRIPT_MODEL_MASTER["Gemini"]
+            self._sync_option_menu_values(
+                self.title_gemini_model_menu,
+                self.title_gemini_model_var,
+                values,
+                self.title_gemini_model_var.get(),
+                DEFAULT_SCRIPT_GEMINI_MODEL,
+            )
+        if hasattr(self, "title_chatgpt_model_menu"):
+            values = chatgpt_models or SCRIPT_MODEL_MASTER["ChatGPT"]
+            self._sync_option_menu_values(
+                self.title_chatgpt_model_menu,
+                self.title_chatgpt_model_var,
+                values,
+                self.title_chatgpt_model_var.get(),
+                DEFAULT_SCRIPT_OPENAI_MODEL,
+            )
+        if hasattr(self, "title_claude_model_menu"):
+            values = claude_models or SCRIPT_MODEL_MASTER["ClaudeCode"]
+            self._sync_option_menu_values(
+                self.title_claude_model_menu,
+                self.title_claude_model_var,
+                values,
+                self.title_claude_model_var.get(),
                 DEFAULT_CLAUDE_MODEL,
             )
 
@@ -2400,25 +2452,29 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.btn_script = self._nav_button(menu, "✍️動画台本生成", lambda: self.switch_page("script"))
         self.btn_script.grid(row=1, column=0, sticky="ew", pady=6)
 
+        self.btn_title_desc = self._nav_button(
+            menu, "🏷️ 動画タイトル・説明作成", lambda: self.switch_page("title_desc")
+        )
+        self.btn_title_desc.grid(row=2, column=0, sticky="ew", pady=6)
+
         self.btn_material = self._nav_button(menu, "📚 サムネイル作成", lambda: self.switch_page("material"))
-        self.btn_material.grid(row=2, column=0, sticky="ew", pady=6)
+        self.btn_material.grid(row=3, column=0, sticky="ew", pady=6)
 
         self.btn_ponchi = self._nav_button(menu, "📝 ポンチ絵作成", lambda: self.switch_page("ponchi"))
-        self.btn_ponchi.grid(row=3, column=0, sticky="ew", pady=6)
-
+        self.btn_ponchi.grid(row=4, column=0, sticky="ew", pady=6)
 
         # NEW: 動画編集
         self.btn_edit = self._nav_button(menu, "🧩 動画編集", lambda: self.switch_page("edit"))
-        self.btn_edit.grid(row=4, column=0, sticky="ew", pady=6)
+        self.btn_edit.grid(row=5, column=0, sticky="ew", pady=6)
 
         self.btn_detailed_edit = self._nav_button(menu, "🎛️ 詳細動画編集", lambda: self.switch_page("detailed_edit"))
-        self.btn_detailed_edit.grid(row=5, column=0, sticky="ew", pady=6)
+        self.btn_detailed_edit.grid(row=6, column=0, sticky="ew", pady=6)
 
         self.btn_settings = self._nav_button(menu, "⚙️ 設定", lambda: self.switch_page("settings"))
-        self.btn_settings.grid(row=6, column=0, sticky="ew", pady=6)
+        self.btn_settings.grid(row=7, column=0, sticky="ew", pady=6)
 
         self.btn_about = self._nav_button(menu, "ℹ️ About", lambda: self.switch_page("about"))
-        self.btn_about.grid(row=7, column=0, sticky="ew", pady=6)
+        self.btn_about.grid(row=8, column=0, sticky="ew", pady=6)
 
         bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         bottom.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
@@ -2460,6 +2516,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         style(self.btn_video, key == "video")
         style(self.btn_script, key == "script")
+        style(self.btn_title_desc, key == "title_desc")
         style(self.btn_material, key == "material")
         style(self.btn_ponchi, key == "ponchi")
         style(self.btn_edit, key == "edit")
@@ -2480,6 +2537,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self.pages["video"] = self._make_page(self.page_container)
         self.pages["script"] = self._make_page(self.page_container)
+        self.pages["title_desc"] = self._make_page(self.page_container)
         self.pages["material"] = self._make_page(self.page_container)
         self.pages["ponchi"] = self._make_page(self.page_container)
         self.pages["edit"] = self._make_page(self.page_container)  # NEW
@@ -2489,6 +2547,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self._build_video_page(self.pages["video"])
         self._build_script_page(self.pages["script"])
+        self._build_title_desc_page(self.pages["title_desc"])
         self._build_material_page(self.pages["material"])
         self._build_ponchi_page(self.pages["ponchi"])
         self._build_edit_page(self.pages["edit"])  # NEW
@@ -2514,6 +2573,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         title_map = {
             "video": "動画生成",
             "script": "台本生成",
+            "title_desc": "動画タイトル・説明作成",
             "material": "資料作成",
             "ponchi": "ポンチ絵作成",
             "edit": "動画編集",
@@ -2881,6 +2941,26 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if hasattr(self, "btn_generate_script"):
             self.btn_generate_script.configure(text=f"▶ {engine}で台本生成")
 
+    def on_title_engine_change(self, value: str):
+        engine = value or "Gemini"
+        if hasattr(self, "title_gemini_frame"):
+            if engine == "Gemini":
+                self.title_gemini_frame.grid()
+            else:
+                self.title_gemini_frame.grid_remove()
+        if hasattr(self, "title_chatgpt_frame"):
+            if engine == "ChatGPT":
+                self.title_chatgpt_frame.grid()
+            else:
+                self.title_chatgpt_frame.grid_remove()
+        if hasattr(self, "title_claude_frame"):
+            if engine == "ClaudeCode":
+                self.title_claude_frame.grid()
+            else:
+                self.title_claude_frame.grid_remove()
+        if hasattr(self, "btn_generate_title_desc"):
+            self.btn_generate_title_desc.configure(text=f"▶ {engine}で生成")
+
     # --------------------------
     # Script page
     # --------------------------
@@ -3131,6 +3211,144 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.on_script_engine_change(self.script_engine_var.get())
 
         self._refresh_template_menu()
+
+    # --------------------------
+    # Title/Description page
+    # --------------------------
+    def _build_title_desc_page(self, page):
+        self._build_page_header("title_desc", page, "動画タイトル・説明作成")
+        form = self._make_scroll_form(page)
+        form.grid_columnconfigure(0, weight=1)
+
+        r = 0
+
+        self._v_label(form, "台本ファイル (SRT / TXT)").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
+        self._v_hint(
+            form,
+            "動画台本（字幕）を読み込み、クリックされそうなタイトル案と説明文を生成します。",
+        ).grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
+
+        file_row, self.title_script_entry = self._v_path_row(form, "選択", self.browse_title_script)
+        file_row.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+
+        self._v_label(form, "生成AI").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        ctk.CTkOptionMenu(
+            form,
+            values=["Gemini", "ChatGPT", "ClaudeCode"],
+            variable=self.title_engine_var,
+            corner_radius=12,
+            height=34,
+            command=self.on_title_engine_change,
+        ).grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+
+        self.title_gemini_frame = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
+        self.title_gemini_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.title_gemini_frame.grid_columnconfigure(0, weight=1)
+        gr = 0
+        self._v_label(self.title_gemini_frame, "Gemini モデル").grid(
+            row=gr, column=0, sticky="w", padx=12, pady=(12, 6)
+        ); gr += 1
+        self.title_gemini_model_menu = ctk.CTkOptionMenu(
+            self.title_gemini_frame,
+            values=SCRIPT_MODEL_MASTER["Gemini"],
+            variable=self.title_gemini_model_var,
+            height=34,
+            corner_radius=12,
+        )
+        self.title_gemini_model_menu.grid(row=gr, column=0, sticky="ew", padx=12, pady=(0, 12)); gr += 1
+
+        self.title_chatgpt_frame = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
+        self.title_chatgpt_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.title_chatgpt_frame.grid_columnconfigure(0, weight=1)
+        cr = 0
+        self._v_label(self.title_chatgpt_frame, "ChatGPT モデル").grid(
+            row=cr, column=0, sticky="w", padx=12, pady=(12, 6)
+        ); cr += 1
+        self.title_chatgpt_model_menu = ctk.CTkOptionMenu(
+            self.title_chatgpt_frame,
+            values=SCRIPT_MODEL_MASTER["ChatGPT"],
+            variable=self.title_chatgpt_model_var,
+            height=34,
+            corner_radius=12,
+        )
+        self.title_chatgpt_model_menu.grid(row=cr, column=0, sticky="ew", padx=12, pady=(0, 12)); cr += 1
+
+        self.title_claude_frame = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
+        self.title_claude_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.title_claude_frame.grid_columnconfigure(0, weight=1)
+        ar = 0
+        self._v_label(self.title_claude_frame, "ClaudeCode モデル").grid(
+            row=ar, column=0, sticky="w", padx=12, pady=(12, 6)
+        ); ar += 1
+        self.title_claude_model_menu = ctk.CTkOptionMenu(
+            self.title_claude_frame,
+            values=SCRIPT_MODEL_MASTER["ClaudeCode"],
+            variable=self.title_claude_model_var,
+            height=34,
+            corner_radius=12,
+        )
+        self.title_claude_model_menu.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
+
+        self._v_label(form, "タイトル案の数").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self.title_count_entry = self._v_entry(form)
+        self.title_count_entry.insert(0, "5")
+        self.title_count_entry.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+
+        self._v_label(form, "追加指示（任意）").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self._v_hint(form, "例：ターゲット層、キーワード、トーンなど。").grid(
+            row=r, column=0, sticky="w", pady=(0, 10)
+        ); r += 1
+        self.title_extra_text = ctk.CTkTextbox(
+            form,
+            height=140,
+            corner_radius=14,
+            fg_color=self.COL_BG,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
+        self.title_extra_text.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+
+        gen_row = ctk.CTkFrame(form, fg_color="transparent")
+        gen_row.grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
+        gen_row.grid_columnconfigure(0, weight=1)
+        gen_row.grid_columnconfigure(1, weight=0)
+
+        self.btn_generate_title_desc = ctk.CTkButton(
+            gen_row,
+            text="▶ Geminiで生成",
+            command=self.on_generate_title_desc_clicked,
+            fg_color=self.COL_ACCENT,
+            hover_color=self.COL_ACCENT_HOVER,
+            height=44,
+            corner_radius=14,
+            font=ctk.CTkFont(size=14, weight="bold"),
+        )
+        self.btn_generate_title_desc.grid(row=0, column=0, sticky="ew")
+
+        self.btn_copy_title_desc = ctk.CTkButton(
+            gen_row,
+            text="コピー",
+            command=self.copy_generated_title_desc,
+            fg_color="#172238",
+            hover_color="#1b2a44",
+            height=44,
+            corner_radius=14,
+            width=120,
+        )
+        self.btn_copy_title_desc.grid(row=0, column=1, sticky="e", padx=(12, 0))
+
+        self._v_label(form, "生成結果").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self.title_output_text = ctk.CTkTextbox(
+            form,
+            height=280,
+            corner_radius=14,
+            fg_color=self.COL_BG,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
+        self.title_output_text.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+
+        self.on_title_engine_change(self.title_engine_var.get())
 
     # --------------------------
     # Material page (Gemini Image)
@@ -4985,7 +5203,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "end",
             "News Short Generator Studio\n\n"
             "- 左：サイドバー\n"
-            "- 中央：フォーム（動画生成 / 台本生成 / 資料作成 / ポンチ絵作成 / 動画編集 / 詳細動画編集 / 設定）\n"
+            "- 中央：フォーム（動画生成 / 台本生成 / 動画タイトル・説明作成 / 資料作成 / ポンチ絵作成 / 動画編集 / 詳細動画編集 / 設定）\n"
             "- 右：ログ（進捗）\n\n"
             "[動画編集]\n"
             "- 指定時間帯に画像を座標指定で重ねる（複数対応）\n"
@@ -5194,6 +5412,54 @@ class NewsShortGeneratorStudio(ctk.CTk):
         else:
             self.prompt_template_var.set(next(iter(self.prompt_templates.keys()), "（テンプレなし）"))
 
+        # title/description
+        if hasattr(self, "title_script_entry"):
+            self.title_script_entry.delete(0, "end")
+            self.title_script_entry.insert(0, data.get("title_script_path", ""))
+
+        if hasattr(self, "title_engine_var"):
+            self.title_engine_var.set(data.get("title_engine", "Gemini"))
+
+        if hasattr(self, "title_gemini_model_menu"):
+            self._sync_option_menu_values(
+                self.title_gemini_model_menu,
+                self.title_gemini_model_var,
+                SCRIPT_MODEL_MASTER["Gemini"],
+                data.get("title_gemini_model"),
+                DEFAULT_SCRIPT_GEMINI_MODEL,
+            )
+
+        if hasattr(self, "title_chatgpt_model_menu"):
+            self._sync_option_menu_values(
+                self.title_chatgpt_model_menu,
+                self.title_chatgpt_model_var,
+                SCRIPT_MODEL_MASTER["ChatGPT"],
+                data.get("title_chatgpt_model"),
+                DEFAULT_SCRIPT_OPENAI_MODEL,
+            )
+
+        if hasattr(self, "title_claude_model_menu"):
+            self._sync_option_menu_values(
+                self.title_claude_model_menu,
+                self.title_claude_model_var,
+                SCRIPT_MODEL_MASTER["ClaudeCode"],
+                data.get("title_claude_model"),
+                DEFAULT_CLAUDE_MODEL,
+            )
+
+        if hasattr(self, "title_count_entry"):
+            self.title_count_entry.delete(0, "end")
+            self.title_count_entry.insert(0, str(data.get("title_count", 5)))
+
+        if hasattr(self, "title_extra_text"):
+            self._set_textbox(self.title_extra_text, data.get("title_extra", ""))
+
+        if hasattr(self, "title_output_text"):
+            self._set_textbox(self.title_output_text, data.get("title_output", ""))
+
+        if hasattr(self, "title_engine_var"):
+            self.on_title_engine_change(self.title_engine_var.get())
+
         # material
         if hasattr(self, "material_model_entry"):
             self.material_model_entry.delete(0, "end")
@@ -5347,6 +5613,29 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "claude_output": self._get_textbox(self.claude_output_text),
             "prompt_templates": self.prompt_templates,
             "prompt_template_selected": self.prompt_template_var.get(),
+            "title_script_path": getattr(self, "title_script_entry", None).get().strip()
+            if hasattr(self, "title_script_entry")
+            else "",
+            "title_engine": self.title_engine_var.get() if hasattr(self, "title_engine_var") else "Gemini",
+            "title_gemini_model": self.title_gemini_model_var.get().strip()
+            if hasattr(self, "title_gemini_model_var")
+            else DEFAULT_SCRIPT_GEMINI_MODEL,
+            "title_chatgpt_model": self.title_chatgpt_model_var.get().strip()
+            if hasattr(self, "title_chatgpt_model_var")
+            else DEFAULT_SCRIPT_OPENAI_MODEL,
+            "title_claude_model": self.title_claude_model_var.get().strip()
+            if hasattr(self, "title_claude_model_var")
+            else DEFAULT_CLAUDE_MODEL,
+            "title_count": _safe_int(
+                getattr(self, "title_count_entry", None).get().strip() if hasattr(self, "title_count_entry") else "5",
+                5,
+            ),
+            "title_extra": self._get_textbox(self.title_extra_text)
+            if hasattr(self, "title_extra_text")
+            else "",
+            "title_output": self._get_textbox(self.title_output_text)
+            if hasattr(self, "title_output_text")
+            else "",
             "material_model": getattr(self, "material_model_entry", None).get().strip()
             if hasattr(self, "material_model_entry")
             else GEMINI_MATERIAL_DEFAULT_MODEL,
@@ -6356,6 +6645,15 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.script_entry.delete(0, "end")
             self.script_entry.insert(0, path)
 
+    def browse_title_script(self):
+        path = filedialog.askopenfilename(
+            title="台本ファイルを選択",
+            filetypes=[("SRT", "*.srt"), ("テキストファイル", "*.txt"), ("すべてのファイル", "*.*")],
+        )
+        if path and hasattr(self, "title_script_entry"):
+            self.title_script_entry.delete(0, "end")
+            self.title_script_entry.insert(0, path)
+
     def add_images(self):
         paths = filedialog.askopenfilenames(
             title="画像ファイルを追加",
@@ -6435,6 +6733,31 @@ class NewsShortGeneratorStudio(ctk.CTk):
         )
         self._set_textbox(self.material_prompt_text, tpl)
 
+    def _build_title_desc_prompt(self, script_text: str, count: int, extra: str) -> str:
+        extra_block = f"\n[追加指示]\n{extra.strip()}\n" if extra.strip() else ""
+        return (
+            "あなたはYouTube動画の企画編集者です。\n"
+            "以下の台本をもとに、YouTubeでバズりそうでクリックされやすいタイトル案と説明文を作成してください。\n\n"
+            "[条件]\n"
+            f"- タイトル案は {count} 個\n"
+            "- 日本語\n"
+            "- 誇張しすぎや誤解を招く表現は避ける\n"
+            "- 文字数は短め（30〜45文字程度）\n"
+            "- 台本の内容が伝わるように\n\n"
+            "[出力形式]\n"
+            "タイトル案:\n"
+            "1. ...\n"
+            "2. ...\n"
+            "...\n"
+            "説明文:\n"
+            "- 2〜4段落で読みやすく\n"
+            "- 冒頭にフック\n"
+            "- 最後にチャンネル登録の一言\n"
+            f"{extra_block}\n"
+            "[台本]\n"
+            f"{script_text}\n"
+        )
+
     def copy_generated_material(self):
         path = self.material_save_path_entry.get().strip()
         if not path:
@@ -6474,6 +6797,15 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.clipboard_clear()
         self.clipboard_append(txt)
         self.log("✅ 台本をクリップボードにコピーしました。")
+
+    def copy_generated_title_desc(self):
+        txt = self._get_textbox(self.title_output_text)
+        if not txt.strip():
+            messagebox.showinfo("コピー", "生成結果が空です。")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(txt)
+        self.log("✅ タイトル・説明文をクリップボードにコピーしました。")
 
     def save_generated_script(self):
         txt = self._get_textbox(self.claude_output_text)
@@ -6561,6 +6893,90 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 self.after(
                     0,
                     lambda: self.btn_generate_script.configure(state="normal", text=f"▶ {engine}で台本生成"),
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_generate_title_desc_clicked(self):
+        engine = (self.title_engine_var.get() or "Gemini").strip()
+        script_path = self.title_script_entry.get().strip()
+        if not script_path:
+            messagebox.showerror("エラー", "台本ファイルを選択してください。")
+            return
+
+        try:
+            count = int(self.title_count_entry.get().strip() or "5")
+            if count <= 0 or count > 20:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("エラー", "タイトル案の数は 1〜20 の整数で入力してください。")
+            return
+
+        if engine == "Gemini" and not self._get_gemini_api_key():
+            messagebox.showerror("エラー", "設定タブでGemini APIキーを入力してください。")
+            return
+        if engine == "ChatGPT" and not self._get_chatgpt_api_key():
+            messagebox.showerror("エラー", "設定タブでChatGPT APIキーを入力してください。")
+            return
+        if engine == "ClaudeCode" and not self._get_claude_api_key():
+            messagebox.showerror("エラー", "設定タブでClaudeCode APIキーを入力してください。")
+            return
+
+        try:
+            script_text = extract_script_text(script_path)
+        except Exception as exc:
+            messagebox.showerror("エラー", f"台本の読み込みに失敗しました:\n{exc}")
+            return
+
+        extra = self._get_textbox(self.title_extra_text)
+        prompt = self._build_title_desc_prompt(script_text, count, extra)
+
+        self.save_config()
+        self.btn_generate_title_desc.configure(state="disabled", text="生成中...")
+        self.set_status("Working", ok=True)
+        self.log(f"=== {engine} タイトル・説明生成 開始 ===")
+        self.update_progress(0.02)
+
+        def worker():
+            try:
+                self.update_progress(0.08)
+                if engine == "Gemini":
+                    model = self.title_gemini_model_var.get().strip() or DEFAULT_SCRIPT_GEMINI_MODEL
+                    out = generate_script_with_gemini(
+                        api_key=self._get_gemini_api_key(),
+                        prompt=prompt,
+                        model=model,
+                    )
+                elif engine == "ChatGPT":
+                    model = self.title_chatgpt_model_var.get().strip() or DEFAULT_SCRIPT_OPENAI_MODEL
+                    out = generate_script_with_openai(
+                        api_key=self._get_chatgpt_api_key(),
+                        prompt=prompt,
+                        model=model,
+                        max_tokens=DEFAULT_TITLE_MAX_TOKENS,
+                    )
+                else:
+                    model = self.title_claude_model_var.get().strip() or DEFAULT_CLAUDE_MODEL
+                    out = generate_script_with_claude(
+                        api_key=self._get_claude_api_key(),
+                        prompt=prompt,
+                        model=model,
+                        max_tokens=DEFAULT_TITLE_MAX_TOKENS,
+                    )
+                self.after(0, lambda: self._set_textbox(self.title_output_text, out))
+                self.log(f"✅ {engine} タイトル・説明生成 完了")
+                self.update_progress(1.0)
+                self.set_status("Ready", ok=True)
+            except Exception as e:
+                tb = traceback.format_exc()
+                self.log(f"❌ {engine} タイトル・説明生成でエラー:\n" + tb)
+                self.set_status("Error", ok=False)
+                self.update_progress(0.0)
+                self.after(0, lambda: messagebox.showerror("エラー", f"生成に失敗しました:\n{e}"))
+            finally:
+                self.after(
+                    0,
+                    lambda: self.btn_generate_title_desc.configure(state="normal", text=f"▶ {engine}で生成"),
                 )
 
         threading.Thread(target=worker, daemon=True).start()
