@@ -180,6 +180,26 @@ DETAILED_AUTOSAVE_INTERVAL_MS = 30000
 DEFAULT_PONCHI_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_PONCHI_OPENAI_MODEL = "gpt-4.1-mini"
 
+SCRIPT_MODEL_MASTER = {
+    "Gemini": [
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    ],
+    "ChatGPT": [
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "gpt-4o-mini",
+        "gpt-4o",
+    ],
+    "ClaudeCode": [
+        "claude-opus-4-5-20251101",
+        "claude-sonnet-4-20250514",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-opus-20240229",
+    ],
+}
+
 
 SPEAKER_ALIASES = {
     "キャスター": ["キャスター", "司会", "アナウンサー", "MC", "Caster"],
@@ -1476,6 +1496,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.prompt_template_names: List[str] = []
         self.prompt_template_var = ctk.StringVar(value="")
         self.script_engine_var = ctk.StringVar(value="ClaudeCode")
+        self.script_gemini_model_var = ctk.StringVar(value=DEFAULT_SCRIPT_GEMINI_MODEL)
+        self.script_chatgpt_model_var = ctk.StringVar(value=DEFAULT_SCRIPT_OPENAI_MODEL)
+        self.script_claude_model_var = ctk.StringVar(value=DEFAULT_CLAUDE_MODEL)
 
         self.edit_overlays: List[Dict[str, Any]] = []
         self._edit_preview_base: Image.Image | None = None
@@ -1563,13 +1586,28 @@ class NewsShortGeneratorStudio(ctk.CTk):
         _set("CTkTextbox", "fg_color", self.COL_PANEL)
         _set("CTkTextbox", "text_color", self.COL_TEXT)
         _set("CTkTextbox", "font", (self.FONT_FAMILY, 11))
-
         _set("CTkCheckBox", "font", (self.FONT_FAMILY, 11))
         _set("CTkCheckBox", "text_color", self.COL_TEXT)
 
         _set("CTkSlider", "button_corner_radius", 10)
         _set("CTkSlider", "button_color", self.COL_ACCENT)
         _set("CTkSlider", "button_hover_color", self.COL_ACCENT_HOVER)
+
+    def _sync_option_menu_values(
+        self,
+        menu: ctk.CTkOptionMenu,
+        var: ctk.StringVar,
+        values: list[str],
+        selected: str,
+        fallback: str,
+    ) -> None:
+        next_value = selected or fallback
+        options = list(values)
+        if next_value and next_value not in options:
+            options = [next_value] + options
+        menu.configure(values=options)
+        if next_value:
+            var.set(next_value)
 
     def _default_detailed_project(self) -> Dict[str, Any]:
         return {
@@ -2735,9 +2773,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._v_label(self.script_gemini_frame, "Gemini モデル").grid(
             row=gr, column=0, sticky="w", padx=12, pady=(12, 6)
         ); gr += 1
-        self.script_gemini_model_entry = ctk.CTkEntry(self.script_gemini_frame, height=34, corner_radius=12)
-        self.script_gemini_model_entry.insert(0, DEFAULT_SCRIPT_GEMINI_MODEL)
-        self.script_gemini_model_entry.grid(row=gr, column=0, sticky="ew", padx=12, pady=(0, 12)); gr += 1
+        self.script_gemini_model_menu = ctk.CTkOptionMenu(
+            self.script_gemini_frame,
+            values=SCRIPT_MODEL_MASTER["Gemini"],
+            variable=self.script_gemini_model_var,
+            height=34,
+            corner_radius=12,
+        )
+        self.script_gemini_model_menu.grid(row=gr, column=0, sticky="ew", padx=12, pady=(0, 12)); gr += 1
 
         self.script_chatgpt_frame = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
         self.script_chatgpt_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
@@ -2746,9 +2789,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._v_label(self.script_chatgpt_frame, "ChatGPT モデル").grid(
             row=cr, column=0, sticky="w", padx=12, pady=(12, 6)
         ); cr += 1
-        self.script_chatgpt_model_entry = ctk.CTkEntry(self.script_chatgpt_frame, height=34, corner_radius=12)
-        self.script_chatgpt_model_entry.insert(0, DEFAULT_SCRIPT_OPENAI_MODEL)
-        self.script_chatgpt_model_entry.grid(row=cr, column=0, sticky="ew", padx=12, pady=(0, 12)); cr += 1
+        self.script_chatgpt_model_menu = ctk.CTkOptionMenu(
+            self.script_chatgpt_frame,
+            values=SCRIPT_MODEL_MASTER["ChatGPT"],
+            variable=self.script_chatgpt_model_var,
+            height=34,
+            corner_radius=12,
+        )
+        self.script_chatgpt_model_menu.grid(row=cr, column=0, sticky="ew", padx=12, pady=(0, 12)); cr += 1
 
         self.script_claude_frame = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
         self.script_claude_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
@@ -2757,9 +2805,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._v_label(self.script_claude_frame, "ClaudeCode モデル").grid(
             row=ar, column=0, sticky="w", padx=12, pady=(12, 6)
         ); ar += 1
-        self.claude_model_entry = ctk.CTkEntry(self.script_claude_frame, height=34, corner_radius=12)
-        self.claude_model_entry.insert(0, DEFAULT_CLAUDE_MODEL)
-        self.claude_model_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
+        self.script_claude_model_menu = ctk.CTkOptionMenu(
+            self.script_claude_frame,
+            values=SCRIPT_MODEL_MASTER["ClaudeCode"],
+            variable=self.script_claude_model_var,
+            height=34,
+            corner_radius=12,
+        )
+        self.script_claude_model_menu.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
 
         self._v_label(self.script_claude_frame, "max_tokens").grid(
             row=ar, column=0, sticky="w", padx=12, pady=(0, 6)
@@ -4950,16 +5003,32 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if hasattr(self, "script_engine_var"):
             self.script_engine_var.set(data.get("script_engine", "ClaudeCode"))
 
-        if hasattr(self, "script_gemini_model_entry"):
-            self.script_gemini_model_entry.delete(0, "end")
-            self.script_gemini_model_entry.insert(0, data.get("script_gemini_model", DEFAULT_SCRIPT_GEMINI_MODEL))
+        if hasattr(self, "script_gemini_model_menu"):
+            self._sync_option_menu_values(
+                self.script_gemini_model_menu,
+                self.script_gemini_model_var,
+                SCRIPT_MODEL_MASTER["Gemini"],
+                data.get("script_gemini_model"),
+                DEFAULT_SCRIPT_GEMINI_MODEL,
+            )
 
-        if hasattr(self, "script_chatgpt_model_entry"):
-            self.script_chatgpt_model_entry.delete(0, "end")
-            self.script_chatgpt_model_entry.insert(0, data.get("script_chatgpt_model", DEFAULT_SCRIPT_OPENAI_MODEL))
+        if hasattr(self, "script_chatgpt_model_menu"):
+            self._sync_option_menu_values(
+                self.script_chatgpt_model_menu,
+                self.script_chatgpt_model_var,
+                SCRIPT_MODEL_MASTER["ChatGPT"],
+                data.get("script_chatgpt_model"),
+                DEFAULT_SCRIPT_OPENAI_MODEL,
+            )
 
-        self.claude_model_entry.delete(0, "end")
-        self.claude_model_entry.insert(0, data.get("claude_model", DEFAULT_CLAUDE_MODEL))
+        if hasattr(self, "script_claude_model_menu"):
+            self._sync_option_menu_values(
+                self.script_claude_model_menu,
+                self.script_claude_model_var,
+                SCRIPT_MODEL_MASTER["ClaudeCode"],
+                data.get("claude_model"),
+                DEFAULT_CLAUDE_MODEL,
+            )
 
         self.claude_max_tokens_entry.delete(0, "end")
         self.claude_max_tokens_entry.insert(0, str(data.get("claude_max_tokens", DEFAULT_CLAUDE_MAX_TOKENS)))
@@ -5123,13 +5192,13 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "vv_analyst_label": self.vv_analyst_entry.get().strip() or DEFAULT_VV_ANALYST_LABEL,
             "vv_speed": float(self.vv_speed_slider.get()),
             "script_engine": self.script_engine_var.get() if hasattr(self, "script_engine_var") else "ClaudeCode",
-            "script_gemini_model": getattr(self, "script_gemini_model_entry", None).get().strip()
-            if hasattr(self, "script_gemini_model_entry")
+            "script_gemini_model": self.script_gemini_model_var.get().strip()
+            if hasattr(self, "script_gemini_model_var")
             else DEFAULT_SCRIPT_GEMINI_MODEL,
-            "script_chatgpt_model": getattr(self, "script_chatgpt_model_entry", None).get().strip()
-            if hasattr(self, "script_chatgpt_model_entry")
+            "script_chatgpt_model": self.script_chatgpt_model_var.get().strip()
+            if hasattr(self, "script_chatgpt_model_var")
             else DEFAULT_SCRIPT_OPENAI_MODEL,
-            "claude_model": self.claude_model_entry.get().strip() or DEFAULT_CLAUDE_MODEL,
+            "claude_model": self.script_claude_model_var.get().strip() or DEFAULT_CLAUDE_MODEL,
             "claude_max_tokens": _safe_int(self.claude_max_tokens_entry.get() or DEFAULT_CLAUDE_MAX_TOKENS, DEFAULT_CLAUDE_MAX_TOKENS),
             "script_save_path": self.script_save_path_entry.get().strip(),
             "claude_prompt": self._get_textbox(self.claude_prompt_text),
@@ -6315,21 +6384,21 @@ class NewsShortGeneratorStudio(ctk.CTk):
             try:
                 self.update_progress(0.08)
                 if engine == "Gemini":
-                    model = self.script_gemini_model_entry.get().strip() or DEFAULT_SCRIPT_GEMINI_MODEL
+                    model = self.script_gemini_model_var.get().strip() or DEFAULT_SCRIPT_GEMINI_MODEL
                     out = generate_script_with_gemini(
                         api_key=self._get_gemini_api_key(),
                         prompt=prompt,
                         model=model,
                     )
                 elif engine == "ChatGPT":
-                    model = self.script_chatgpt_model_entry.get().strip() or DEFAULT_SCRIPT_OPENAI_MODEL
+                    model = self.script_chatgpt_model_var.get().strip() or DEFAULT_SCRIPT_OPENAI_MODEL
                     out = generate_script_with_openai(
                         api_key=self._get_chatgpt_api_key(),
                         prompt=prompt,
                         model=model,
                     )
                 else:
-                    model = self.claude_model_entry.get().strip() or DEFAULT_CLAUDE_MODEL
+                    model = self.script_claude_model_var.get().strip() or DEFAULT_CLAUDE_MODEL
                     out = generate_script_with_claude(
                         api_key=self._get_claude_api_key(),
                         prompt=prompt,
