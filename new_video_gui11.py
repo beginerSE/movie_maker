@@ -960,6 +960,52 @@ def generate_script_with_gemini(
 # ==========================
 # ChatGPT 台本生成
 # ==========================
+def _post_openai_with_retry(
+    url: str,
+    headers: Dict[str, str],
+    payload: Dict[str, Any],
+    timeout: Tuple[int, int] = (10, 120),
+    max_retries: int = 3,
+    backoff_base: float = 2.0,
+) -> requests.Response:
+    retry_statuses = {429, 500, 502, 503, 504}
+    last_response: Optional[requests.Response] = None
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                time.sleep(backoff_base * (2 ** (attempt - 1)))
+                continue
+            raise RuntimeError(
+                "ChatGPT APIへの接続がタイムアウトしました。時間を空けて再試行してください。"
+            ) from exc
+
+        last_response = response
+        if response.status_code in retry_statuses and attempt < max_retries:
+            time.sleep(backoff_base * (2 ** (attempt - 1)))
+            continue
+        return response
+
+    if last_response is not None:
+        raise RuntimeError(
+            "ChatGPT APIが混雑している可能性があります。時間を空けて再試行してください。"
+        )
+    if last_exc is not None:
+        raise RuntimeError(
+            "ChatGPT APIへの接続に失敗しました。ネットワークを確認してください。"
+        ) from last_exc
+    raise RuntimeError("ChatGPT APIへのリクエストに失敗しました。")
+
+
 def generate_script_with_openai(
     api_key: str,
     prompt: str,
@@ -982,14 +1028,13 @@ def generate_script_with_openai(
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
 
-    resp = requests.post(
+    resp = _post_openai_with_retry(
         "https://api.openai.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json=payload,
-        timeout=60,
+        payload=payload,
     )
     if not resp.ok:
         raise RuntimeError(f"ChatGPT APIエラー: {resp.status_code} {resp.text}")
@@ -1155,14 +1200,13 @@ def generate_ponchi_suggestions_with_openai(
             {"role": "user", "content": "\n".join(prompt_lines)},
         ],
     }
-    resp = requests.post(
+    resp = _post_openai_with_retry(
         "https://api.openai.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json=payload,
-        timeout=60,
+        payload=payload,
     )
     if not resp.ok:
         raise RuntimeError(f"ChatGPT APIエラー: {resp.status_code} {resp.text}")
