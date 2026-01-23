@@ -997,14 +997,35 @@ def _post_openai_with_retry(
         return response
 
     if last_response is not None:
-        raise RuntimeError(
-            "ChatGPT APIが混雑している可能性があります。時間を空けて再試行してください。"
-        )
+        raise RuntimeError(_format_openai_error(last_response))
     if last_exc is not None:
         raise RuntimeError(
             "ChatGPT APIへの接続に失敗しました。ネットワークを確認してください。"
         ) from last_exc
     raise RuntimeError("ChatGPT APIへのリクエストに失敗しました。")
+
+
+def _format_openai_error(response: requests.Response) -> str:
+    status = response.status_code
+    if status == 401:
+        return "ChatGPT APIキーが無効です。APIキーを確認してください。"
+    if status == 429:
+        return "ChatGPT APIのレート制限に達しました。時間を空けて再試行してください。"
+    if status in {500, 502, 503, 504}:
+        return (
+            "ChatGPT APIのサーバーが一時的に不安定です。"
+            "時間を空けて再試行してください。"
+        )
+
+    message = None
+    try:
+        payload = response.json()
+        message = payload.get("error", {}).get("message")
+    except ValueError:
+        message = None
+    if message:
+        return f"ChatGPT APIエラー: {status} {message}"
+    return f"ChatGPT APIエラー: {status}"
 
 
 def generate_script_with_openai(
@@ -1038,7 +1059,7 @@ def generate_script_with_openai(
         payload=payload,
     )
     if not resp.ok:
-        raise RuntimeError(f"ChatGPT APIエラー: {resp.status_code} {resp.text}")
+        raise RuntimeError(_format_openai_error(resp))
     data = resp.json()
     message = data.get("choices", [{}])[0].get("message", {})
     content = message.get("content", "")
