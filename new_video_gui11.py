@@ -41,6 +41,9 @@ from google.genai import types
 # Claude (Anthropic)
 import anthropic
 
+# OpenAI (ChatGPT)
+from openai import OpenAI
+
 from moviepy import (
     AudioFileClip,
     ImageClip,
@@ -1608,6 +1611,99 @@ class NewsShortGeneratorStudio(ctk.CTk):
         menu.configure(values=options)
         if next_value:
             var.set(next_value)
+
+    def _fetch_openai_models(self, api_key: str) -> list[str]:
+        if not api_key:
+            return []
+        client = OpenAI(api_key=api_key)
+        resp = client.models.list()
+        models = [getattr(item, "id", "") for item in getattr(resp, "data", [])]
+        filtered = [m for m in models if m and (m.startswith("gpt") or m.startswith("o"))]
+        return sorted(set(filtered))
+
+    def _fetch_gemini_models(self, api_key: str) -> list[str]:
+        if not api_key:
+            return []
+        client = genai.Client(api_key=api_key)
+        models = []
+        for item in client.models.list():
+            name = getattr(item, "name", "") or getattr(item, "model", "")
+            if not name:
+                continue
+            if name.startswith("models/"):
+                name = name.split("/", 1)[1]
+            if "gemini" not in name:
+                continue
+            models.append(name)
+        return sorted(set(models))
+
+    def _fetch_claude_models(self, api_key: str) -> list[str]:
+        if not api_key:
+            return []
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.models.list()
+        models = [getattr(item, "id", "") for item in getattr(resp, "data", [])]
+        filtered = [m for m in models if m and m.startswith("claude")]
+        return sorted(set(filtered))
+
+    def _apply_script_model_options(
+        self,
+        gemini_models: list[str] | None,
+        chatgpt_models: list[str] | None,
+        claude_models: list[str] | None,
+    ) -> None:
+        if hasattr(self, "script_gemini_model_menu"):
+            values = gemini_models or SCRIPT_MODEL_MASTER["Gemini"]
+            self._sync_option_menu_values(
+                self.script_gemini_model_menu,
+                self.script_gemini_model_var,
+                values,
+                self.script_gemini_model_var.get(),
+                DEFAULT_SCRIPT_GEMINI_MODEL,
+            )
+        if hasattr(self, "script_chatgpt_model_menu"):
+            values = chatgpt_models or SCRIPT_MODEL_MASTER["ChatGPT"]
+            self._sync_option_menu_values(
+                self.script_chatgpt_model_menu,
+                self.script_chatgpt_model_var,
+                values,
+                self.script_chatgpt_model_var.get(),
+                DEFAULT_SCRIPT_OPENAI_MODEL,
+            )
+        if hasattr(self, "script_claude_model_menu"):
+            values = claude_models or SCRIPT_MODEL_MASTER["ClaudeCode"]
+            self._sync_option_menu_values(
+                self.script_claude_model_menu,
+                self.script_claude_model_var,
+                values,
+                self.script_claude_model_var.get(),
+                DEFAULT_CLAUDE_MODEL,
+            )
+
+    def _refresh_script_model_options(self) -> None:
+        def worker():
+            gemini_models = None
+            chatgpt_models = None
+            claude_models = None
+            try:
+                gemini_key = self._get_gemini_api_key()
+                chatgpt_key = self._get_chatgpt_api_key()
+                claude_key = self._get_claude_api_key()
+                if gemini_key:
+                    gemini_models = self._fetch_gemini_models(gemini_key)
+                if chatgpt_key:
+                    chatgpt_models = self._fetch_openai_models(chatgpt_key)
+                if claude_key:
+                    claude_models = self._fetch_claude_models(claude_key)
+            except Exception as exc:
+                self.log(f"⚠️ モデル一覧の取得に失敗しました: {exc}")
+            self.after(0, lambda: self._apply_script_model_options(
+                gemini_models,
+                chatgpt_models,
+                claude_models,
+            ))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _default_detailed_project(self) -> Dict[str, Any]:
         return {
@@ -4822,6 +4918,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
     def _save_settings_keys(self):
         self.save_config()
         self.log("✅ 設定のAPIキーを保存しました。")
+        self._refresh_script_model_options()
         messagebox.showinfo("保存完了", "APIキー設定を保存しました。")
 
     # --------------------------
@@ -5144,6 +5241,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.refresh_edit_overlay_table()
 
         self._refresh_template_menu()
+        self._refresh_script_model_options()
 
     def save_config(self):
         def _safe_int(val, default):
