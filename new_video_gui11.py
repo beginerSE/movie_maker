@@ -162,6 +162,8 @@ DEFAULT_VV_SPEED = 1.0  # 話速
 # Claude default
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101"
 DEFAULT_CLAUDE_MAX_TOKENS = 20000
+DEFAULT_SCRIPT_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_SCRIPT_OPENAI_MODEL = "gpt-4.1-mini"
 
 # 動画編集：JSONインポート時の既定値
 DEFAULT_EDIT_IMPORT_X = 100
@@ -908,6 +910,75 @@ def generate_script_with_claude(
 
 
 # ==========================
+# Gemini 台本生成
+# ==========================
+def generate_script_with_gemini(
+    api_key: str,
+    prompt: str,
+    model: str,
+) -> str:
+    if not api_key:
+        raise RuntimeError("Gemini APIキーが空です。")
+    if not prompt.strip():
+        raise RuntimeError("プロンプトが空です。")
+
+    client = genai.Client(api_key=api_key)
+    resp = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=0.7),
+    )
+    text = getattr(resp, "text", "") or ""
+    if not text:
+        raise RuntimeError("Geminiから台本の取得に失敗しました。")
+    return text.strip()
+
+
+# ==========================
+# ChatGPT 台本生成
+# ==========================
+def generate_script_with_openai(
+    api_key: str,
+    prompt: str,
+    model: str,
+    max_tokens: int | None = None,
+) -> str:
+    if not api_key:
+        raise RuntimeError("ChatGPT APIキーが空です。")
+    if not prompt.strip():
+        raise RuntimeError("プロンプトが空です。")
+
+    payload = {
+        "model": model,
+        "temperature": 0.7,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=60,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"ChatGPT APIエラー: {resp.status_code} {resp.text}")
+    data = resp.json()
+    message = data.get("choices", [{}])[0].get("message", {})
+    content = message.get("content", "")
+    if not content:
+        raise RuntimeError("ChatGPTから台本の取得に失敗しました。")
+    return content.strip()
+
+
+# ==========================
 # Gemini 画像生成
 # ==========================
 # GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.5-flash-image"
@@ -1404,6 +1475,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.prompt_templates: Dict[str, str] = {}
         self.prompt_template_names: List[str] = []
         self.prompt_template_var = ctk.StringVar(value="")
+        self.script_engine_var = ctk.StringVar(value="ClaudeCode")
 
         self.edit_overlays: List[Dict[str, Any]] = []
         self._edit_preview_base: Image.Image | None = None
@@ -2611,6 +2683,26 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.voicevox_frame.grid()
             self.gemini_frame.grid_remove()
 
+    def on_script_engine_change(self, value: str):
+        engine = value or "ClaudeCode"
+        if hasattr(self, "script_gemini_frame"):
+            if engine == "Gemini":
+                self.script_gemini_frame.grid()
+            else:
+                self.script_gemini_frame.grid_remove()
+        if hasattr(self, "script_chatgpt_frame"):
+            if engine == "ChatGPT":
+                self.script_chatgpt_frame.grid()
+            else:
+                self.script_chatgpt_frame.grid_remove()
+        if hasattr(self, "script_claude_frame"):
+            if engine == "ClaudeCode":
+                self.script_claude_frame.grid()
+            else:
+                self.script_claude_frame.grid_remove()
+        if hasattr(self, "btn_generate_script"):
+            self.btn_generate_script.configure(text=f"▶ {engine}で台本生成")
+
     # --------------------------
     # Script page
     # --------------------------
@@ -2621,25 +2713,60 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         r = 0
 
-        self._v_label(form, "Claude API").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
+        self._v_label(form, "台本作成 API").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
         self._v_hint(
             form,
-            "Claude(Anthropic) APIで台本を生成します。APIキーは環境変数ではなくフォーム入力を推奨します。"
+            "使用するAPIを選択します。APIキーは設定タブで一元管理します。",
         ).grid(row=r, column=0, sticky="w", pady=(0, 12)); r += 1
 
-        self._v_label(form, "Claude APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
-        self.claude_api_key_entry = ctk.CTkEntry(form, show="*", height=34, corner_radius=12)
-        self.claude_api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        ctk.CTkOptionMenu(
+            form,
+            values=["Gemini", "ChatGPT", "ClaudeCode"],
+            variable=self.script_engine_var,
+            corner_radius=12,
+            height=34,
+            command=self.on_script_engine_change,
+        ).grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
 
-        self._v_label(form, "model").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
-        self.claude_model_entry = ctk.CTkEntry(form, height=34, corner_radius=12)
+        self.script_gemini_frame = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
+        self.script_gemini_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.script_gemini_frame.grid_columnconfigure(0, weight=1)
+        gr = 0
+        self._v_label(self.script_gemini_frame, "Gemini モデル").grid(
+            row=gr, column=0, sticky="w", padx=12, pady=(12, 6)
+        ); gr += 1
+        self.script_gemini_model_entry = ctk.CTkEntry(self.script_gemini_frame, height=34, corner_radius=12)
+        self.script_gemini_model_entry.insert(0, DEFAULT_SCRIPT_GEMINI_MODEL)
+        self.script_gemini_model_entry.grid(row=gr, column=0, sticky="ew", padx=12, pady=(0, 12)); gr += 1
+
+        self.script_chatgpt_frame = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
+        self.script_chatgpt_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.script_chatgpt_frame.grid_columnconfigure(0, weight=1)
+        cr = 0
+        self._v_label(self.script_chatgpt_frame, "ChatGPT モデル").grid(
+            row=cr, column=0, sticky="w", padx=12, pady=(12, 6)
+        ); cr += 1
+        self.script_chatgpt_model_entry = ctk.CTkEntry(self.script_chatgpt_frame, height=34, corner_radius=12)
+        self.script_chatgpt_model_entry.insert(0, DEFAULT_SCRIPT_OPENAI_MODEL)
+        self.script_chatgpt_model_entry.grid(row=cr, column=0, sticky="ew", padx=12, pady=(0, 12)); cr += 1
+
+        self.script_claude_frame = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
+        self.script_claude_frame.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.script_claude_frame.grid_columnconfigure(0, weight=1)
+        ar = 0
+        self._v_label(self.script_claude_frame, "ClaudeCode モデル").grid(
+            row=ar, column=0, sticky="w", padx=12, pady=(12, 6)
+        ); ar += 1
+        self.claude_model_entry = ctk.CTkEntry(self.script_claude_frame, height=34, corner_radius=12)
         self.claude_model_entry.insert(0, DEFAULT_CLAUDE_MODEL)
-        self.claude_model_entry.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.claude_model_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
 
-        self._v_label(form, "max_tokens").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
-        self.claude_max_tokens_entry = ctk.CTkEntry(form, height=34, corner_radius=12)
+        self._v_label(self.script_claude_frame, "max_tokens").grid(
+            row=ar, column=0, sticky="w", padx=12, pady=(0, 6)
+        ); ar += 1
+        self.claude_max_tokens_entry = ctk.CTkEntry(self.script_claude_frame, height=34, corner_radius=12)
         self.claude_max_tokens_entry.insert(0, str(DEFAULT_CLAUDE_MAX_TOKENS))
-        self.claude_max_tokens_entry.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+        self.claude_max_tokens_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
 
         self._v_label(form, "テンプレート").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
         self._v_hint(form, "保存したテンプレートを選択して呼び出し/上書き/削除できます。").grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
@@ -2755,7 +2882,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self.btn_generate_script = ctk.CTkButton(
             gen_row,
-            text="▶ Claudeで台本生成",
+            text="▶ ClaudeCodeで台本生成",
             command=self.on_generate_script_clicked,
             fg_color=self.COL_ACCENT,
             hover_color=self.COL_ACCENT_HOVER,
@@ -2807,6 +2934,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
             fg_color=self.COL_OK,
             hover_color=self.COL_OK_HOVER,
         ).grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
+
+        self.on_script_engine_change(self.script_engine_var.get())
 
         self._refresh_template_menu()
 
@@ -4612,16 +4741,20 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._v_label(form, "APIキー管理").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
         self._v_hint(
             form,
-            "Gemini と GhatGpt (ChatGPT) のAPIキーを一元管理します。各機能のAPIキー欄はこの設定を参照します。",
+            "Gemini / ChatGPT / ClaudeCode のAPIキーを一元管理します。各機能のAPIキー欄はこの設定を参照します。",
         ).grid(row=r, column=0, sticky="w", pady=(0, 12)); r += 1
 
         self._v_label(form, "Gemini APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
         self.gemini_api_key_entry = self._v_entry(form, show="*")
         self.gemini_api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
 
-        self._v_label(form, "GhatGpt (ChatGPT) APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self._v_label(form, "ChatGPT APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
         self.chatgpt_api_key_entry = self._v_entry(form, show="*")
         self.chatgpt_api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+
+        self._v_label(form, "ClaudeCode APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self.claude_api_key_entry = self._v_entry(form, show="*")
+        self.claude_api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
 
         ctk.CTkButton(
             form,
@@ -4725,6 +4858,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             or ""
         )
         chatgpt_key = data.get("chatgpt_api_key") or data.get("ponchi_openai_api_key") or ""
+        claude_key = data.get("claude_api_key") or ""
         if hasattr(self, "gemini_api_key_entry"):
             self.gemini_api_key_entry.delete(0, "end")
             self.gemini_api_key_entry.insert(0, gemini_key)
@@ -4732,6 +4866,10 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if hasattr(self, "chatgpt_api_key_entry"):
             self.chatgpt_api_key_entry.delete(0, "end")
             self.chatgpt_api_key_entry.insert(0, chatgpt_key)
+
+        if hasattr(self, "claude_api_key_entry"):
+            self.claude_api_key_entry.delete(0, "end")
+            self.claude_api_key_entry.insert(0, claude_key)
 
         # video
 
@@ -4809,8 +4947,16 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.on_tts_engine_change(self.tts_engine_var.get())
 
         # script
-        self.claude_api_key_entry.delete(0, "end")
-        self.claude_api_key_entry.insert(0, data.get("claude_api_key", ""))
+        if hasattr(self, "script_engine_var"):
+            self.script_engine_var.set(data.get("script_engine", "ClaudeCode"))
+
+        if hasattr(self, "script_gemini_model_entry"):
+            self.script_gemini_model_entry.delete(0, "end")
+            self.script_gemini_model_entry.insert(0, data.get("script_gemini_model", DEFAULT_SCRIPT_GEMINI_MODEL))
+
+        if hasattr(self, "script_chatgpt_model_entry"):
+            self.script_chatgpt_model_entry.delete(0, "end")
+            self.script_chatgpt_model_entry.insert(0, data.get("script_chatgpt_model", DEFAULT_SCRIPT_OPENAI_MODEL))
 
         self.claude_model_entry.delete(0, "end")
         self.claude_model_entry.insert(0, data.get("claude_model", DEFAULT_CLAUDE_MODEL))
@@ -4823,6 +4969,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self._set_textbox(self.claude_prompt_text, data.get("claude_prompt", ""))
         self._set_textbox(self.claude_output_text, data.get("claude_output", ""))
+
+        self.on_script_engine_change(self.script_engine_var.get())
 
         tpls = data.get("prompt_templates")
         if isinstance(tpls, dict) and tpls:
@@ -4943,10 +5091,12 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         gemini_key = self._get_gemini_api_key()
         chatgpt_key = self._get_chatgpt_api_key()
+        claude_key = self._get_claude_api_key()
 
         data = {
             "gemini_api_key": gemini_key,
             "chatgpt_api_key": chatgpt_key,
+            "claude_api_key": claude_key,
             "script_path": self.script_entry.get().strip(),
             "output_dir": self.output_entry.get().strip(),
             "image_paths": self.image_paths,
@@ -4972,7 +5122,13 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "vv_caster_label": self.vv_caster_entry.get().strip() or DEFAULT_VV_CASTER_LABEL,
             "vv_analyst_label": self.vv_analyst_entry.get().strip() or DEFAULT_VV_ANALYST_LABEL,
             "vv_speed": float(self.vv_speed_slider.get()),
-            "claude_api_key": self.claude_api_key_entry.get().strip(),
+            "script_engine": self.script_engine_var.get() if hasattr(self, "script_engine_var") else "ClaudeCode",
+            "script_gemini_model": getattr(self, "script_gemini_model_entry", None).get().strip()
+            if hasattr(self, "script_gemini_model_entry")
+            else DEFAULT_SCRIPT_GEMINI_MODEL,
+            "script_chatgpt_model": getattr(self, "script_chatgpt_model_entry", None).get().strip()
+            if hasattr(self, "script_chatgpt_model_entry")
+            else DEFAULT_SCRIPT_OPENAI_MODEL,
             "claude_model": self.claude_model_entry.get().strip() or DEFAULT_CLAUDE_MODEL,
             "claude_max_tokens": _safe_int(self.claude_max_tokens_entry.get() or DEFAULT_CLAUDE_MAX_TOKENS, DEFAULT_CLAUDE_MAX_TOKENS),
             "script_save_path": self.script_save_path_entry.get().strip(),
@@ -5035,6 +5191,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
     def _get_chatgpt_api_key(self) -> str:
         if hasattr(self, "chatgpt_api_key_entry"):
             return self.chatgpt_api_key_entry.get().strip()
+        return ""
+
+    def _get_claude_api_key(self) -> str:
+        if hasattr(self, "claude_api_key_entry"):
+            return self.claude_api_key_entry.get().strip()
         return ""
 
     def _get_textbox(self, tb: ctk.CTkTextbox) -> str:
@@ -6120,49 +6281,76 @@ class NewsShortGeneratorStudio(ctk.CTk):
             messagebox.showerror("エラー", f"保存に失敗しました:\n{e}")
 
     def on_generate_script_clicked(self):
-        api_key = self.claude_api_key_entry.get().strip()
-        model = self.claude_model_entry.get().strip() or DEFAULT_CLAUDE_MODEL
+        engine = (self.script_engine_var.get() or "ClaudeCode").strip()
         prompt = self._get_textbox(self.claude_prompt_text)
-        try:
-            max_tokens = int(self.claude_max_tokens_entry.get().strip() or DEFAULT_CLAUDE_MAX_TOKENS)
-        except ValueError:
-            messagebox.showerror("エラー", "max_tokens は数値で入力してください。")
-            return
-
-        if not api_key:
-            messagebox.showerror("エラー", "Claude APIキーを入力してください。")
-            return
         if not prompt.strip():
             messagebox.showerror("エラー", "プロンプトが空です。")
+            return
+
+        max_tokens = DEFAULT_CLAUDE_MAX_TOKENS
+        if engine == "ClaudeCode":
+            try:
+                max_tokens = int(self.claude_max_tokens_entry.get().strip() or DEFAULT_CLAUDE_MAX_TOKENS)
+            except ValueError:
+                messagebox.showerror("エラー", "max_tokens は数値で入力してください。")
+                return
+
+        if engine == "Gemini" and not self._get_gemini_api_key():
+            messagebox.showerror("エラー", "設定タブでGemini APIキーを入力してください。")
+            return
+        if engine == "ChatGPT" and not self._get_chatgpt_api_key():
+            messagebox.showerror("エラー", "設定タブでChatGPT APIキーを入力してください。")
+            return
+        if engine == "ClaudeCode" and not self._get_claude_api_key():
+            messagebox.showerror("エラー", "設定タブでClaudeCode APIキーを入力してください。")
             return
 
         self.save_config()
         self.btn_generate_script.configure(state="disabled", text="生成中...")
         self.set_status("Working", ok=True)
-        self.log("=== Claude 台本生成 開始 ===")
+        self.log(f"=== {engine} 台本生成 開始 ===")
         self.update_progress(0.02)
 
         def worker():
             try:
                 self.update_progress(0.08)
-                out = generate_script_with_claude(
-                    api_key=api_key,
-                    prompt=prompt,
-                    model=model,
-                    max_tokens=max_tokens,
-                )
+                if engine == "Gemini":
+                    model = self.script_gemini_model_entry.get().strip() or DEFAULT_SCRIPT_GEMINI_MODEL
+                    out = generate_script_with_gemini(
+                        api_key=self._get_gemini_api_key(),
+                        prompt=prompt,
+                        model=model,
+                    )
+                elif engine == "ChatGPT":
+                    model = self.script_chatgpt_model_entry.get().strip() or DEFAULT_SCRIPT_OPENAI_MODEL
+                    out = generate_script_with_openai(
+                        api_key=self._get_chatgpt_api_key(),
+                        prompt=prompt,
+                        model=model,
+                    )
+                else:
+                    model = self.claude_model_entry.get().strip() or DEFAULT_CLAUDE_MODEL
+                    out = generate_script_with_claude(
+                        api_key=self._get_claude_api_key(),
+                        prompt=prompt,
+                        model=model,
+                        max_tokens=max_tokens,
+                    )
                 self.after(0, lambda: self._set_textbox(self.claude_output_text, out))
-                self.log("✅ Claude 台本生成 完了")
+                self.log(f"✅ {engine} 台本生成 完了")
                 self.update_progress(1.0)
                 self.set_status("Ready", ok=True)
             except Exception as e:
                 tb = traceback.format_exc()
-                self.log("❌ Claude 台本生成でエラー:\n" + tb)
+                self.log(f"❌ {engine} 台本生成でエラー:\n" + tb)
                 self.set_status("Error", ok=False)
                 self.update_progress(0.0)
                 self.after(0, lambda: messagebox.showerror("エラー", f"台本生成に失敗しました:\n{e}"))
             finally:
-                self.after(0, lambda: self.btn_generate_script.configure(state="normal", text="▶ Claudeで台本生成"))
+                self.after(
+                    0,
+                    lambda: self.btn_generate_script.configure(state="normal", text=f"▶ {engine}で台本生成"),
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
