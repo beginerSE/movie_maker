@@ -1048,7 +1048,7 @@ def generate_script_with_openai(
         ],
     }
     if max_tokens is not None:
-        payload["max_tokens"] = max_tokens
+        payload["max_completion_tokens"] = max_tokens
 
     resp = _post_openai_with_retry(
         "https://api.openai.com/v1/chat/completions",
