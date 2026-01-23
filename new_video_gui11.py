@@ -2164,8 +2164,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.btn_detailed_edit = self._nav_button(menu, "🎛️ 詳細動画編集", lambda: self.switch_page("detailed_edit"))
         self.btn_detailed_edit.grid(row=5, column=0, sticky="ew", pady=6)
 
+        self.btn_settings = self._nav_button(menu, "⚙️ 設定", lambda: self.switch_page("settings"))
+        self.btn_settings.grid(row=6, column=0, sticky="ew", pady=6)
+
         self.btn_about = self._nav_button(menu, "ℹ️ About", lambda: self.switch_page("about"))
-        self.btn_about.grid(row=6, column=0, sticky="ew", pady=6)
+        self.btn_about.grid(row=7, column=0, sticky="ew", pady=6)
 
         bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         bottom.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
@@ -2211,6 +2214,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         style(self.btn_ponchi, key == "ponchi")
         style(self.btn_edit, key == "edit")
         style(self.btn_detailed_edit, key == "detailed_edit")
+        style(self.btn_settings, key == "settings")
         style(self.btn_about, key == "about")
 
     # --------------------------
@@ -2230,6 +2234,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.pages["ponchi"] = self._make_page(self.page_container)
         self.pages["edit"] = self._make_page(self.page_container)  # NEW
         self.pages["detailed_edit"] = self._make_page(self.page_container)
+        self.pages["settings"] = self._make_page(self.page_container)
         self.pages["about"] = self._make_page(self.page_container)
 
         self._build_video_page(self.pages["video"])
@@ -2238,6 +2243,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._build_ponchi_page(self.pages["ponchi"])
         self._build_edit_page(self.pages["edit"])  # NEW
         self._build_detailed_edit_page(self.pages["detailed_edit"])
+        self._build_settings_page(self.pages["settings"])
         self._build_about_page(self.pages["about"])
 
     def _make_page(self, parent):
@@ -2262,6 +2268,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "ponchi": "ポンチ絵作成",
             "edit": "動画編集",
             "detailed_edit": "詳細動画編集",
+            "settings": "設定",
             "about": "About",
         }
         self.log(f"--- ページ切替: {title_map.get(key, key)} ---")
@@ -2392,11 +2399,10 @@ class NewsShortGeneratorStudio(ctk.CTk):
         r = 0
 
         self._v_label(form, "TTS / 原稿").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
-        self._v_hint(form, "Gemini利用時はAPIキーが必要。VOICEVOX利用時は不要です。").grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
-
-        self._v_label(form, "Gemini APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
-        self.api_key_entry = self._v_entry(form, show="*")
-        self.api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 14)); r += 1
+        self._v_hint(
+            form,
+            "Gemini利用時は設定タブでAPIキーを入力してください。VOICEVOX利用時は不要です。",
+        ).grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
 
         self._v_label(form, "原稿ファイル (dialogue_input.txt)").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
         path_row, self.script_entry = self._v_path_row(form, "選択", self.browse_script)
@@ -2817,12 +2823,8 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._v_label(form, "Gemini API (Image)").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
         self._v_hint(
             form,
-            "Gemini APIを使って、プロンプトから画像を生成します。",
+            "Gemini APIを使って、プロンプトから画像を生成します。APIキーは設定タブで管理します。",
         ).grid(row=r, column=0, sticky="w", pady=(0, 12)); r += 1
-
-        self._v_label(form, "Gemini APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
-        self.material_api_key_entry = self._v_entry(form, show="*")
-        self.material_api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
 
         self._v_label(form, "モデル").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
         self.material_model_entry = self._v_entry(form)
@@ -2981,11 +2983,10 @@ class NewsShortGeneratorStudio(ctk.CTk):
         api_wrap.grid_columnconfigure(0, weight=1)
 
         ar = 0
-        self._v_label(api_wrap, "Gemini APIキー (提案/画像生成)").grid(
-            row=ar, column=0, sticky="w", padx=12, pady=(12, 6)
-        ); ar += 1
-        self.ponchi_gemini_api_key_entry = ctk.CTkEntry(api_wrap, height=34, corner_radius=12, show="*")
-        self.ponchi_gemini_api_key_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
+        self._v_hint(
+            api_wrap,
+            "APIキーは設定タブで一元管理します。",
+        ).grid(row=ar, column=0, sticky="w", padx=12, pady=(12, 12)); ar += 1
 
         self._v_label(api_wrap, "Gemini 提案モデル").grid(
             row=ar, column=0, sticky="w", padx=12, pady=(0, 6)
@@ -2993,12 +2994,6 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.ponchi_gemini_model_entry = ctk.CTkEntry(api_wrap, height=34, corner_radius=12)
         self.ponchi_gemini_model_entry.insert(0, DEFAULT_PONCHI_GEMINI_MODEL)
         self.ponchi_gemini_model_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
-
-        self._v_label(api_wrap, "ChatGPT APIキー").grid(
-            row=ar, column=0, sticky="w", padx=12, pady=(0, 6)
-        ); ar += 1
-        self.ponchi_openai_api_key_entry = ctk.CTkEntry(api_wrap, height=34, corner_radius=12, show="*")
-        self.ponchi_openai_api_key_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
 
         self._v_label(api_wrap, "ChatGPT モデル").grid(
             row=ar, column=0, sticky="w", padx=12, pady=(0, 6)
@@ -4336,9 +4331,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
         return {"x": x, "y": y, "w": w, "h": h, "opacity": opacity}
 
     def _generate_search_queries(self, items: List[Dict[str, Any]]) -> List[str]:
-        api_key = self.api_key_entry.get().strip()
+        api_key = self._get_gemini_api_key()
         if not api_key:
-            raise RuntimeError("Gemini APIキーを入力してください。")
+            raise RuntimeError("設定タブでGemini APIキーを入力してください。")
 
         client = genai.Client(api_key=api_key)
         prompt = (
@@ -4604,6 +4599,46 @@ class NewsShortGeneratorStudio(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     # --------------------------
+    # Settings page
+    # --------------------------
+    def _build_settings_page(self, page):
+        self._build_page_header("settings", page, "設定")
+
+        form = self._make_scroll_form(page)
+        form.grid_columnconfigure(0, weight=1)
+
+        r = 0
+
+        self._v_label(form, "APIキー管理").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
+        self._v_hint(
+            form,
+            "Gemini と GhatGpt (ChatGPT) のAPIキーを一元管理します。各機能のAPIキー欄はこの設定を参照します。",
+        ).grid(row=r, column=0, sticky="w", pady=(0, 12)); r += 1
+
+        self._v_label(form, "Gemini APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self.gemini_api_key_entry = self._v_entry(form, show="*")
+        self.gemini_api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+
+        self._v_label(form, "GhatGpt (ChatGPT) APIキー").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self.chatgpt_api_key_entry = self._v_entry(form, show="*")
+        self.chatgpt_api_key_entry.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+
+        ctk.CTkButton(
+            form,
+            text="設定を保存",
+            command=self._save_settings_keys,
+            fg_color=self.COL_OK,
+            hover_color=self.COL_OK_HOVER,
+            height=40,
+            corner_radius=12,
+        ).grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
+
+    def _save_settings_keys(self):
+        self.save_config()
+        self.log("✅ 設定のAPIキーを保存しました。")
+        messagebox.showinfo("保存完了", "APIキー設定を保存しました。")
+
+    # --------------------------
     # About page
     # --------------------------
     def _build_about_page(self, page):
@@ -4623,7 +4658,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "end",
             "News Short Generator Studio\n\n"
             "- 左：サイドバー\n"
-            "- 中央：フォーム（動画生成 / 台本生成 / 資料作成 / ポンチ絵作成 / 動画編集 / 詳細動画編集）\n"
+            "- 中央：フォーム（動画生成 / 台本生成 / 資料作成 / ポンチ絵作成 / 動画編集 / 詳細動画編集 / 設定）\n"
             "- 右：ログ（進捗）\n\n"
             "[動画編集]\n"
             "- 指定時間帯に画像を座標指定で重ねる（複数対応）\n"
@@ -4683,9 +4718,22 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self._refresh_template_menu()
             return
 
+        gemini_key = (
+            data.get("gemini_api_key")
+            or data.get("material_api_key")
+            or data.get("ponchi_gemini_api_key")
+            or ""
+        )
+        chatgpt_key = data.get("chatgpt_api_key") or data.get("ponchi_openai_api_key") or ""
+        if hasattr(self, "gemini_api_key_entry"):
+            self.gemini_api_key_entry.delete(0, "end")
+            self.gemini_api_key_entry.insert(0, gemini_key)
+
+        if hasattr(self, "chatgpt_api_key_entry"):
+            self.chatgpt_api_key_entry.delete(0, "end")
+            self.chatgpt_api_key_entry.insert(0, chatgpt_key)
+
         # video
-        self.api_key_entry.delete(0, "end")
-        self.api_key_entry.insert(0, data.get("gemini_api_key", ""))
 
         self.script_entry.delete(0, "end")
         self.script_entry.insert(0, data.get("script_path", ""))
@@ -4789,10 +4837,6 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.prompt_template_var.set(next(iter(self.prompt_templates.keys()), "（テンプレなし）"))
 
         # material
-        if hasattr(self, "material_api_key_entry"):
-            self.material_api_key_entry.delete(0, "end")
-            self.material_api_key_entry.insert(0, data.get("material_api_key", data.get("gemini_api_key", "")))
-
         if hasattr(self, "material_model_entry"):
             self.material_model_entry.delete(0, "end")
             self.material_model_entry.insert(0, data.get("material_model", GEMINI_MATERIAL_DEFAULT_MODEL))
@@ -4817,17 +4861,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if hasattr(self, "ponchi_suggestion_engine_var"):
             self.ponchi_suggestion_engine_var.set(data.get("ponchi_engine", "Gemini"))
 
-        if hasattr(self, "ponchi_gemini_api_key_entry"):
-            self.ponchi_gemini_api_key_entry.delete(0, "end")
-            self.ponchi_gemini_api_key_entry.insert(0, data.get("ponchi_gemini_api_key", ""))
-
         if hasattr(self, "ponchi_gemini_model_entry"):
             self.ponchi_gemini_model_entry.delete(0, "end")
             self.ponchi_gemini_model_entry.insert(0, data.get("ponchi_gemini_model", DEFAULT_PONCHI_GEMINI_MODEL))
-
-        if hasattr(self, "ponchi_openai_api_key_entry"):
-            self.ponchi_openai_api_key_entry.delete(0, "end")
-            self.ponchi_openai_api_key_entry.insert(0, data.get("ponchi_openai_api_key", ""))
 
         if hasattr(self, "ponchi_openai_model_entry"):
             self.ponchi_openai_model_entry.delete(0, "end")
@@ -4905,17 +4941,12 @@ class NewsShortGeneratorStudio(ctk.CTk):
             except Exception:
                 return default
 
-        material_key = (
-            self.material_api_key_entry.get().strip()
-            if hasattr(self, "material_api_key_entry")
-            else ""
-        )
-        gemini_key = self.api_key_entry.get().strip()
-        if material_key:
-            gemini_key = material_key
+        gemini_key = self._get_gemini_api_key()
+        chatgpt_key = self._get_chatgpt_api_key()
 
         data = {
             "gemini_api_key": gemini_key,
+            "chatgpt_api_key": chatgpt_key,
             "script_path": self.script_entry.get().strip(),
             "output_dir": self.output_entry.get().strip(),
             "image_paths": self.image_paths,
@@ -4949,7 +4980,6 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "claude_output": self._get_textbox(self.claude_output_text),
             "prompt_templates": self.prompt_templates,
             "prompt_template_selected": self.prompt_template_var.get(),
-            "material_api_key": material_key,
             "material_model": getattr(self, "material_model_entry", None).get().strip()
             if hasattr(self, "material_model_entry")
             else GEMINI_MATERIAL_DEFAULT_MODEL,
@@ -4969,15 +4999,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "ponchi_engine": self.ponchi_suggestion_engine_var.get()
             if hasattr(self, "ponchi_suggestion_engine_var")
             else "Gemini",
-            "ponchi_gemini_api_key": getattr(self, "ponchi_gemini_api_key_entry", None).get().strip()
-            if hasattr(self, "ponchi_gemini_api_key_entry")
-            else "",
             "ponchi_gemini_model": getattr(self, "ponchi_gemini_model_entry", None).get().strip()
             if hasattr(self, "ponchi_gemini_model_entry")
             else DEFAULT_PONCHI_GEMINI_MODEL,
-            "ponchi_openai_api_key": getattr(self, "ponchi_openai_api_key_entry", None).get().strip()
-            if hasattr(self, "ponchi_openai_api_key_entry")
-            else "",
             "ponchi_openai_model": getattr(self, "ponchi_openai_model_entry", None).get().strip()
             if hasattr(self, "ponchi_openai_model_entry")
             else DEFAULT_PONCHI_OPENAI_MODEL,
@@ -5003,6 +5027,16 @@ class NewsShortGeneratorStudio(ctk.CTk):
     # --------------------------
     # UI helpers
     # --------------------------
+    def _get_gemini_api_key(self) -> str:
+        if hasattr(self, "gemini_api_key_entry"):
+            return self.gemini_api_key_entry.get().strip()
+        return ""
+
+    def _get_chatgpt_api_key(self) -> str:
+        if hasattr(self, "chatgpt_api_key_entry"):
+            return self.chatgpt_api_key_entry.get().strip()
+        return ""
+
     def _get_textbox(self, tb: ctk.CTkTextbox) -> str:
         try:
             return tb.get("1.0", "end").rstrip("\n")
@@ -6133,11 +6167,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     def on_generate_material_clicked(self):
-        api_key = ""
-        if hasattr(self, "material_api_key_entry"):
-            api_key = self.material_api_key_entry.get().strip()
-        if not api_key:
-            api_key = self.api_key_entry.get().strip()
+        api_key = self._get_gemini_api_key()
 
         model = GEMINI_MATERIAL_DEFAULT_MODEL
         if hasattr(self, "material_model_entry"):
@@ -6146,7 +6176,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         user_prompt = self._get_textbox(self.material_prompt_text)
         if not api_key:
-            messagebox.showerror("エラー", "Gemini APIキーを入力してください。")
+            messagebox.showerror("エラー", "設定タブでGemini APIキーを入力してください。")
             return
         if not user_prompt.strip():
             messagebox.showerror("エラー", "プロンプトが空です。")
@@ -6192,16 +6222,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _resolve_ponchi_gemini_key(self) -> str:
-        gemini_key = self.ponchi_gemini_api_key_entry.get().strip()
-        if not gemini_key:
-            gemini_key = (
-                self.material_api_key_entry.get().strip()
-                if hasattr(self, "material_api_key_entry")
-                else ""
-            )
-        if not gemini_key:
-            gemini_key = self.api_key_entry.get().strip()
-        return gemini_key
+        return self._get_gemini_api_key()
 
     def _ponchi_ideas_path(self, output_dir: str, srt_path: str) -> Optional[Path]:
         if not output_dir:
@@ -6237,7 +6258,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         srt_path = self.ponchi_srt_entry.get().strip()
         engine = self.ponchi_suggestion_engine_var.get()
 
-        openai_key = self.ponchi_openai_api_key_entry.get().strip()
+        openai_key = self._get_chatgpt_api_key()
         gemini_model = self.ponchi_gemini_model_entry.get().strip() or DEFAULT_PONCHI_GEMINI_MODEL
         openai_model = self.ponchi_openai_model_entry.get().strip() or DEFAULT_PONCHI_OPENAI_MODEL
 
@@ -6245,10 +6266,10 @@ class NewsShortGeneratorStudio(ctk.CTk):
             messagebox.showerror("エラー", "有効なSRTファイルを選択してください。")
             return
         if engine == "Gemini" and not self._resolve_ponchi_gemini_key():
-            messagebox.showerror("エラー", "Gemini APIキーを入力してください。")
+            messagebox.showerror("エラー", "設定タブでGemini APIキーを入力してください。")
             return
         if engine == "ChatGPT" and not openai_key:
-            messagebox.showerror("エラー", "ChatGPT APIキーを入力してください。")
+            messagebox.showerror("エラー", "設定タブでChatGPT APIキーを入力してください。")
             return
 
         self.save_config()
@@ -6334,7 +6355,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             messagebox.showerror("エラー", "出力フォルダを指定してください。")
             return
         if not gemini_key:
-            messagebox.showerror("エラー", "Gemini APIキーを入力してください。")
+            messagebox.showerror("エラー", "設定タブでGemini APIキーを入力してください。")
             return
 
         self.save_config()
@@ -6432,14 +6453,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
     # Video generation actions
     # --------------------------
     def on_run_clicked(self):
-        api_key = self.api_key_entry.get().strip()
+        api_key = self._get_gemini_api_key()
         script_path = self.script_entry.get().strip()
         output_dir = self.output_entry.get().strip()
 
         tts_engine = self.tts_engine_var.get()
 
         if tts_engine == "Gemini" and not api_key:
-            messagebox.showerror("エラー", "Gemini を使う場合は APIキーを入力してください。")
+            messagebox.showerror("エラー", "Gemini を使う場合は 設定タブでAPIキーを入力してください。")
             return
         if not script_path or not Path(script_path).exists():
             messagebox.showerror("エラー", "有効な原稿ファイルを選択してください。")
