@@ -175,6 +175,9 @@ DEFAULT_IMAGE_SEARCH_PROVIDER = "Google"
 DETAILED_PROJECT_EXT = ".mmproj"
 DETAILED_AUTOSAVE_INTERVAL_MS = 30000
 
+DEFAULT_PONCHI_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_PONCHI_OPENAI_MODEL = "gpt-4.1-mini"
+
 
 SPEAKER_ALIASES = {
     "キャスター": ["キャスター", "司会", "アナウンサー", "MC", "Caster"],
@@ -968,6 +971,127 @@ def generate_materials_with_gemini(
 # ==========================
 # 動画編集（NEW）
 # ==========================
+def format_seconds_to_timecode(seconds: float) -> str:
+    total = int(round(seconds))
+    h = total // 3600
+    m = (total % 3600) // 60
+    s = total % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def generate_ponchi_suggestions_with_gemini(
+    api_key: str,
+    items: List[Dict[str, Any]],
+    model: str = DEFAULT_PONCHI_GEMINI_MODEL,
+) -> List[Dict[str, Any]]:
+    if not api_key:
+        raise RuntimeError("Gemini APIキーを入力してください。")
+    if not items:
+        raise RuntimeError("SRT字幕が空です。")
+
+    client = genai.Client(api_key=api_key)
+    prompt_lines = [
+        "あなたは動画用の資料（ポンチ絵）を企画する担当者です。",
+        "次の字幕ごとに、表示すると良い資料の内容を提案してください。",
+        "各項目で「visual_suggestion（表示内容の説明）」と「image_prompt（画像生成用の日本語プロンプト）」を作ってください。",
+        "出力は JSON 配列のみで、各要素は次のキーを含めてください:",
+        'start, end, text, visual_suggestion, image_prompt',
+        "",
+        "字幕一覧:",
+    ]
+    for idx, item in enumerate(items, 1):
+        start = format_seconds_to_timecode(item.get("start", 0))
+        end = format_seconds_to_timecode(item.get("end", 0))
+        prompt_lines.append(f"{idx}. {start}〜{end} {item.get('text', '')}")
+
+    resp = client.models.generate_content(
+        model=model,
+        contents="\n".join(prompt_lines),
+        config=types.GenerateContentConfig(
+            temperature=0.4,
+            response_mime_type="application/json",
+        ),
+    )
+    text = getattr(resp, "text", "") or ""
+    if not text:
+        raise RuntimeError("Geminiから提案の取得に失敗しました。")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\[[\s\S]*\]", text)
+        if not match:
+            raise RuntimeError("提案JSONの解析に失敗しました。")
+        data = json.loads(match.group(0))
+    if not isinstance(data, list):
+        raise RuntimeError("提案は配列形式で返してください。")
+    return data
+
+
+def generate_ponchi_suggestions_with_openai(
+    api_key: str,
+    items: List[Dict[str, Any]],
+    model: str = DEFAULT_PONCHI_OPENAI_MODEL,
+) -> List[Dict[str, Any]]:
+    if not api_key:
+        raise RuntimeError("ChatGPT APIキーを入力してください。")
+    if not items:
+        raise RuntimeError("SRT字幕が空です。")
+
+    prompt_lines = [
+        "You are planning storyboard-like illustrations (ponchi-e) for a video.",
+        "For each subtitle, suggest what should be displayed and provide an image generation prompt in Japanese.",
+        "Return ONLY a JSON array. Each item must include:",
+        "start, end, text, visual_suggestion, image_prompt",
+        "",
+        "Subtitles:",
+    ]
+    for idx, item in enumerate(items, 1):
+        start = format_seconds_to_timecode(item.get("start", 0))
+        end = format_seconds_to_timecode(item.get("end", 0))
+        prompt_lines.append(f"{idx}. {start}〜{end} {item.get('text', '')}")
+
+    payload = {
+        "model": model,
+        "temperature": 0.4,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You output strictly valid JSON and nothing else.",
+            },
+            {"role": "user", "content": "\n".join(prompt_lines)},
+        ],
+    }
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=60,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"ChatGPT APIエラー: {resp.status_code} {resp.text}")
+    data = resp.json()
+    message = data.get("choices", [{}])[0].get("message", {})
+    content = message.get("content", "")
+    if not content:
+        raise RuntimeError("ChatGPTから提案の取得に失敗しました。")
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        match = re.search(r"\[[\s\S]*\]", content)
+        if match:
+            parsed = json.loads(match.group(0))
+        else:
+            raise RuntimeError("ChatGPTのJSON解析に失敗しました。")
+    if isinstance(parsed, dict) and "items" in parsed:
+        parsed = parsed["items"]
+    if not isinstance(parsed, list):
+        raise RuntimeError("提案は配列形式で返してください。")
+    return parsed
+
+
 def parse_timecode_to_seconds(s: str) -> float:
     """
     "mm:ss" / "hh:mm:ss" / "ss" を秒に。
@@ -2027,17 +2151,20 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         self.btn_material = self._nav_button(menu, "📚 サムネイル作成", lambda: self.switch_page("material"))
         self.btn_material.grid(row=2, column=0, sticky="ew", pady=6)
-        
+
+        self.btn_ponchi = self._nav_button(menu, "📝 ポンチ絵作成", lambda: self.switch_page("ponchi"))
+        self.btn_ponchi.grid(row=3, column=0, sticky="ew", pady=6)
+
 
         # NEW: 動画編集
         self.btn_edit = self._nav_button(menu, "🧩 動画編集", lambda: self.switch_page("edit"))
-        self.btn_edit.grid(row=3, column=0, sticky="ew", pady=6)
+        self.btn_edit.grid(row=4, column=0, sticky="ew", pady=6)
 
         self.btn_detailed_edit = self._nav_button(menu, "🎛️ 詳細動画編集", lambda: self.switch_page("detailed_edit"))
-        self.btn_detailed_edit.grid(row=4, column=0, sticky="ew", pady=6)
+        self.btn_detailed_edit.grid(row=5, column=0, sticky="ew", pady=6)
 
         self.btn_about = self._nav_button(menu, "ℹ️ About", lambda: self.switch_page("about"))
-        self.btn_about.grid(row=5, column=0, sticky="ew", pady=6)
+        self.btn_about.grid(row=6, column=0, sticky="ew", pady=6)
 
         bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         bottom.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
@@ -2080,6 +2207,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         style(self.btn_video, key == "video")
         style(self.btn_script, key == "script")
         style(self.btn_material, key == "material")
+        style(self.btn_ponchi, key == "ponchi")
         style(self.btn_edit, key == "edit")
         style(self.btn_detailed_edit, key == "detailed_edit")
         style(self.btn_about, key == "about")
@@ -2098,6 +2226,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.pages["video"] = self._make_page(self.page_container)
         self.pages["script"] = self._make_page(self.page_container)
         self.pages["material"] = self._make_page(self.page_container)
+        self.pages["ponchi"] = self._make_page(self.page_container)
         self.pages["edit"] = self._make_page(self.page_container)  # NEW
         self.pages["detailed_edit"] = self._make_page(self.page_container)
         self.pages["about"] = self._make_page(self.page_container)
@@ -2105,6 +2234,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self._build_video_page(self.pages["video"])
         self._build_script_page(self.pages["script"])
         self._build_material_page(self.pages["material"])
+        self._build_ponchi_page(self.pages["ponchi"])
         self._build_edit_page(self.pages["edit"])  # NEW
         self._build_detailed_edit_page(self.pages["detailed_edit"])
         self._build_about_page(self.pages["about"])
@@ -2128,6 +2258,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "video": "動画生成",
             "script": "台本生成",
             "material": "資料作成",
+            "ponchi": "ポンチ絵作成",
             "edit": "動画編集",
             "detailed_edit": "詳細動画編集",
             "about": "About",
@@ -2807,6 +2938,118 @@ class NewsShortGeneratorStudio(ctk.CTk):
             fg_color=self.COL_OK,
             hover_color=self.COL_OK_HOVER,
         ).grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
+
+    # --------------------------
+    # Ponchi page (NEW)
+    # --------------------------
+    def _build_ponchi_page(self, page):
+        self._build_page_header("ponchi", page, "ポンチ絵作成")
+        form = self._make_scroll_form(page)
+        form.grid_columnconfigure(0, weight=1)
+
+        r = 0
+
+        self._v_label(form, "SRTファイル").grid(row=r, column=0, sticky="w", pady=(10, 6)); r += 1
+        self._v_hint(
+            form,
+            "字幕に沿って、表示すると良い資料（ポンチ絵）を提案し、画像を生成します。",
+        ).grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
+
+        srt_row, self.ponchi_srt_entry = self._v_path_row(form, "SRT選択", self.browse_ponchi_srt)
+        srt_row.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+
+        self._v_label(form, "出力フォルダ").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        out_row, self.ponchi_output_dir_entry = self._v_path_row(
+            form, "保存先", self.browse_ponchi_output_dir
+        )
+        out_row.grid(row=r, column=0, sticky="ew", pady=(0, 12)); r += 1
+        self.ponchi_output_dir_entry.insert(0, str(Path.home() / "ponchi_images"))
+
+        self._v_label(form, "提案生成エンジン").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self.ponchi_suggestion_engine_var = ctk.StringVar(value="Gemini")
+        ctk.CTkOptionMenu(
+            form,
+            values=["Gemini", "ChatGPT"],
+            variable=self.ponchi_suggestion_engine_var,
+            corner_radius=12,
+            height=34,
+        ).grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+
+        api_wrap = ctk.CTkFrame(form, corner_radius=16, fg_color=self.COL_CARD)
+        api_wrap.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+        api_wrap.grid_columnconfigure(0, weight=1)
+
+        ar = 0
+        self._v_label(api_wrap, "Gemini APIキー (提案/画像生成)").grid(
+            row=ar, column=0, sticky="w", padx=12, pady=(12, 6)
+        ); ar += 1
+        self.ponchi_gemini_api_key_entry = ctk.CTkEntry(api_wrap, height=34, corner_radius=12, show="*")
+        self.ponchi_gemini_api_key_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
+
+        self._v_label(api_wrap, "Gemini 提案モデル").grid(
+            row=ar, column=0, sticky="w", padx=12, pady=(0, 6)
+        ); ar += 1
+        self.ponchi_gemini_model_entry = ctk.CTkEntry(api_wrap, height=34, corner_radius=12)
+        self.ponchi_gemini_model_entry.insert(0, DEFAULT_PONCHI_GEMINI_MODEL)
+        self.ponchi_gemini_model_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
+
+        self._v_label(api_wrap, "ChatGPT APIキー").grid(
+            row=ar, column=0, sticky="w", padx=12, pady=(0, 6)
+        ); ar += 1
+        self.ponchi_openai_api_key_entry = ctk.CTkEntry(api_wrap, height=34, corner_radius=12, show="*")
+        self.ponchi_openai_api_key_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
+
+        self._v_label(api_wrap, "ChatGPT モデル").grid(
+            row=ar, column=0, sticky="w", padx=12, pady=(0, 6)
+        ); ar += 1
+        self.ponchi_openai_model_entry = ctk.CTkEntry(api_wrap, height=34, corner_radius=12)
+        self.ponchi_openai_model_entry.insert(0, DEFAULT_PONCHI_OPENAI_MODEL)
+        self.ponchi_openai_model_entry.grid(row=ar, column=0, sticky="ew", padx=12, pady=(0, 12)); ar += 1
+
+        self._v_label(form, "生成").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        gen_row = ctk.CTkFrame(form, fg_color="transparent")
+        gen_row.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+        gen_row.grid_columnconfigure(0, weight=1)
+        gen_row.grid_columnconfigure(1, weight=0)
+
+        self.btn_generate_ponchi = ctk.CTkButton(
+            gen_row,
+            text="▶ ポンチ絵作成",
+            command=self.on_generate_ponchi_clicked,
+            fg_color=self.COL_ACCENT,
+            hover_color=self.COL_ACCENT_HOVER,
+            height=44,
+            corner_radius=14,
+            font=ctk.CTkFont(size=14, weight="bold"),
+        )
+        self.btn_generate_ponchi.grid(row=0, column=0, sticky="ew")
+
+        ctk.CTkButton(
+            gen_row,
+            text="クリア",
+            command=lambda: self._set_textbox(self.ponchi_output_text, ""),
+            fg_color="#172238",
+            hover_color="#1b2a44",
+            height=44,
+            corner_radius=14,
+            width=120,
+        ).grid(row=0, column=1, sticky="e", padx=(12, 0))
+
+        self._v_label(form, "生成結果").grid(row=r, column=0, sticky="w", pady=(0, 6)); r += 1
+        self._v_hint(
+            form,
+            f"画像生成は {GEMINI_MATERIAL_DEFAULT_MODEL} を使用します。",
+        ).grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
+
+        self.ponchi_output_text = ctk.CTkTextbox(
+            form,
+            height=260,
+            corner_radius=14,
+            fg_color=self.COL_BG,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
+        self.ponchi_output_text.grid(row=r, column=0, sticky="ew", pady=(0, 18)); r += 1
 
     # --------------------------
     # Edit page (NEW)
@@ -3983,6 +4226,21 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_srt_entry.delete(0, "end")
             self.edit_srt_entry.insert(0, path)
 
+    def browse_ponchi_srt(self):
+        path = filedialog.askopenfilename(
+            title="SRTファイルを選択",
+            filetypes=[("SRT", "*.srt"), ("すべて", "*.*")],
+        )
+        if path and hasattr(self, "ponchi_srt_entry"):
+            self.ponchi_srt_entry.delete(0, "end")
+            self.ponchi_srt_entry.insert(0, path)
+
+    def browse_ponchi_output_dir(self):
+        path = filedialog.askdirectory(title="出力フォルダを選択")
+        if path and hasattr(self, "ponchi_output_dir_entry"):
+            self.ponchi_output_dir_entry.delete(0, "end")
+            self.ponchi_output_dir_entry.insert(0, path)
+
     def browse_edit_image_output_dir(self):
         path = filedialog.askdirectory(title="画像の保存先フォルダを選択")
         if path and hasattr(self, "edit_image_output_entry"):
@@ -4351,7 +4609,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "end",
             "News Short Generator Studio\n\n"
             "- 左：サイドバー\n"
-            "- 中央：フォーム（動画生成 / 台本生成 / 資料作成 / 動画編集 / 詳細動画編集）\n"
+            "- 中央：フォーム（動画生成 / 台本生成 / 資料作成 / ポンチ絵作成 / 動画編集 / 詳細動画編集）\n"
             "- 右：ログ（進捗）\n\n"
             "[動画編集]\n"
             "- 指定時間帯に画像を座標指定で重ねる（複数対応）\n"
@@ -4533,6 +4791,34 @@ class NewsShortGeneratorStudio(ctk.CTk):
             default_dir = str(self._default_material_save_dir())
             self.material_save_path_entry.insert(0, data.get("material_save_path", default_dir))
 
+        # ponchi (NEW)
+        if hasattr(self, "ponchi_srt_entry"):
+            self.ponchi_srt_entry.delete(0, "end")
+            self.ponchi_srt_entry.insert(0, data.get("ponchi_srt_path", ""))
+
+        if hasattr(self, "ponchi_output_dir_entry"):
+            self.ponchi_output_dir_entry.delete(0, "end")
+            self.ponchi_output_dir_entry.insert(0, data.get("ponchi_output_dir", ""))
+
+        if hasattr(self, "ponchi_suggestion_engine_var"):
+            self.ponchi_suggestion_engine_var.set(data.get("ponchi_engine", "Gemini"))
+
+        if hasattr(self, "ponchi_gemini_api_key_entry"):
+            self.ponchi_gemini_api_key_entry.delete(0, "end")
+            self.ponchi_gemini_api_key_entry.insert(0, data.get("ponchi_gemini_api_key", ""))
+
+        if hasattr(self, "ponchi_gemini_model_entry"):
+            self.ponchi_gemini_model_entry.delete(0, "end")
+            self.ponchi_gemini_model_entry.insert(0, data.get("ponchi_gemini_model", DEFAULT_PONCHI_GEMINI_MODEL))
+
+        if hasattr(self, "ponchi_openai_api_key_entry"):
+            self.ponchi_openai_api_key_entry.delete(0, "end")
+            self.ponchi_openai_api_key_entry.insert(0, data.get("ponchi_openai_api_key", ""))
+
+        if hasattr(self, "ponchi_openai_model_entry"):
+            self.ponchi_openai_model_entry.delete(0, "end")
+            self.ponchi_openai_model_entry.insert(0, data.get("ponchi_openai_model", DEFAULT_PONCHI_OPENAI_MODEL))
+
         # edit (NEW)
         if hasattr(self, "edit_input_entry"):
             self.edit_input_entry.delete(0, "end")
@@ -4659,6 +4945,28 @@ class NewsShortGeneratorStudio(ctk.CTk):
             "material_save_path": getattr(self, "material_save_path_entry", None).get().strip()
             if hasattr(self, "material_save_path_entry")
             else "",
+            # ponchi (NEW)
+            "ponchi_srt_path": getattr(self, "ponchi_srt_entry", None).get().strip()
+            if hasattr(self, "ponchi_srt_entry")
+            else "",
+            "ponchi_output_dir": getattr(self, "ponchi_output_dir_entry", None).get().strip()
+            if hasattr(self, "ponchi_output_dir_entry")
+            else "",
+            "ponchi_engine": self.ponchi_suggestion_engine_var.get()
+            if hasattr(self, "ponchi_suggestion_engine_var")
+            else "Gemini",
+            "ponchi_gemini_api_key": getattr(self, "ponchi_gemini_api_key_entry", None).get().strip()
+            if hasattr(self, "ponchi_gemini_api_key_entry")
+            else "",
+            "ponchi_gemini_model": getattr(self, "ponchi_gemini_model_entry", None).get().strip()
+            if hasattr(self, "ponchi_gemini_model_entry")
+            else DEFAULT_PONCHI_GEMINI_MODEL,
+            "ponchi_openai_api_key": getattr(self, "ponchi_openai_api_key_entry", None).get().strip()
+            if hasattr(self, "ponchi_openai_api_key_entry")
+            else "",
+            "ponchi_openai_model": getattr(self, "ponchi_openai_model_entry", None).get().strip()
+            if hasattr(self, "ponchi_openai_model_entry")
+            else DEFAULT_PONCHI_OPENAI_MODEL,
             # edit (NEW)
             "edit_input_mp4": getattr(self, "edit_input_entry", None).get().strip() if hasattr(self, "edit_input_entry") else "",
             "edit_output_mp4": getattr(self, "edit_output_entry", None).get().strip() if hasattr(self, "edit_output_entry") else "",
@@ -5866,6 +6174,137 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 self.after(0, lambda: messagebox.showerror("エラー", f"画像生成に失敗しました:\n{e}"))
             finally:
                 self.after(0, lambda: self.btn_generate_material.configure(state="normal", text="▶ Geminiで画像生成"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_generate_ponchi_clicked(self):
+        srt_path = self.ponchi_srt_entry.get().strip()
+        output_dir = self.ponchi_output_dir_entry.get().strip()
+        engine = self.ponchi_suggestion_engine_var.get()
+
+        gemini_key = self.ponchi_gemini_api_key_entry.get().strip()
+        if not gemini_key:
+            gemini_key = (
+                self.material_api_key_entry.get().strip()
+                if hasattr(self, "material_api_key_entry")
+                else ""
+            )
+        if not gemini_key:
+            gemini_key = self.api_key_entry.get().strip()
+
+        openai_key = self.ponchi_openai_api_key_entry.get().strip()
+        gemini_model = self.ponchi_gemini_model_entry.get().strip() or DEFAULT_PONCHI_GEMINI_MODEL
+        openai_model = self.ponchi_openai_model_entry.get().strip() or DEFAULT_PONCHI_OPENAI_MODEL
+
+        if not srt_path or not Path(srt_path).exists():
+            messagebox.showerror("エラー", "有効なSRTファイルを選択してください。")
+            return
+        if not output_dir:
+            messagebox.showerror("エラー", "出力フォルダを指定してください。")
+            return
+        if engine == "Gemini" and not gemini_key:
+            messagebox.showerror("エラー", "Gemini APIキーを入力してください。")
+            return
+        if engine == "ChatGPT" and not openai_key:
+            messagebox.showerror("エラー", "ChatGPT APIキーを入力してください。")
+            return
+
+        self.save_config()
+        self.btn_generate_ponchi.configure(state="disabled", text="生成中...")
+        self.set_status("Working", ok=True)
+        self.log("=== ポンチ絵作成 開始 ===")
+        self.update_progress(0.02)
+        self._set_textbox(self.ponchi_output_text, "")
+
+        def worker():
+            try:
+                items = parse_srt_file(srt_path)
+                if not items:
+                    raise RuntimeError("SRTから字幕が見つかりませんでした。")
+
+                if engine == "Gemini":
+                    suggestions = generate_ponchi_suggestions_with_gemini(
+                        api_key=gemini_key,
+                        items=items,
+                        model=gemini_model,
+                    )
+                else:
+                    suggestions = generate_ponchi_suggestions_with_openai(
+                        api_key=openai_key,
+                        items=items,
+                        model=openai_model,
+                    )
+
+                if not isinstance(suggestions, list) or not suggestions:
+                    raise RuntimeError("提案が空でした。")
+
+                srt_stem = Path(srt_path).stem
+                output_dir_path = Path(output_dir) / srt_stem
+                output_dir_path.mkdir(parents=True, exist_ok=True)
+                results = []
+                total = len(items)
+
+                for idx, item in enumerate(items, 1):
+                    suggestion = suggestions[idx - 1] if idx - 1 < len(suggestions) else {}
+                    start = suggestion.get("start") or format_seconds_to_timecode(item.get("start", 0))
+                    end = suggestion.get("end") or format_seconds_to_timecode(item.get("end", 0))
+                    text = suggestion.get("text") or item.get("text", "")
+                    visual = suggestion.get("visual_suggestion") or ""
+                    prompt = suggestion.get("image_prompt") or visual or text
+                    if not prompt:
+                        prompt = "シンプルで分かりやすい図解のイラスト"
+
+                    self.log(f"🎨 {idx}/{total}: {start}〜{end} の資料を生成中")
+                    self.update_progress((idx - 1) / max(total, 1))
+                    image_bytes, mime_type = generate_materials_with_gemini(
+                        api_key=gemini_key,
+                        prompt=prompt,
+                        model=GEMINI_MATERIAL_DEFAULT_MODEL,
+                    )
+                    ext = mimetypes.guess_extension(mime_type) or ".png"
+                    image_path = output_dir_path / f"ponchi_{idx:03d}{ext}"
+                    image_path.write_bytes(image_bytes)
+                    results.append(
+                        {
+                            "start": start,
+                            "end": end,
+                            "text": text,
+                            "visual_suggestion": visual,
+                            "image_prompt": prompt,
+                            "image": image_path.name,
+                        }
+                    )
+                    self.update_progress(idx / max(total, 1))
+
+                json_path = output_dir_path / f"{srt_stem}_ponchi.json"
+                json_path.write_text(
+                    json.dumps(results, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                summary_lines = [
+                    f"✅ {len(results)} 件のポンチ絵を生成しました。",
+                    f"出力フォルダ: {output_dir_path}",
+                    f"JSON: {json_path}",
+                    "",
+                ]
+                for item in results:
+                    summary_lines.append(
+                        f"{item['start']}〜{item['end']} | {item['visual_suggestion']} | {item['image']}"
+                    )
+
+                self.after(0, lambda: self._set_textbox(self.ponchi_output_text, "\n".join(summary_lines)))
+                self.log("✅ ポンチ絵作成 完了")
+                self.update_progress(1.0)
+                self.set_status("Ready", ok=True)
+                self.after(0, lambda: messagebox.showinfo("完了", "ポンチ絵作成が完了しました。"))
+            except Exception as e:
+                tb = traceback.format_exc()
+                self.log("❌ ポンチ絵作成でエラー:\n" + tb)
+                self.set_status("Error", ok=False)
+                self.update_progress(0.0)
+                self.after(0, lambda: messagebox.showerror("エラー", f"ポンチ絵作成に失敗しました:\n{e}"))
+            finally:
+                self.after(0, lambda: self.btn_generate_ponchi.configure(state="normal", text="▶ ポンチ絵作成"))
 
         threading.Thread(target=worker, daemon=True).start()
 
