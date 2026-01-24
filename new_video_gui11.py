@@ -1523,15 +1523,17 @@ def apply_image_overlays_to_video(
 # ==========================
 class NewsShortGeneratorStudio(ctk.CTk):
     # --- Theme ---
-    COL_BG = "#0b0f19"
-    COL_PANEL = "#111827"
-    COL_PANEL2 = "#141d2b"
-    COL_CARD = "#172235"
-    COL_BORDER = "#23324a"
-    COL_TEXT = "#e6edf7"
-    COL_MUTED = "#a3b3cc"
-    COL_ACCENT = "#3b82f6"
-    COL_ACCENT_HOVER = "#2f6fe0"
+    COL_BG = "#0b0f1a"
+    COL_PANEL = "#121826"
+    COL_PANEL2 = "#0f172a"
+    COL_CARD = "#172033"
+    COL_CARD_SOFT = "#1b2438"
+    COL_BORDER = "#25314a"
+    COL_TEXT = "#e8edf7"
+    COL_MUTED = "#9aa9c2"
+    COL_ACCENT = "#6366f1"
+    COL_ACCENT_HOVER = "#4f46e5"
+    COL_ACCENT_SOFT = "#1f2440"
     COL_DANGER = "#ef5350"
     COL_DANGER_HOVER = "#d64543"
     COL_OK = "#10b981"
@@ -1648,24 +1650,24 @@ class NewsShortGeneratorStudio(ctk.CTk):
                 return
             theme[widget][key] = value
 
-        _set("CTkButton", "corner_radius", 14)
+        _set("CTkButton", "corner_radius", 16)
         _set("CTkButton", "border_width", 1)
         _set("CTkButton", "border_color", self.COL_BORDER)
         _set("CTkButton", "fg_color", self.COL_CARD)
-        _set("CTkButton", "hover_color", "#1e2a42")
+        _set("CTkButton", "hover_color", self.COL_CARD_SOFT)
         _set("CTkButton", "text_color", self.COL_TEXT)
         _set("CTkButton", "font", (self.FONT_FAMILY, 12, "bold"))
 
-        _set("CTkEntry", "corner_radius", 12)
+        _set("CTkEntry", "corner_radius", 14)
         _set("CTkEntry", "border_width", 1)
         _set("CTkEntry", "border_color", self.COL_BORDER)
         _set("CTkEntry", "fg_color", self.COL_PANEL)
         _set("CTkEntry", "text_color", self.COL_TEXT)
         _set("CTkEntry", "font", (self.FONT_FAMILY, 11))
 
-        _set("CTkOptionMenu", "corner_radius", 12)
+        _set("CTkOptionMenu", "corner_radius", 14)
         _set("CTkOptionMenu", "button_color", self.COL_CARD)
-        _set("CTkOptionMenu", "button_hover_color", "#233454")
+        _set("CTkOptionMenu", "button_hover_color", self.COL_CARD_SOFT)
         _set("CTkOptionMenu", "fg_color", self.COL_PANEL)
         _set("CTkOptionMenu", "text_color", self.COL_TEXT)
         _set("CTkOptionMenu", "font", (self.FONT_FAMILY, 11))
@@ -1673,7 +1675,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         _set("CTkLabel", "text_color", self.COL_TEXT)
         _set("CTkLabel", "font", (self.FONT_FAMILY, 11))
 
-        _set("CTkTextbox", "corner_radius", 12)
+        _set("CTkTextbox", "corner_radius", 14)
         _set("CTkTextbox", "border_width", 1)
         _set("CTkTextbox", "border_color", self.COL_BORDER)
         _set("CTkTextbox", "fg_color", self.COL_PANEL)
@@ -1859,14 +1861,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
             if ok:
                 self.status_pill.configure(
                     text=f" {text} ",
-                    fg_color="#10301f",
+                    fg_color="#0f2a20",
                     text_color="#c8ffe7",
                 )
             else:
                 self.status_pill.configure(
                     text=f" {text} ",
-                    fg_color="#3b1d1d",
-                    text_color="#ffd6d6",
+                    fg_color="#3a1b24",
+                    text_color="#ffd4df",
                 )
         self.after(0, _apply)
     def _get_selected_tree_iid(self) -> str | None:
@@ -2426,16 +2428,36 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)  # center
         self.grid_columnconfigure(2, weight=0)  # log
 
-        self.sidebar = ctk.CTkFrame(self, width=self.SIDEBAR_W, corner_radius=18, fg_color=self.COL_PANEL)
+        self.sidebar = ctk.CTkFrame(
+            self,
+            width=self.SIDEBAR_W,
+            corner_radius=20,
+            fg_color=self.COL_PANEL,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
         self.sidebar.grid(row=0, column=0, sticky="nsw", padx=(14, 8), pady=14)
         self.sidebar.grid_propagate(False)
 
-        self.center = ctk.CTkFrame(self, corner_radius=18, fg_color=self.COL_PANEL2)
+        self.center = ctk.CTkFrame(
+            self,
+            corner_radius=20,
+            fg_color=self.COL_PANEL2,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
         self.center.grid(row=0, column=1, sticky="nsew", padx=8, pady=14)
         self.center.grid_rowconfigure(0, weight=1)
         self.center.grid_columnconfigure(0, weight=1)
 
-        self.log_panel = ctk.CTkFrame(self, width=self.LOG_W, corner_radius=18, fg_color=self.COL_PANEL)
+        self.log_panel = ctk.CTkFrame(
+            self,
+            width=self.LOG_W,
+            corner_radius=20,
+            fg_color=self.COL_PANEL,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
         self.log_panel.grid(row=0, column=2, sticky="nse", padx=(8, 14), pady=14)
         self.log_panel.grid_propagate(False)
 
@@ -2505,7 +2527,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             bottom,
             text=" 準備中 ",
             corner_radius=14,
-            fg_color="#10301f",
+            fg_color="#0f2a20",
             text_color="#c8ffe7",
             font=self.FONT_PILL,
             anchor="w",
@@ -2518,9 +2540,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
             text=text,
             command=cmd,
             height=44,
-            corner_radius=14,
+            corner_radius=16,
             fg_color=self.COL_CARD,
-            hover_color="#1d2b44",
+            hover_color=self.COL_CARD_SOFT,
             border_width=1,
             border_color=self.COL_BORDER,
             text_color=self.COL_TEXT,
@@ -2531,9 +2553,19 @@ class NewsShortGeneratorStudio(ctk.CTk):
     def _set_active_nav(self, key: str):
         def style(btn, active: bool):
             if active:
-                btn.configure(fg_color="#1f3b6a", hover_color="#26457d", border_color=self.COL_ACCENT)
+                btn.configure(
+                    fg_color=self.COL_ACCENT_SOFT,
+                    hover_color="#2b3360",
+                    border_color=self.COL_ACCENT,
+                    text_color="#eef1ff",
+                )
             else:
-                btn.configure(fg_color=self.COL_CARD, hover_color="#1d2b44", border_color=self.COL_BORDER)
+                btn.configure(
+                    fg_color=self.COL_CARD,
+                    hover_color=self.COL_CARD_SOFT,
+                    border_color=self.COL_BORDER,
+                    text_color=self.COL_TEXT,
+                )
 
         style(self.btn_video, key == "video")
         style(self.btn_script, key == "script")
@@ -2605,28 +2637,38 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.log(f"--- ページ切替: {title_map.get(key, key)} ---")
 
     def _build_page_header(self, page_key: str, page: ctk.CTkFrame, title: str):
-        header = ctk.CTkFrame(page, corner_radius=18, fg_color=self.COL_PANEL)
+        header = ctk.CTkFrame(
+            page,
+            corner_radius=20,
+            fg_color=self.COL_PANEL,
+            border_width=1,
+            border_color=self.COL_BORDER,
+        )
         header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 10))
+        header.grid_rowconfigure(1, weight=1)
         header.grid_columnconfigure(0, weight=1)
+
+        accent = ctk.CTkFrame(header, height=3, fg_color=self.COL_ACCENT)
+        accent.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 0))
 
         title_lbl = ctk.CTkLabel(
             header,
             text=title,
-            font=ctk.CTkFont(size=18, weight="bold"),
+            font=ctk.CTkFont(size=19, weight="bold"),
             text_color=self.COL_TEXT,
             anchor="w",
         )
-        title_lbl.grid(row=0, column=0, sticky="w", padx=14, pady=12)
+        title_lbl.grid(row=1, column=0, sticky="w", padx=14, pady=12)
 
         pill = ctk.CTkLabel(
             header,
             text="  Studio  ",
             corner_radius=14,
-            fg_color="#12213c",
-            text_color=self.COL_MUTED,
+            fg_color=self.COL_ACCENT_SOFT,
+            text_color="#dbe1ff",
             font=ctk.CTkFont(size=12, weight="bold"),
         )
-        pill.grid(row=0, column=1, sticky="e", padx=14, pady=12)
+        pill.grid(row=1, column=1, sticky="e", padx=14, pady=12)
 
         self.page_title_labels[page_key] = title_lbl
         self.page_pills[page_key] = pill
@@ -2640,9 +2682,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
 
         form = ctk.CTkScrollableFrame(
             parent,
-            corner_radius=18,
+            corner_radius=20,
             fg_color=self.COL_PANEL,
             label_text="",
+            border_width=1,
+            border_color=self.COL_BORDER,
         )
         form.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 14))
         form.grid_columnconfigure(0, weight=1)
@@ -2683,9 +2727,9 @@ class NewsShortGeneratorStudio(ctk.CTk):
             text=button_text,
             command=button_cmd,
             height=34,
-            corner_radius=12,
-            fg_color="#172238",
-            hover_color="#1b2a44",
+            corner_radius=14,
+            fg_color=self.COL_CARD,
+            hover_color=self.COL_CARD_SOFT,
             width=110,
         )
         btn.grid(row=0, column=1, sticky="e", padx=(10, 0))
@@ -5253,6 +5297,10 @@ class NewsShortGeneratorStudio(ctk.CTk):
         ).grid(row=0, column=0, sticky="w")
 
         self.progress_bar = ctk.CTkProgressBar(self.log_panel)
+        self.progress_bar.configure(
+            progress_color=self.COL_ACCENT,
+            fg_color=self.COL_CARD_SOFT,
+        )
         self.progress_bar.grid(row=1, column=0, sticky="ew", padx=14, pady=(6, 6))
         self.progress_bar.set(0)
 
