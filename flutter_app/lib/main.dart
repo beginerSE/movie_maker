@@ -347,7 +347,9 @@ class _StudioShellState extends State<StudioShell> {
 
   Future<bool> _isApiHealthy() async {
     try {
-      final response = await http.get(ApiConfig.httpUri('/health'));
+      final response = await http
+          .get(ApiConfig.httpUri('/health'))
+          .timeout(const Duration(seconds: 3));
       return response.statusCode >= 200 && response.statusCode < 300;
     } catch (_) {
       return false;
