@@ -279,6 +279,44 @@ class _StudioShellState extends State<StudioShell> {
     return current;
   }
 
+  List<String> _candidatePythonExecutables() {
+    final candidates = <String>[];
+    final pythonNames = Platform.isWindows
+        ? ['python.exe', 'python']
+        : ['python3', 'python'];
+    final envRoots = <String?>[
+      Platform.environment['VIRTUAL_ENV'],
+      Platform.environment['CONDA_PREFIX'],
+    ];
+    for (final root in envRoots) {
+      if (root == null || root.trim().isEmpty) {
+        continue;
+      }
+      final executable = Platform.isWindows
+          ? _joinFilePath([root, 'Scripts', 'python.exe'])
+          : _joinFilePath([root, 'bin', 'python']);
+      if (File(executable).existsSync()) {
+        candidates.add(executable);
+      }
+    }
+    final localEnvRoots = [
+      '.venv',
+      'venv',
+      'env',
+    ];
+    for (final localRoot in localEnvRoots) {
+      final root = _joinFilePath([_apiServerRoot!.path, localRoot]);
+      final executable = Platform.isWindows
+          ? _joinFilePath([root, 'Scripts', 'python.exe'])
+          : _joinFilePath([root, 'bin', 'python']);
+      if (File(executable).existsSync()) {
+        candidates.add(executable);
+      }
+    }
+    candidates.addAll(pythonNames);
+    return candidates;
+  }
+
   Future<void> _startApiServerProcess() async {
     if (_apiServerProcess != null) {
       return;
@@ -297,9 +335,7 @@ class _StudioShellState extends State<StudioShell> {
     _apiServerPort = await _selectApiServerPort();
     _updateApiBaseUrlForPort(_apiServerPort);
 
-    final pythonExecutables = Platform.isWindows
-        ? ['python']
-        : ['python3', 'python'];
+    final pythonExecutables = _candidatePythonExecutables();
 
     for (final pythonExecutable in pythonExecutables) {
       try {
