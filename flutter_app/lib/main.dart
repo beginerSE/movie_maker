@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -14,11 +15,64 @@ class MovieMakerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF5B7CFA),
+      brightness: Brightness.light,
+    );
     return MaterialApp(
       title: 'News Short Generator Studio',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        colorScheme: colorScheme,
         useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF5F6FA),
+        cardTheme: CardTheme(
+          elevation: 2,
+          shadowColor: Colors.black.withOpacity(0.08),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: colorScheme.primary, width: 1.4),
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+        navigationRailTheme: NavigationRailThemeData(
+          backgroundColor: Colors.white,
+          indicatorColor: colorScheme.primary.withOpacity(0.12),
+          selectedIconTheme: IconThemeData(color: colorScheme.primary),
+          selectedLabelTextStyle: TextStyle(
+            color: colorScheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
+          unselectedLabelTextStyle: const TextStyle(color: Color(0xFF768098)),
+        ),
+        textTheme: const TextTheme(
+          headlineSmall: TextStyle(fontWeight: FontWeight.w700),
+          titleMedium: TextStyle(fontWeight: FontWeight.w600),
+        ),
       ),
       home: const StudioShell(),
     );
@@ -49,36 +103,77 @@ class _StudioShellState extends State<StudioShell> {
     return Scaffold(
       body: Row(
         children: [
-          NavigationRail(
-            selectedIndex: _selectedIndex,
-            onDestinationSelected: (index) {
-              setState(() {
-                _selectedIndex = index;
-              });
-            },
-            labelType: NavigationRailLabelType.all,
-            destinations: _pages
-                .map(
-                  (page) => NavigationRailDestination(
-                    icon: const Icon(Icons.circle_outlined),
-                    selectedIcon: const Icon(Icons.circle),
-                    label: Text(page),
-                  ),
-                )
-                .toList(),
+          Container(
+            width: 220,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 18,
+                  offset: const Offset(2, 0),
+                ),
+              ],
+            ),
+            child: NavigationRail(
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: (index) {
+                setState(() {
+                  _selectedIndex = index;
+                });
+              },
+              labelType: NavigationRailLabelType.all,
+              leading: Padding(
+                padding: const EdgeInsets.only(top: 24, bottom: 16),
+                child: Column(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.15),
+                      child: Icon(
+                        Icons.movie_creation,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Studio',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+              destinations: _pages
+                  .map(
+                    (page) => NavigationRailDestination(
+                      icon: const Icon(Icons.circle_outlined),
+                      selectedIcon: const Icon(Icons.circle),
+                      label: Text(page),
+                    ),
+                  )
+                  .toList(),
+            ),
           ),
           const VerticalDivider(width: 1),
           Expanded(
             flex: 3,
             child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: _buildCenterPanel(),
+              padding: const EdgeInsets.all(20),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: _buildCenterPanel(),
+                ),
+              ),
             ),
           ),
           const VerticalDivider(width: 1),
           Expanded(
             flex: 2,
-            child: LogPanel(pageName: _pages[_selectedIndex]),
+            child: Card(
+              margin: const EdgeInsets.all(20),
+              child: LogPanel(pageName: _pages[_selectedIndex]),
+            ),
           ),
         ],
       ),
@@ -211,7 +306,16 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
           const SizedBox(height: 12),
           TextFormField(
             controller: _outputController,
-            decoration: const InputDecoration(labelText: '保存ファイル'),
+            decoration: InputDecoration(
+              labelText: '保存ファイル',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.file_present),
+                onPressed: () => _selectSavePath(
+                  _outputController,
+                  const XTypeGroup(label: 'Text', extensions: ['txt']),
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 16),
           Wrap(
@@ -277,7 +381,16 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           const SizedBox(height: 16),
           TextFormField(
             controller: _scriptPathController,
-            decoration: const InputDecoration(labelText: '台本ファイル（SRT/TXT）'),
+            decoration: InputDecoration(
+              labelText: '台本ファイル（SRT/TXT）',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.folder_open),
+                onPressed: () => _selectFile(
+                  _scriptPathController,
+                  const XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
+                ),
+              ),
+            ),
             validator: (value) => value == null || value.isEmpty ? '必須です' : null,
           ),
           const SizedBox(height: 12),
@@ -392,7 +505,13 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
           const SizedBox(height: 12),
           TextFormField(
             controller: _outputController,
-            decoration: const InputDecoration(labelText: '保存フォルダ'),
+            decoration: InputDecoration(
+              labelText: '保存フォルダ',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.folder),
+                onPressed: () => _selectDirectory(_outputController),
+              ),
+            ),
           ),
           const SizedBox(height: 16),
           Wrap(
@@ -465,17 +584,44 @@ class _VideoEditFormState extends State<VideoEditForm> {
           const SizedBox(height: 16),
           TextFormField(
             controller: _inputVideoController,
-            decoration: const InputDecoration(labelText: '入力動画（MP4）'),
+            decoration: InputDecoration(
+              labelText: '入力動画（MP4）',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.video_file),
+                onPressed: () => _selectFile(
+                  _inputVideoController,
+                  const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _outputVideoController,
-            decoration: const InputDecoration(labelText: '出力動画'),
+            decoration: InputDecoration(
+              labelText: '出力動画',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.save_alt),
+                onPressed: () => _selectSavePath(
+                  _outputVideoController,
+                  const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _overlayImageController,
-            decoration: const InputDecoration(labelText: 'オーバーレイ画像'),
+            decoration: InputDecoration(
+              labelText: 'オーバーレイ画像',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.image_outlined),
+                onPressed: () => _selectFile(
+                  _overlayImageController,
+                  const XTypeGroup(label: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp']),
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -615,7 +761,16 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
         const SizedBox(height: 16),
         TextFormField(
           controller: _projectNameController,
-          decoration: const InputDecoration(labelText: 'プロジェクトファイル'),
+          decoration: InputDecoration(
+            labelText: 'プロジェクトファイル',
+            suffixIcon: IconButton(
+              icon: const Icon(Icons.folder_open),
+              onPressed: () => _selectFile(
+                _projectNameController,
+                const XTypeGroup(label: 'Project', extensions: ['mmproj']),
+              ),
+            ),
+          ),
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -827,27 +982,45 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
           const SizedBox(height: 16),
           TextFormField(
             controller: _scriptController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: '原稿ファイルパス',
               hintText: 'dialogue_input.txt',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.folder_open),
+                onPressed: () => _selectFile(
+                  _scriptController,
+                  const XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
+                ),
+              ),
             ),
             validator: (value) => value == null || value.isEmpty ? '必須です' : null,
           ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _imageListController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: '画像パス（カンマ区切り）',
               hintText: 'image1.png, image2.png',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.collections),
+                onPressed: () => _selectFiles(
+                  _imageListController,
+                  const XTypeGroup(label: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp']),
+                ),
+              ),
             ),
             validator: (value) => value == null || value.isEmpty ? '必須です' : null,
           ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _outputController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: '出力フォルダ',
               hintText: 'C:/videos/output',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.folder),
+                onPressed: () => _selectDirectory(_outputController),
+              ),
             ),
             validator: (value) => value == null || value.isEmpty ? '必須です' : null,
           ),
@@ -904,7 +1077,16 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
           if (_useBgm)
             TextFormField(
               controller: _bgmController,
-              decoration: const InputDecoration(labelText: 'BGM ファイルパス'),
+              decoration: InputDecoration(
+                labelText: 'BGM ファイルパス',
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.library_music),
+                  onPressed: () => _selectFile(
+                    _bgmController,
+                    const XTypeGroup(label: 'Audio', extensions: ['mp3', 'wav', 'aac']),
+                  ),
+                ),
+              ),
             ),
           const SizedBox(height: 16),
           Row(
@@ -1118,4 +1300,28 @@ class _LogPanelState extends State<LogPanel> {
 
     return result;
   }
+}
+
+Future<void> _selectFile(TextEditingController controller, XTypeGroup typeGroup) async {
+  final file = await openFile(acceptedTypeGroups: [typeGroup]);
+  if (file == null) return;
+  controller.text = file.path;
+}
+
+Future<void> _selectFiles(TextEditingController controller, XTypeGroup typeGroup) async {
+  final files = await openFiles(acceptedTypeGroups: [typeGroup]);
+  if (files.isEmpty) return;
+  controller.text = files.map((file) => file.path).join(', ');
+}
+
+Future<void> _selectDirectory(TextEditingController controller) async {
+  final path = await getDirectoryPath();
+  if (path == null) return;
+  controller.text = path;
+}
+
+Future<void> _selectSavePath(TextEditingController controller, XTypeGroup typeGroup) async {
+  final path = await getSavePath(acceptedTypeGroups: [typeGroup]);
+  if (path == null) return;
+  controller.text = path;
 }
