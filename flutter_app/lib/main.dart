@@ -166,6 +166,8 @@ class _StudioShellState extends State<StudioShell> {
   bool _apiServerStarting = false;
   bool _apiServerReady = false;
   String? _apiServerStatus;
+  String? _apiServerErrorDetails;
+  String? _apiServerLaunchCommand;
   Directory? _apiServerRoot;
   final ValueNotifier<String?> _latestJobId = ValueNotifier<String?>(null);
 
@@ -190,6 +192,7 @@ class _StudioShellState extends State<StudioShell> {
 
     if (await _isApiHealthy()) {
       _setApiServerStatus(ready: true, message: 'API サーバー稼働中');
+      _clearApiServerError();
       _apiServerStarting = false;
       return;
     }
@@ -199,6 +202,7 @@ class _StudioShellState extends State<StudioShell> {
         ready: false,
         message: 'API サーバーはデスクトップ環境でのみ自動起動します。',
       );
+      _clearApiServerError();
       _apiServerStarting = false;
       return;
     }
@@ -208,6 +212,7 @@ class _StudioShellState extends State<StudioShell> {
     final started = await _waitForApiHealth();
     if (started) {
       _setApiServerStatus(ready: true, message: 'API サーバー起動完了');
+      _clearApiServerError();
     } else {
       _setApiServerStatus(
         ready: false,
@@ -215,7 +220,7 @@ class _StudioShellState extends State<StudioShell> {
       );
       _showApiServerSnackBar(
         'API サーバーの起動に失敗しました。ターミナルで '
-        'python -m uvicorn backend.api_server:app --host 0.0.0.0 --port 8000 '
+        '${_apiServerLaunchCommand ?? 'python -m uvicorn backend.api_server:app --host 0.0.0.0 --port 8000'} '
         'を実行してください。',
       );
     }
@@ -271,6 +276,7 @@ class _StudioShellState extends State<StudioShell> {
         ready: false,
         message: 'API サーバーのパスが見つかりません。Flutter プロジェクトをルートで起動してください。',
       );
+      _setApiServerError('backend/api_server.py が見つかりませんでした。');
       _showApiServerSnackBar('API サーバーの配置場所を確認してください。');
       return;
     }
@@ -281,6 +287,8 @@ class _StudioShellState extends State<StudioShell> {
 
     for (final pythonExecutable in pythonExecutables) {
       try {
+        _apiServerLaunchCommand =
+            '$pythonExecutable -m uvicorn backend.api_server:app --host 0.0.0.0 --port 8000';
         final process = await Process.start(
           pythonExecutable,
           [
@@ -300,6 +308,19 @@ class _StudioShellState extends State<StudioShell> {
           runInShell: true,
         );
         _apiServerProcess = process;
+        _clearApiServerError();
+        process.stderr
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .listen(_appendApiServerError);
+        process.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .listen((line) {
+          if (line.contains('ERROR') || line.contains('Error')) {
+            _appendApiServerError(line);
+          }
+        });
         process.exitCode.then((code) {
           if (!mounted) {
             return;
@@ -309,13 +330,17 @@ class _StudioShellState extends State<StudioShell> {
               ready: false,
               message: 'API サーバーが終了しました (exit code: $code)。',
             );
+            if (_apiServerErrorDetails == null) {
+              _setApiServerError('プロセスが終了しました (exit code: $code)。');
+            }
             _showApiServerSnackBar('API サーバーが停止しました。');
           }
           _apiServerProcess = null;
         });
         return;
-      } catch (_) {
+      } catch (error) {
         _apiServerProcess = null;
+        _setApiServerError('起動コマンドの実行に失敗しました: $error');
       }
     }
   }
@@ -358,6 +383,44 @@ class _StudioShellState extends State<StudioShell> {
     );
   }
 
+  void _appendApiServerError(String line) {
+    if (!mounted) {
+      return;
+    }
+    if (line.trim().isEmpty) {
+      return;
+    }
+    setState(() {
+      final existing = _apiServerErrorDetails;
+      if (existing == null || existing.isEmpty) {
+        _apiServerErrorDetails = line;
+      } else {
+        final combined = '$existing\n$line';
+        _apiServerErrorDetails = combined.length > 1200
+            ? combined.substring(combined.length - 1200)
+            : combined;
+      }
+    });
+  }
+
+  void _setApiServerError(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _apiServerErrorDetails = message;
+    });
+  }
+
+  void _clearApiServerError() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _apiServerErrorDetails = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -391,14 +454,42 @@ class _StudioShellState extends State<StudioShell> {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        _apiServerStatus ?? '',
-                        style: TextStyle(
-                          color: _apiServerReady
-                              ? Colors.green.shade700
-                              : Colors.red.shade700,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _apiServerStatus ?? '',
+                            style: TextStyle(
+                              color: _apiServerReady
+                                  ? Colors.green.shade700
+                                  : Colors.red.shade700,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (!_apiServerReady && _apiServerErrorDetails != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                _apiServerErrorDetails ?? '',
+                                style: TextStyle(
+                                  color: Colors.red.shade700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          if (!_apiServerReady &&
+                              _apiServerLaunchCommand != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                '起動コマンド: ${_apiServerLaunchCommand!}',
+                                style: TextStyle(
+                                  color: Colors.red.shade700,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     if (!_apiServerReady && !_apiServerStarting)
