@@ -2552,8 +2552,18 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
 
     setState(() {
       _isSubmitting = true;
-      _statusMessage = 'Submitting...';
+      _statusMessage = 'Checking API...';
     });
+
+    final isHealthy = await _isApiHealthy();
+    if (!isHealthy) {
+      setState(() {
+        _statusMessage =
+            'Error: API サーバーに接続できません。バックエンドURLを確認するか、サーバーを起動してください。';
+        _isSubmitting = false;
+      });
+      return;
+    }
 
     final imagePaths = _imageListController.text
         .split(RegExp(r'[\n,]'))
@@ -2605,6 +2615,9 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     };
 
     try {
+      setState(() {
+        _statusMessage = 'Submitting...';
+      });
       final response = await http
           .post(
             ApiConfig.httpUri('/video/generate'),
@@ -2639,6 +2652,17 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       setState(() {
         _isSubmitting = false;
       });
+    }
+  }
+
+  Future<bool> _isApiHealthy() async {
+    try {
+      final response = await http
+          .get(ApiConfig.httpUri('/health'))
+          .timeout(const Duration(seconds: 3));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
     }
   }
 }
