@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -632,6 +633,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   String _chatGptModel = 'gpt-4.1-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   String _template = '（テンプレなし）';
+  bool _isSubmitting = false;
   final List<String> _templates = [
     '（テンプレなし）',
     'ニュース原稿',
@@ -772,17 +774,17 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
             runSpacing: 12,
             children: [
               ElevatedButton.icon(
-                onPressed: () {},
+                onPressed: _isSubmitting ? null : _submitScriptGenerate,
                 icon: const Icon(Icons.play_arrow),
-                label: Text('$_provider で台本生成'),
+                label: Text(_isSubmitting ? '送信中...' : '$_provider で台本生成'),
               ),
               OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: _copyOutputText,
                 icon: const Icon(Icons.copy),
                 label: const Text('コピー'),
               ),
               OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: _saveOutputToFile,
                 icon: const Icon(Icons.save),
                 label: const Text('保存'),
               ),
@@ -801,6 +803,116 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
         ],
       ),
     );
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  String _resolveApiKey() {
+    switch (_provider) {
+      case 'ChatGPT':
+        return ApiKeys.openAi.value;
+      case 'ClaudeCode':
+        return ApiKeys.claude.value;
+      default:
+        return ApiKeys.gemini.value;
+    }
+  }
+
+  String _resolveModel() {
+    switch (_provider) {
+      case 'ChatGPT':
+        return _chatGptModel;
+      case 'ClaudeCode':
+        return _claudeModel;
+      default:
+        return _geminiModel;
+    }
+  }
+
+  Future<void> _submitScriptGenerate() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    final apiKey = _resolveApiKey();
+    if (apiKey.isEmpty) {
+      _showSnackBar('APIキーが未設定です。設定タブで入力してください。');
+      return;
+    }
+    final maxTokens = int.tryParse(_maxTokensController.text);
+    setState(() {
+      _isSubmitting = true;
+    });
+    try {
+      final payload = {
+        'api_key': apiKey,
+        'provider': _provider,
+        'prompt': _promptController.text,
+        'model': _resolveModel(),
+        'max_tokens': maxTokens,
+      };
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/script/generate'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final text = data['text'] as String? ?? '';
+        setState(() {
+          _outputTextController.text = text;
+        });
+        _showSnackBar('台本生成が完了しました。');
+      } else {
+        _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
+      }
+    } on TimeoutException {
+      _showSnackBar('リクエストがタイムアウトしました。');
+    } catch (error) {
+      _showSnackBar('生成エラー: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  void _copyOutputText() {
+    final text = _outputTextController.text;
+    if (text.isEmpty) {
+      _showSnackBar('コピーする内容がありません。');
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: text));
+    _showSnackBar('生成結果をコピーしました。');
+  }
+
+  Future<void> _saveOutputToFile() async {
+    final outputPath = _outputController.text.trim();
+    if (outputPath.isEmpty) {
+      _showSnackBar('保存先ファイルを指定してください。');
+      return;
+    }
+    final text = _outputTextController.text;
+    if (text.isEmpty) {
+      _showSnackBar('保存する内容がありません。');
+      return;
+    }
+    try {
+      final file = File(outputPath);
+      await file.writeAsString(text);
+      _showSnackBar('保存しました: $outputPath');
+    } catch (error) {
+      _showSnackBar('保存に失敗しました: $error');
+    }
   }
 }
 
@@ -821,6 +933,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   String _geminiModel = 'gemini-2.0-flash';
   String _chatGptModel = 'gpt-4.1-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -940,12 +1053,12 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
             spacing: 12,
             children: [
               ElevatedButton.icon(
-                onPressed: () {},
+                onPressed: _isSubmitting ? null : _submitTitleGenerate,
                 icon: const Icon(Icons.play_arrow),
-                label: const Text('タイトル生成'),
+                label: Text(_isSubmitting ? '送信中...' : 'タイトル生成'),
               ),
               OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: _copyOutput,
                 icon: const Icon(Icons.copy),
                 label: const Text('コピー'),
               ),
@@ -963,6 +1076,96 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
       ),
     );
   }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  String _resolveApiKey() {
+    switch (_provider) {
+      case 'ChatGPT':
+        return ApiKeys.openAi.value;
+      case 'ClaudeCode':
+        return ApiKeys.claude.value;
+      default:
+        return ApiKeys.gemini.value;
+    }
+  }
+
+  String _resolveModel() {
+    switch (_provider) {
+      case 'ChatGPT':
+        return _chatGptModel;
+      case 'ClaudeCode':
+        return _claudeModel;
+      default:
+        return _geminiModel;
+    }
+  }
+
+  Future<void> _submitTitleGenerate() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    final apiKey = _resolveApiKey();
+    if (apiKey.isEmpty) {
+      _showSnackBar('APIキーが未設定です。設定タブで入力してください。');
+      return;
+    }
+    final count = int.tryParse(_countController.text) ?? 5;
+    setState(() {
+      _isSubmitting = true;
+    });
+    try {
+      final payload = {
+        'api_key': apiKey,
+        'provider': _provider,
+        'script_path': _scriptPathController.text,
+        'count': count,
+        'extra': _instructionsController.text,
+        'model': _resolveModel(),
+      };
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/title/generate'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        setState(() {
+          _outputController.text = data['text'] as String? ?? '';
+        });
+        _showSnackBar('タイトル生成が完了しました。');
+      } else {
+        _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
+      }
+    } on TimeoutException {
+      _showSnackBar('リクエストがタイムアウトしました。');
+    } catch (error) {
+      _showSnackBar('生成エラー: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  void _copyOutput() {
+    final text = _outputController.text;
+    if (text.isEmpty) {
+      _showSnackBar('コピーする内容がありません。');
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: text));
+    _showSnackBar('生成結果をコピーしました。');
+  }
 }
 
 class MaterialsGenerateForm extends StatefulWidget {
@@ -978,6 +1181,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   final _promptController = TextEditingController();
   final _outputController = TextEditingController();
   final _previewController = TextEditingController();
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -1015,7 +1219,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () {},
+                  onPressed: _insertMaterialTemplate,
                   icon: const Icon(Icons.note_add),
                   label: const Text('雛形を挿入'),
                 ),
@@ -1048,12 +1252,12 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
             spacing: 12,
             children: [
               ElevatedButton.icon(
-                onPressed: () {},
+                onPressed: _isSubmitting ? null : _submitMaterialsGenerate,
                 icon: const Icon(Icons.image),
-                label: const Text('画像生成'),
+                label: Text(_isSubmitting ? '生成中...' : '画像生成'),
               ),
               OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: _copyPreviewPath,
                 icon: const Icon(Icons.save),
                 label: const Text('保存'),
               ),
@@ -1074,6 +1278,92 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
       ),
     );
   }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  void _insertMaterialTemplate() {
+    const template = [
+      '主題/被写体:',
+      '背景/場所:',
+      '色味/雰囲気:',
+      '構図/カメラアングル:',
+      '必ず含めたい要素:',
+      '避けたい要素:',
+    ];
+    _promptController.text = template.join('\n');
+  }
+
+  Future<void> _submitMaterialsGenerate() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    final apiKey = ApiKeys.gemini.value;
+    if (apiKey.isEmpty) {
+      _showSnackBar('Gemini APIキーが未設定です。設定タブで入力してください。');
+      return;
+    }
+    setState(() {
+      _isSubmitting = true;
+    });
+    try {
+      final payload = {
+        'api_key': apiKey,
+        'prompt': _promptController.text,
+        'model': _modelController.text,
+        'output_dir': _outputController.text.trim().isEmpty
+            ? null
+            : _outputController.text.trim(),
+      };
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/materials/generate'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 120));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final imagePath = data['image_path'] as String?;
+        final imageBase64 = data['image_base64'] as String?;
+        setState(() {
+          _previewController.text = imagePath ?? imageBase64 ?? '';
+        });
+        final modelNote = data['model_note'] as String?;
+        if (modelNote != null && modelNote.isNotEmpty) {
+          _showSnackBar(modelNote);
+        } else {
+          _showSnackBar('画像生成が完了しました。');
+        }
+      } else {
+        _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
+      }
+    } on TimeoutException {
+      _showSnackBar('リクエストがタイムアウトしました。');
+    } catch (error) {
+      _showSnackBar('生成エラー: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  void _copyPreviewPath() {
+    final text = _previewController.text.trim();
+    if (text.isEmpty) {
+      _showSnackBar('保存対象がありません。');
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: text));
+    _showSnackBar('パスをコピーしました。');
+  }
 }
 
 class PonchiGenerateForm extends StatefulWidget {
@@ -1091,6 +1381,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _chatGptModelController = TextEditingController(text: 'gpt-4.1-mini');
   final _outputTextController = TextEditingController();
   String _engine = 'Gemini';
+  bool _isSubmittingIdeas = false;
+  bool _isSubmittingImages = false;
 
   @override
   void dispose() {
@@ -1165,14 +1457,14 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             runSpacing: 12,
             children: [
               ElevatedButton.icon(
-                onPressed: () {},
+                onPressed: _isSubmittingIdeas ? null : _submitPonchiIdeas,
                 icon: const Icon(Icons.lightbulb),
-                label: const Text('案出し'),
+                label: Text(_isSubmittingIdeas ? '生成中...' : '案出し'),
               ),
               ElevatedButton.icon(
-                onPressed: () {},
+                onPressed: _isSubmittingImages ? null : _submitPonchiImages,
                 icon: const Icon(Icons.brush),
-                label: const Text('ポンチ絵作成'),
+                label: Text(_isSubmittingImages ? '生成中...' : 'ポンチ絵作成'),
               ),
               OutlinedButton.icon(
                 onPressed: () {
@@ -1196,6 +1488,153 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         ],
       ),
     );
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  String _resolvePonchiApiKey() {
+    if (_engine == 'ChatGPT') {
+      return ApiKeys.openAi.value;
+    }
+    return ApiKeys.gemini.value;
+  }
+
+  Future<void> _submitPonchiIdeas() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    final apiKey = _resolvePonchiApiKey();
+    if (apiKey.isEmpty) {
+      _showSnackBar('APIキーが未設定です。設定タブで入力してください。');
+      return;
+    }
+    setState(() {
+      _isSubmittingIdeas = true;
+    });
+    try {
+      final payload = {
+        'api_key': apiKey,
+        'engine': _engine,
+        'srt_path': _srtController.text,
+        'output_dir': _outputController.text.trim().isEmpty
+            ? null
+            : _outputController.text.trim(),
+        'gemini_model': _geminiModelController.text,
+        'openai_model': _chatGptModelController.text,
+      };
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/ponchi/ideas'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 120));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final items = data['items'] as List<dynamic>? ?? [];
+        final jsonPath = data['json_path'] as String?;
+        final buffer = StringBuffer();
+        buffer.writeln('✅ ${items.length} 件の案を生成しました。');
+        if (jsonPath != null) {
+          buffer.writeln('JSON: $jsonPath');
+        }
+        for (final item in items) {
+          final map = item as Map<String, dynamic>;
+          buffer.writeln(
+            '${map['start']}〜${map['end']} | ${map['visual_suggestion']} | ${map['image_prompt']}',
+          );
+        }
+        setState(() {
+          _outputTextController.text = buffer.toString();
+        });
+        _showSnackBar('ポンチ絵の案出しが完了しました。');
+      } else {
+        _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
+      }
+    } on TimeoutException {
+      _showSnackBar('リクエストがタイムアウトしました。');
+    } catch (error) {
+      _showSnackBar('生成エラー: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingIdeas = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _submitPonchiImages() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    final apiKey = ApiKeys.gemini.value;
+    if (apiKey.isEmpty) {
+      _showSnackBar('Gemini APIキーが未設定です。設定タブで入力してください。');
+      return;
+    }
+    if (_outputController.text.trim().isEmpty) {
+      _showSnackBar('出力フォルダを指定してください。');
+      return;
+    }
+    setState(() {
+      _isSubmittingImages = true;
+    });
+    try {
+      final payload = {
+        'api_key': apiKey,
+        'srt_path': _srtController.text,
+        'output_dir': _outputController.text.trim(),
+      };
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/ponchi/images'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 300));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final items = data['items'] as List<dynamic>? ?? [];
+        final outputDir = data['output_dir'] as String? ?? '';
+        final jsonPath = data['json_path'] as String? ?? '';
+        final buffer = StringBuffer();
+        buffer.writeln('✅ ${items.length} 件のポンチ絵を生成しました。');
+        if (outputDir.isNotEmpty) {
+          buffer.writeln('出力フォルダ: $outputDir');
+        }
+        if (jsonPath.isNotEmpty) {
+          buffer.writeln('JSON: $jsonPath');
+        }
+        for (final item in items) {
+          final map = item as Map<String, dynamic>;
+          buffer.writeln(
+            '${map['start']}〜${map['end']} | ${map['visual_suggestion']} | ${map['image']}',
+          );
+        }
+        setState(() {
+          _outputTextController.text = buffer.toString();
+        });
+        _showSnackBar('ポンチ絵作成が完了しました。');
+      } else {
+        _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
+      }
+    } on TimeoutException {
+      _showSnackBar('リクエストがタイムアウトしました。');
+    } catch (error) {
+      _showSnackBar('生成エラー: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingImages = false;
+        });
+      }
+    }
   }
 }
 
@@ -2577,7 +3016,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
         .where((label) => label.isNotEmpty)
         .toList();
 
-    final voicevoxMode = _voicevoxMode == 'ローテーション' ? 'rotation' : 'duet';
+    final voicevoxMode = _voicevoxMode == 'ローテーション' ? 'rotation' : 'two_person';
 
     final bgOffStyle = switch (_bgOffStyle) {
       '影' => 'shadow',
