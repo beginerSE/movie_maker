@@ -173,7 +173,20 @@ class _StudioShellState extends State<StudioShell> {
       return;
     }
 
-    await _startApiServerProcess();
+    final startedProcess = await _startApiServerProcess();
+    if (!startedProcess) {
+      _setApiServerStatus(
+        ready: false,
+        message:
+            'API サーバーの起動に失敗しました。Python が見つかりませんでした。',
+      );
+      _showApiServerSnackBar(
+        'API サーバーの起動に失敗しました。Python をインストールするか、'
+        'python/py コマンドが利用できることを確認してください。',
+      );
+      _apiServerStarting = false;
+      return;
+    }
 
     final started = await _waitForApiHealth();
     if (started) {
@@ -192,13 +205,13 @@ class _StudioShellState extends State<StudioShell> {
     _apiServerStarting = false;
   }
 
-  Future<void> _startApiServerProcess() async {
+  Future<bool> _startApiServerProcess() async {
     if (_apiServerProcess != null) {
-      return;
+      return true;
     }
 
     final pythonExecutables = Platform.isWindows
-        ? ['python']
+        ? ['py', 'python', 'python3']
         : ['python3', 'python'];
 
     for (final pythonExecutable in pythonExecutables) {
@@ -231,11 +244,12 @@ class _StudioShellState extends State<StudioShell> {
           }
           _apiServerProcess = null;
         });
-        return;
+        return true;
       } catch (_) {
         _apiServerProcess = null;
       }
     }
+    return false;
   }
 
   Future<bool> _isApiHealthy() async {
