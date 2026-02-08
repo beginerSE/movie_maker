@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 import pathlib
 import sys
 import threading
 import time
+import traceback
 from typing import Any, List, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -40,6 +42,9 @@ from backend.video_core import (
 
 app = FastAPI(title="News Short Generator Studio API")
 manager = JobManager()
+logger = logging.getLogger("movie_maker.api")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 def _normalize_engine(value: str) -> str:
@@ -249,6 +254,7 @@ async def generate_script(payload: ScriptGenerateRequest) -> ScriptGenerateRespo
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Script generation failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return ScriptGenerateResponse(text=text)
 
@@ -289,6 +295,7 @@ async def generate_title(payload: TitleGenerateRequest) -> TitleGenerateResponse
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Title generation failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return TitleGenerateResponse(text=text)
 
@@ -321,6 +328,7 @@ async def generate_materials(payload: MaterialsGenerateRequest) -> MaterialsGene
             model_note=model_note,
         )
     except Exception as exc:
+        logger.exception("Materials generation failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -358,6 +366,7 @@ async def generate_ponchi_ideas(payload: PonchiIdeasRequest) -> PonchiIdeasRespo
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Ponchi idea generation failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return PonchiIdeasResponse(items=normalized, json_path=json_path)
 
@@ -407,6 +416,7 @@ async def generate_ponchi_images(payload: PonchiImagesRequest) -> PonchiImagesRe
             encoding="utf-8",
         )
     except Exception as exc:
+        logger.exception("Ponchi image generation failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return PonchiImagesResponse(
         items=images,
@@ -461,7 +471,12 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
             )
             manager.set_result(job.job_id, {"message": "completed"})
         except Exception as exc:
-            manager.set_error(job.job_id, str(exc))
+            error_message = f"{type(exc).__name__}: {exc}"
+            traceback_text = traceback.format_exc()
+            logger.exception("Video generation failed: %s", error_message)
+            log_fn(f"[error] {error_message}")
+            log_fn(traceback_text)
+            manager.set_error(job.job_id, error_message)
 
     threading.Thread(target=worker, daemon=True).start()
     return JobResponse(job_id=job.job_id)
