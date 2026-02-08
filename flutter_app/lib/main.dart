@@ -2548,11 +2548,13 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     };
 
     try {
-      final response = await http.post(
-        ApiConfig.httpUri('/video/generate'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(payload),
-      );
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/video/generate'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -2563,10 +2565,15 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
         });
         widget.onJobSubmitted?.call(jobId);
       } else {
+        final responseBody = response.body.isEmpty ? '' : ' ${response.body}';
         setState(() {
-          _statusMessage = 'Error: ${response.statusCode}';
+          _statusMessage = 'Error: ${response.statusCode}$responseBody';
         });
       }
+    } on TimeoutException {
+      setState(() {
+        _statusMessage = 'Error: request timed out (30s)';
+      });
     } catch (error) {
       setState(() {
         _statusMessage = 'Error: $error';
