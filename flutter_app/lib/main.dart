@@ -228,24 +228,34 @@ class _StudioShellState extends State<StudioShell> {
   }
 
   Directory? _findApiServerRoot() {
-    final markers = [
-      ['backend', 'api_server.py'],
-      ['new_video_gui20.py'],
-    ];
+    final visited = <String>{};
+    final candidates = <Directory>[];
     var current = Directory.current;
+    candidates.add(current);
+    final flutterAppSuffix =
+        '${Platform.pathSeparator}flutter_app';
+    if (current.path.endsWith(flutterAppSuffix)) {
+      candidates.add(current.parent);
+    }
     while (true) {
-      final found = markers.every((segments) {
-        final path = _joinFilePath([current.path, ...segments]);
-        return File(path).existsSync();
-      });
-      if (found) {
-        return current;
-      }
       final parent = current.parent;
       if (parent.path == current.path) {
         break;
       }
       current = parent;
+      candidates.add(current);
+    }
+
+    for (final candidate in candidates) {
+      if (!visited.add(candidate.path)) {
+        continue;
+      }
+      final path = _joinFilePath(
+        [candidate.path, 'backend', 'api_server.py'],
+      );
+      if (File(path).existsSync()) {
+        return candidate;
+      }
     }
     return null;
   }
