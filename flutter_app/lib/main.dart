@@ -224,7 +224,7 @@ class _StudioShellState extends State<StudioShell> {
   Directory? _findApiServerRoot() {
     final markers = [
       ['backend', 'api_server.py'],
-      ['new_video_gui11.py'],
+      ['new_video_gui20.py'],
     ];
     var current = Directory.current;
     for (var depth = 0; depth < 6; depth += 1) {
