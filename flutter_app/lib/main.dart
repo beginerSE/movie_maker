@@ -169,6 +169,7 @@ class _StudioShellState extends State<StudioShell> {
   String? _apiServerErrorDetails;
   String? _apiServerLaunchCommand;
   Directory? _apiServerRoot;
+  int _apiServerPort = 8000;
   final ValueNotifier<String?> _latestJobId = ValueNotifier<String?>(null);
 
   @override
@@ -211,7 +212,9 @@ class _StudioShellState extends State<StudioShell> {
 
     final started = await _waitForApiHealth();
     if (started) {
-      _setApiServerStatus(ready: true, message: 'API サーバー起動完了');
+      final portNote =
+          _apiServerPort == 8000 ? '' : ' (port: $_apiServerPort)';
+      _setApiServerStatus(ready: true, message: 'API サーバー起動完了$portNote');
       _clearApiServerError();
     } else {
       _setApiServerStatus(
@@ -220,7 +223,7 @@ class _StudioShellState extends State<StudioShell> {
       );
       _showApiServerSnackBar(
         'API サーバーの起動に失敗しました。ターミナルで '
-        '${_apiServerLaunchCommand ?? 'python -m uvicorn backend.api_server:app --host 0.0.0.0 --port 8000'} '
+        '${_apiServerLaunchCommand ?? 'python -m uvicorn backend.api_server:app --host 0.0.0.0 --port $_apiServerPort'} '
         'を実行してください。',
       );
     }
@@ -291,6 +294,9 @@ class _StudioShellState extends State<StudioShell> {
       return;
     }
 
+    _apiServerPort = await _selectApiServerPort();
+    _updateApiBaseUrlForPort(_apiServerPort);
+
     final pythonExecutables = Platform.isWindows
         ? ['python']
         : ['python3', 'python'];
@@ -298,7 +304,7 @@ class _StudioShellState extends State<StudioShell> {
     for (final pythonExecutable in pythonExecutables) {
       try {
         _apiServerLaunchCommand =
-            '$pythonExecutable -m uvicorn backend.api_server:app --host 0.0.0.0 --port 8000';
+            '$pythonExecutable -m uvicorn backend.api_server:app --host 0.0.0.0 --port $_apiServerPort';
         final process = await Process.start(
           pythonExecutable,
           [
@@ -308,7 +314,7 @@ class _StudioShellState extends State<StudioShell> {
             '--host',
             '0.0.0.0',
             '--port',
-            '8000',
+            '$_apiServerPort',
           ],
           workingDirectory: _apiServerRoot!.path,
           environment: {
@@ -364,6 +370,54 @@ class _StudioShellState extends State<StudioShell> {
     } catch (_) {
       return false;
     }
+  }
+
+  Future<int> _selectApiServerPort() async {
+    final baseUri = Uri.tryParse(ApiConfig.baseUrl.value.trim());
+    if (baseUri != null && _isLocalHost(baseUri.host) && baseUri.port != 0) {
+      if (await _isPortAvailable(baseUri.port)) {
+        return baseUri.port;
+      }
+    }
+
+    const fallbackPorts = [8000, 8001, 8002, 8003, 8004, 8005];
+    for (final port in fallbackPorts) {
+      if (await _isPortAvailable(port)) {
+        return port;
+      }
+    }
+    return 8000;
+  }
+
+  Future<bool> _isPortAvailable(int port) async {
+    try {
+      final socket =
+          await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+      await socket.close();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isLocalHost(String host) {
+    final normalized = host.toLowerCase();
+    return normalized == 'localhost' ||
+        normalized == '127.0.0.1' ||
+        normalized == '::1';
+  }
+
+  void _updateApiBaseUrlForPort(int port) {
+    final current = ApiConfig.baseUrl.value.trim();
+    final baseUri = Uri.tryParse(current);
+    if (baseUri == null) {
+      return;
+    }
+    if (!_isLocalHost(baseUri.host)) {
+      return;
+    }
+    final updated = baseUri.replace(port: port);
+    ApiConfig.baseUrl.value = updated.toString();
   }
 
   Future<bool> _waitForApiHealth() async {
