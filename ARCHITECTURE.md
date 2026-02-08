@@ -28,7 +28,7 @@ Tkinter GUI を Flutter に置き換え、既存の Python 動画生成ロジッ
   - ただし GUI で複数ジョブ/ログを扱うなら HTTP/WebSocket の方が扱いやすい。
 
 ## Migration Strategy
-1. **API 層の追加**: `new_video_gui11.py` の `generate_video()` を API から呼び出す。
+1. **API 層の追加**: `new_video_gui20.py` の `generate_video()` を API から呼び出す。
 2. **Flutter UI 実装**: 既存の UI セクションを Flutter に再実装。
 3. **機能の段階移行**: 動画生成→台本生成→タイトル生成→素材生成→動画編集の順に API 化。
 
