@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,43 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() {
   runApp(const MovieMakerApp());
+}
+
+String _defaultApiBaseUrl() {
+  if (Platform.isAndroid) {
+    return 'http://10.0.2.2:8000';
+  }
+  return 'http://localhost:8000';
+}
+
+String _joinPaths(String basePath, String relativePath) {
+  if (basePath.isEmpty || basePath == '/') {
+    return relativePath;
+  }
+  final normalizedBase = basePath.endsWith('/')
+      ? basePath.substring(0, basePath.length - 1)
+      : basePath;
+  final normalizedRelative =
+      relativePath.startsWith('/') ? relativePath : '/$relativePath';
+  return '$normalizedBase$normalizedRelative';
+}
+
+class ApiConfig {
+  static final ValueNotifier<String> baseUrl =
+      ValueNotifier<String>(_defaultApiBaseUrl());
+
+  static Uri httpUri(String path) {
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    final baseUri = Uri.parse(baseUrl.value.trim());
+    final combinedPath = _joinPaths(baseUri.path, normalizedPath);
+    return baseUri.replace(path: combinedPath);
+  }
+
+  static Uri wsUri(String path) {
+    final base = httpUri(path);
+    final scheme = base.scheme == 'https' ? 'wss' : 'ws';
+    return base.replace(scheme: scheme);
+  }
 }
 
 class MovieMakerApp extends StatelessWidget {
@@ -892,12 +930,23 @@ class SettingsForm extends StatefulWidget {
 }
 
 class _SettingsFormState extends State<SettingsForm> {
+  final _backendController = TextEditingController();
   final _geminiController = TextEditingController();
   final _openAiController = TextEditingController();
   final _claudeController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    _backendController.text = ApiConfig.baseUrl.value;
+    _backendController.addListener(() {
+      ApiConfig.baseUrl.value = _backendController.text.trim();
+    });
+  }
+
+  @override
   void dispose() {
+    _backendController.dispose();
     _geminiController.dispose();
     _openAiController.dispose();
     _claudeController.dispose();
@@ -913,6 +962,14 @@ class _SettingsFormState extends State<SettingsForm> {
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 16),
+        TextFormField(
+          controller: _backendController,
+          decoration: const InputDecoration(
+            labelText: 'バックエンドURL',
+            helperText: 'Android エミュレータの場合は http://10.0.2.2:8000',
+          ),
+        ),
+        const SizedBox(height: 12),
         TextFormField(
           controller: _geminiController,
           decoration: const InputDecoration(labelText: 'Gemini API キー'),
@@ -1140,7 +1197,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://localhost:8000/video/generate'),
+        ApiConfig.httpUri('/video/generate'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(payload),
       );
@@ -1238,7 +1295,7 @@ class _LogPanelState extends State<LogPanel> {
     _subscription?.cancel();
 
     final channel = WebSocketChannel.connect(
-      Uri.parse('ws://localhost:8000/ws/jobs/$jobId'),
+      ApiConfig.wsUri('/ws/jobs/$jobId'),
     );
 
     setState(() {
