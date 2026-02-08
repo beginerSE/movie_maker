@@ -17,7 +17,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from backend.job_manager import JobManager
-from new_video_gui20 import (
+from backend.video_core import (
     CAPTION_MARGIN_BOTTOM,
     DEFAULT_CLAUDE_MODEL,
     DEFAULT_PONCHI_GEMINI_MODEL,
