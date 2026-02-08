@@ -150,8 +150,8 @@ class StudioShell extends StatefulWidget {
 
 class _StudioShellState extends State<StudioShell> {
   final List<String> _pages = const [
-    '動画生成',
     '台本生成',
+    '動画生成',
     '動画タイトル・説明',
     'サムネイル作成',
     'ポンチ絵作成',
@@ -455,6 +455,63 @@ class _StudioShellState extends State<StudioShell> {
                               'Studio',
                               style: TextStyle(fontWeight: FontWeight.w600),
                             ),
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _apiServerReady
+                                    ? const Color(0xFFE7F7EF)
+                                    : _apiServerStarting
+                                        ? const Color(0xFFFFF4E1)
+                                        : const Color(0xFFFFECEC),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: _apiServerReady
+                                      ? const Color(0xFFBEE8D0)
+                                      : _apiServerStarting
+                                          ? const Color(0xFFFFD29A)
+                                          : const Color(0xFFF7B8B8),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    _apiServerReady
+                                        ? Icons.cloud_done
+                                        : _apiServerStarting
+                                            ? Icons.cloud_sync
+                                            : Icons.cloud_off,
+                                    size: 16,
+                                    color: _apiServerReady
+                                        ? Colors.green.shade700
+                                        : _apiServerStarting
+                                            ? Colors.orange.shade700
+                                            : Colors.red.shade700,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _apiServerReady
+                                        ? 'API 稼働中'
+                                        : _apiServerStarting
+                                            ? 'API 起動中'
+                                            : 'API 停止中',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: _apiServerReady
+                                          ? Colors.green.shade800
+                                          : _apiServerStarting
+                                              ? Colors.orange.shade700
+                                              : Colors.red.shade700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -505,13 +562,13 @@ class _StudioShellState extends State<StudioShell> {
   Widget _buildCenterPanel() {
     switch (_selectedIndex) {
       case 0:
+        return const ScriptGenerateForm();
+      case 1:
         return VideoGenerateForm(
           onJobSubmitted: (jobId) {
             _latestJobId.value = jobId;
           },
         );
-      case 1:
-        return const ScriptGenerateForm();
       case 2:
         return const TitleGenerateForm();
       case 3:
