@@ -233,7 +233,7 @@ class _StudioShellState extends State<StudioShell> {
       ['new_video_gui20.py'],
     ];
     var current = Directory.current;
-    for (var depth = 0; depth < 6; depth += 1) {
+    while (true) {
       final found = markers.every((segments) {
         final path = _joinFilePath([current.path, ...segments]);
         return File(path).existsSync();
