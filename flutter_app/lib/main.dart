@@ -17,7 +17,7 @@ String _defaultApiBaseUrl() {
   if (Platform.isAndroid) {
     return 'http://10.0.2.2:8000';
   }
-  return 'http://localhost:8000';
+  return 'http://127.0.0.1:8000';
 }
 
 String _joinPaths(String basePath, String relativePath) {
@@ -221,9 +221,9 @@ class _StudioShellState extends State<StudioShell> {
         ready: false,
         message: 'API サーバーの起動に失敗しました。手動で起動してください。',
       );
-      _showApiServerSnackBar(
-        'API サーバーの起動に失敗しました。ターミナルで '
-        '${_apiServerLaunchCommand ?? 'python -m uvicorn backend.api_server:app --host 0.0.0.0 --port $_apiServerPort'} '
+        _showApiServerSnackBar(
+          'API サーバーの起動に失敗しました。ターミナルで '
+        '${_apiServerLaunchCommand ?? 'python -m uvicorn backend.api_server:app --host 127.0.0.1 --port $_apiServerPort'} '
         'を実行してください。',
       );
     }
@@ -340,7 +340,7 @@ class _StudioShellState extends State<StudioShell> {
     for (final pythonExecutable in pythonExecutables) {
       try {
         _apiServerLaunchCommand =
-            '$pythonExecutable -m uvicorn backend.api_server:app --host 0.0.0.0 --port $_apiServerPort';
+            '$pythonExecutable -m uvicorn backend.api_server:app --host 127.0.0.1 --port $_apiServerPort';
         final process = await Process.start(
           pythonExecutable,
           [
@@ -348,7 +348,7 @@ class _StudioShellState extends State<StudioShell> {
             'uvicorn',
             'backend.api_server:app',
             '--host',
-            '0.0.0.0',
+            '127.0.0.1',
             '--port',
             '$_apiServerPort',
           ],

@@ -22,7 +22,15 @@ Flutter アプリの起動時に API サーバーも自動で立ち上がる想�
 - 「動画生成」ページでフォームを入力し、`http://localhost:8000/video/generate` に送信します。
 - 右ログの「WebSocket 接続」を押して Job ID を入力すると、`ws://localhost:8000/ws/jobs/{job_id}` のログを受信します。
 
-## 2. 動作の流れ（最小構成）
+## 2. API サーバーを手動で起動する場合
+
+API サーバーだけを起動する場合は、リポジトリのルートで次のコマンドを実行してください。
+
+```bash
+python -m uvicorn backend.api_server:app --host 127.0.0.1 --port 8000
+```
+
+## 3. 動作の流れ（最小構成）
 
 1. Flutter UI を起動（API サーバーも同時起動）。
 2. 動画生成フォームを入力して送信。
