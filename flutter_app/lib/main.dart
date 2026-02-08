@@ -53,63 +53,80 @@ class MovieMakerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF5B7CFA),
+    final baseScheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF6C5CE7),
       brightness: Brightness.light,
+    );
+    final colorScheme = baseScheme.copyWith(
+      primary: const Color(0xFF6C5CE7),
+      secondary: const Color(0xFFFF6B6B),
+      tertiary: const Color(0xFF00D2D3),
+      surface: const Color(0xFFFFFFFF),
+      background: const Color(0xFFF6F4FF),
     );
     return MaterialApp(
       title: 'News Short Generator Studio',
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF5F6FA),
+        scaffoldBackgroundColor: const Color(0xFFF6F4FF),
         cardTheme: CardThemeData(
-          elevation: 2,
-          shadowColor: Colors.black.withOpacity(0.08),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          elevation: 3,
+          shadowColor: colorScheme.primary.withOpacity(0.2),
+          surfaceTintColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: Colors.grey.shade300),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: Colors.grey.shade300),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide(color: colorScheme.primary, width: 1.4),
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: colorScheme.primary, width: 1.6),
           ),
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            backgroundColor: colorScheme.primary,
+            foregroundColor: Colors.white,
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            side: BorderSide(color: colorScheme.primary.withOpacity(0.6)),
           ),
         ),
         navigationRailTheme: NavigationRailThemeData(
-          backgroundColor: Colors.white,
-          indicatorColor: colorScheme.primary.withOpacity(0.12),
+          backgroundColor: Colors.white.withOpacity(0.92),
+          indicatorColor: colorScheme.primary.withOpacity(0.16),
           selectedIconTheme: IconThemeData(color: colorScheme.primary),
           selectedLabelTextStyle: TextStyle(
             color: colorScheme.primary,
             fontWeight: FontWeight.w600,
           ),
           unselectedLabelTextStyle: const TextStyle(color: Color(0xFF768098)),
+          unselectedIconTheme: const IconThemeData(color: Color(0xFF7C8BA1)),
         ),
         textTheme: const TextTheme(
           headlineSmall: TextStyle(fontWeight: FontWeight.w700),
           titleMedium: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
       ),
       home: const StudioShell(),
@@ -140,6 +157,7 @@ class _StudioShellState extends State<StudioShell> {
   bool _apiServerReady = false;
   String? _apiServerStatus;
   Directory? _apiServerRoot;
+  final ValueNotifier<String?> _latestJobId = ValueNotifier<String?>(null);
 
   @override
   void initState() {
@@ -150,6 +168,7 @@ class _StudioShellState extends State<StudioShell> {
   @override
   void dispose() {
     _apiServerProcess?.kill();
+    _latestJobId.dispose();
     super.dispose();
   }
 
@@ -332,121 +351,144 @@ class _StudioShellState extends State<StudioShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
-        children: [
-          if (_apiServerStatus != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              color: _apiServerReady
-                  ? const Color(0xFFE4F4EA)
-                  : const Color(0xFFFFE6E6),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFFF7F2FF), Color(0xFFEEF4FF)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Column(
+          children: [
+            if (_apiServerStatus != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: _apiServerReady
+                        ? [const Color(0xFFD8F5E5), const Color(0xFFE9FFF5)]
+                        : [const Color(0xFFFFE0E0), const Color(0xFFFFF1F1)],
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _apiServerReady ? Icons.check_circle : Icons.error_outline,
+                      color:
+                          _apiServerReady ? Colors.green.shade700 : Colors.red.shade700,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _apiServerStatus ?? '',
+                        style: TextStyle(
+                          color: _apiServerReady
+                              ? Colors.green.shade700
+                              : Colors.red.shade700,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (!_apiServerReady && !_apiServerStarting)
+                      TextButton(
+                        onPressed: _ensureApiServerRunning,
+                        child: const Text('再試行'),
+                      ),
+                  ],
+                ),
+              ),
+            Expanded(
               child: Row(
                 children: [
-                  Icon(
-                    _apiServerReady ? Icons.check_circle : Icons.error_outline,
-                    color: _apiServerReady ? Colors.green.shade700 : Colors.red.shade700,
+                  Container(
+                    width: 220,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFFFFFF), Color(0xFFF3F6FF)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Theme.of(context).colorScheme.primary.withOpacity(0.12),
+                          blurRadius: 20,
+                          offset: const Offset(2, 0),
+                        ),
+                      ],
+                    ),
+                    child: NavigationRail(
+                      selectedIndex: _selectedIndex,
+                      onDestinationSelected: (index) {
+                        setState(() {
+                          _selectedIndex = index;
+                        });
+                      },
+                      labelType: NavigationRailLabelType.all,
+                      leading: Padding(
+                        padding: const EdgeInsets.only(top: 24, bottom: 16),
+                        child: Column(
+                          children: [
+                            CircleAvatar(
+                              radius: 24,
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withOpacity(0.15),
+                              child: Icon(
+                                Icons.movie_creation,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'Studio',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
+                      destinations: _pages
+                          .map(
+                            (page) => NavigationRailDestination(
+                              icon: const Icon(Icons.circle_outlined),
+                              selectedIcon: const Icon(Icons.circle),
+                              label: Text(page),
+                            ),
+                          )
+                          .toList(),
+                    ),
                   ),
-                  const SizedBox(width: 8),
+                  const VerticalDivider(width: 1),
                   Expanded(
-                    child: Text(
-                      _apiServerStatus ?? '',
-                      style: TextStyle(
-                        color: _apiServerReady
-                            ? Colors.green.shade700
-                            : Colors.red.shade700,
-                        fontWeight: FontWeight.w600,
+                    flex: 3,
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: _buildCenterPanel(),
+                        ),
                       ),
                     ),
                   ),
-                  if (!_apiServerReady && !_apiServerStarting)
-                    TextButton(
-                      onPressed: _ensureApiServerRunning,
-                      child: const Text('再試行'),
+                  const VerticalDivider(width: 1),
+                  Expanded(
+                    flex: 2,
+                    child: Card(
+                      margin: const EdgeInsets.all(20),
+                      child: LogPanel(
+                        pageName: _pages[_selectedIndex],
+                        latestJobId: _latestJobId,
+                      ),
                     ),
+                  ),
                 ],
               ),
             ),
-          Expanded(
-            child: Row(
-              children: [
-                Container(
-                  width: 220,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 18,
-                        offset: const Offset(2, 0),
-                      ),
-                    ],
-                  ),
-                  child: NavigationRail(
-                    selectedIndex: _selectedIndex,
-                    onDestinationSelected: (index) {
-                      setState(() {
-                        _selectedIndex = index;
-                      });
-                    },
-                    labelType: NavigationRailLabelType.all,
-                    leading: Padding(
-                      padding: const EdgeInsets.only(top: 24, bottom: 16),
-                      child: Column(
-                        children: [
-                          CircleAvatar(
-                            radius: 24,
-                            backgroundColor:
-                                Theme.of(context).colorScheme.primary.withOpacity(0.15),
-                            child: Icon(
-                              Icons.movie_creation,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'Studio',
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
-                    destinations: _pages
-                        .map(
-                          (page) => NavigationRailDestination(
-                            icon: const Icon(Icons.circle_outlined),
-                            selectedIcon: const Icon(Icons.circle),
-                            label: Text(page),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  flex: 3,
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: _buildCenterPanel(),
-                      ),
-                    ),
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  flex: 2,
-                  child: Card(
-                    margin: const EdgeInsets.all(20),
-                    child: LogPanel(pageName: _pages[_selectedIndex]),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -454,7 +496,11 @@ class _StudioShellState extends State<StudioShell> {
   Widget _buildCenterPanel() {
     switch (_selectedIndex) {
       case 0:
-        return const VideoGenerateForm();
+        return VideoGenerateForm(
+          onJobSubmitted: (jobId) {
+            _latestJobId.value = jobId;
+          },
+        );
       case 1:
         return const ScriptGenerateForm();
       case 2:
@@ -490,7 +536,9 @@ class PlaceholderPanel extends StatelessWidget {
 }
 
 class VideoGenerateForm extends StatefulWidget {
-  const VideoGenerateForm({super.key});
+  const VideoGenerateForm({super.key, this.onJobSubmitted});
+
+  final ValueChanged<String?>? onJobSubmitted;
 
   @override
   State<VideoGenerateForm> createState() => _VideoGenerateFormState();
@@ -1437,10 +1485,12 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final jobId = data['job_id'] as String?;
         setState(() {
-          _jobId = data['job_id'] as String?;
+          _jobId = jobId;
           _statusMessage = 'Submitted';
         });
+        widget.onJobSubmitted?.call(jobId);
       } else {
         setState(() {
           _statusMessage = 'Error: ${response.statusCode}';
@@ -1459,9 +1509,14 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
 }
 
 class LogPanel extends StatefulWidget {
-  const LogPanel({super.key, required this.pageName});
+  const LogPanel({
+    super.key,
+    required this.pageName,
+    this.latestJobId,
+  });
 
   final String pageName;
+  final ValueListenable<String?>? latestJobId;
 
   @override
   State<LogPanel> createState() => _LogPanelState();
@@ -1471,9 +1526,26 @@ class _LogPanelState extends State<LogPanel> {
   final List<String> _logs = [];
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
+  String? _currentJobId;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.latestJobId?.addListener(_handleLatestJobIdChanged);
+  }
+
+  @override
+  void didUpdateWidget(LogPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.latestJobId != widget.latestJobId) {
+      oldWidget.latestJobId?.removeListener(_handleLatestJobIdChanged);
+      widget.latestJobId?.addListener(_handleLatestJobIdChanged);
+    }
+  }
 
   @override
   void dispose() {
+    widget.latestJobId?.removeListener(_handleLatestJobIdChanged);
     _subscription?.cancel();
     _channel?.sink.close();
     super.dispose();
@@ -1494,9 +1566,9 @@ class _LogPanelState extends State<LogPanel> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: ElevatedButton.icon(
-            onPressed: _connectWebSocket,
-            icon: const Icon(Icons.wifi),
-            label: const Text('WebSocket 接続（Job ID が必要）'),
+            onPressed: _connectLatestJob,
+            icon: const Icon(Icons.auto_graph),
+            label: const Text('最新ジョブに自動接続'),
           ),
         ),
         const SizedBox(height: 8),
@@ -1505,8 +1577,13 @@ class _LogPanelState extends State<LogPanel> {
             margin: const EdgeInsets.all(16),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade300),
-              borderRadius: BorderRadius.circular(8),
+              gradient: LinearGradient(
+                colors: [Colors.white, Colors.grey.shade50],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              border: Border.all(color: Colors.grey.shade200),
+              borderRadius: BorderRadius.circular(16),
             ),
             child: ListView.builder(
               itemCount: _logs.length,
@@ -1518,12 +1595,26 @@ class _LogPanelState extends State<LogPanel> {
     );
   }
 
-  void _connectWebSocket() {
-    final jobId = _promptForJobId();
-    if (jobId == null || jobId.isEmpty) {
+  void _handleLatestJobIdChanged() {
+    final jobId = widget.latestJobId?.value;
+    if (jobId == null || jobId.isEmpty || jobId == _currentJobId) {
       return;
     }
+    _connectWebSocket(jobId);
+  }
 
+  void _connectLatestJob() {
+    final jobId = widget.latestJobId?.value;
+    if (jobId == null || jobId.isEmpty) {
+      setState(() {
+        _logs.add('まだジョブが送信されていません。動画生成を開始してください。');
+      });
+      return;
+    }
+    _connectWebSocket(jobId);
+  }
+
+  void _connectWebSocket(String jobId) {
     _channel?.sink.close();
     _subscription?.cancel();
 
@@ -1532,7 +1623,10 @@ class _LogPanelState extends State<LogPanel> {
     );
 
     setState(() {
-      _logs.add('Connecting to $jobId ...');
+      _currentJobId = jobId;
+      _logs
+        ..clear()
+        ..add('Connecting to $jobId ...');
       _channel = channel;
     });
 
@@ -1554,41 +1648,6 @@ class _LogPanelState extends State<LogPanel> {
         });
       },
     );
-  }
-
-  String? _promptForJobId() {
-    final controller = TextEditingController();
-    String? result;
-
-    showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Job ID を入力'),
-          content: TextField(
-            controller: controller,
-            decoration: const InputDecoration(hintText: 'UUID'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('キャンセル'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                result = controller.text;
-                Navigator.of(context).pop();
-              },
-              child: const Text('接続'),
-            ),
-          ],
-        );
-      },
-    );
-
-    return result;
   }
 }
 
