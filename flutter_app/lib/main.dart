@@ -136,11 +136,14 @@ class _StudioShellState extends State<StudioShell> {
   ];
   int _selectedIndex = 0;
   Process? _apiServerProcess;
+  bool _apiServerStarting = false;
+  bool _apiServerReady = false;
+  String? _apiServerStatus;
 
   @override
   void initState() {
     super.initState();
-    _startApiServer();
+    _ensureApiServerRunning();
   }
 
   @override
@@ -149,109 +152,245 @@ class _StudioShellState extends State<StudioShell> {
     super.dispose();
   }
 
-  Future<void> _startApiServer() async {
+  Future<void> _ensureApiServerRunning() async {
+    if (_apiServerStarting) {
+      return;
+    }
+    _apiServerStarting = true;
+
+    if (await _isApiHealthy()) {
+      _setApiServerStatus(ready: true, message: 'API サーバー稼働中');
+      _apiServerStarting = false;
+      return;
+    }
+
+    if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      _setApiServerStatus(
+        ready: false,
+        message: 'API サーバーはデスクトップ環境でのみ自動起動します。',
+      );
+      _apiServerStarting = false;
+      return;
+    }
+
+    await _startApiServerProcess();
+
+    final started = await _waitForApiHealth();
+    if (started) {
+      _setApiServerStatus(ready: true, message: 'API サーバー起動完了');
+    } else {
+      _setApiServerStatus(
+        ready: false,
+        message: 'API サーバーの起動に失敗しました。手動で起動してください。',
+      );
+      _showApiServerSnackBar(
+        'API サーバーの起動に失敗しました。ターミナルで '
+        'python -m uvicorn backend.api_server:app --host 0.0.0.0 --port 8000 '
+        'を実行してください。',
+      );
+    }
+    _apiServerStarting = false;
+  }
+
+  Future<void> _startApiServerProcess() async {
     if (_apiServerProcess != null) {
       return;
     }
-    if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+
+    final pythonExecutables = Platform.isWindows
+        ? ['python']
+        : ['python3', 'python'];
+
+    for (final pythonExecutable in pythonExecutables) {
+      try {
+        final process = await Process.start(
+          pythonExecutable,
+          [
+            '-m',
+            'uvicorn',
+            'backend.api_server:app',
+            '--host',
+            '0.0.0.0',
+            '--port',
+            '8000',
+          ],
+          workingDirectory: '..',
+          runInShell: true,
+        );
+        _apiServerProcess = process;
+        process.exitCode.then((code) {
+          if (!mounted) {
+            return;
+          }
+          if (code != 0) {
+            _setApiServerStatus(
+              ready: false,
+              message: 'API サーバーが終了しました (exit code: $code)。',
+            );
+            _showApiServerSnackBar('API サーバーが停止しました。');
+          }
+          _apiServerProcess = null;
+        });
+        return;
+      } catch (_) {
+        _apiServerProcess = null;
+      }
+    }
+  }
+
+  Future<bool> _isApiHealthy() async {
+    try {
+      final response = await http.get(ApiConfig.httpUri('/health'));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _waitForApiHealth() async {
+    for (var attempt = 0; attempt < 20; attempt += 1) {
+      if (await _isApiHealthy()) {
+        return true;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    return false;
+  }
+
+  void _setApiServerStatus({required bool ready, required String message}) {
+    if (!mounted) {
       return;
     }
-    final pythonExecutable = Platform.isWindows ? 'python' : 'python3';
-    try {
-      _apiServerProcess = await Process.start(
-        pythonExecutable,
-        [
-          '-m',
-          'uvicorn',
-          'backend.api_server:app',
-          '--host',
-          '0.0.0.0',
-          '--port',
-          '8000',
-        ],
-        workingDirectory: '..',
-        runInShell: true,
-      );
-    } catch (_) {
-      _apiServerProcess = null;
+    setState(() {
+      _apiServerReady = ready;
+      _apiServerStatus = message;
+    });
+  }
+
+  void _showApiServerSnackBar(String message) {
+    if (!mounted) {
+      return;
     }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
+      body: Column(
         children: [
-          Container(
-            width: 220,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 18,
-                  offset: const Offset(2, 0),
-                ),
-              ],
-            ),
-            child: NavigationRail(
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: (index) {
-                setState(() {
-                  _selectedIndex = index;
-                });
-              },
-              labelType: NavigationRailLabelType.all,
-              leading: Padding(
-                padding: const EdgeInsets.only(top: 24, bottom: 16),
-                child: Column(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.15),
-                      child: Icon(
-                        Icons.movie_creation,
-                        color: Theme.of(context).colorScheme.primary,
+          if (_apiServerStatus != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: _apiServerReady
+                  ? const Color(0xFFE4F4EA)
+                  : const Color(0xFFFFE6E6),
+              child: Row(
+                children: [
+                  Icon(
+                    _apiServerReady ? Icons.check_circle : Icons.error_outline,
+                    color: _apiServerReady ? Colors.green.shade700 : Colors.red.shade700,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _apiServerStatus ?? '',
+                      style: TextStyle(
+                        color: _apiServerReady
+                            ? Colors.green.shade700
+                            : Colors.red.shade700,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Studio',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  if (!_apiServerReady && !_apiServerStarting)
+                    TextButton(
+                      onPressed: _ensureApiServerRunning,
+                      child: const Text('再試行'),
                     ),
-                  ],
-                ),
-              ),
-              destinations: _pages
-                  .map(
-                    (page) => NavigationRailDestination(
-                      icon: const Icon(Icons.circle_outlined),
-                      selectedIcon: const Icon(Icons.circle),
-                      label: Text(page),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            flex: 3,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: _buildCenterPanel(),
-                ),
+                ],
               ),
             ),
-          ),
-          const VerticalDivider(width: 1),
           Expanded(
-            flex: 2,
-            child: Card(
-              margin: const EdgeInsets.all(20),
-              child: LogPanel(pageName: _pages[_selectedIndex]),
+            child: Row(
+              children: [
+                Container(
+                  width: 220,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 18,
+                        offset: const Offset(2, 0),
+                      ),
+                    ],
+                  ),
+                  child: NavigationRail(
+                    selectedIndex: _selectedIndex,
+                    onDestinationSelected: (index) {
+                      setState(() {
+                        _selectedIndex = index;
+                      });
+                    },
+                    labelType: NavigationRailLabelType.all,
+                    leading: Padding(
+                      padding: const EdgeInsets.only(top: 24, bottom: 16),
+                      child: Column(
+                        children: [
+                          CircleAvatar(
+                            radius: 24,
+                            backgroundColor:
+                                Theme.of(context).colorScheme.primary.withOpacity(0.15),
+                            child: Icon(
+                              Icons.movie_creation,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Studio',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                    destinations: _pages
+                        .map(
+                          (page) => NavigationRailDestination(
+                            icon: const Icon(Icons.circle_outlined),
+                            selectedIcon: const Icon(Icons.circle),
+                            label: Text(page),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  flex: 3,
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: _buildCenterPanel(),
+                      ),
+                    ),
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  flex: 2,
+                  child: Card(
+                    margin: const EdgeInsets.all(20),
+                    child: LogPanel(pageName: _pages[_selectedIndex]),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
