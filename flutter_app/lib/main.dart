@@ -25,7 +25,7 @@ class MovieMakerApp extends StatelessWidget {
         colorScheme: colorScheme,
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF5F6FA),
-        cardTheme: CardTheme(
+        cardTheme: CardThemeData(
           elevation: 2,
           shadowColor: Colors.black.withOpacity(0.08),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -1321,7 +1321,7 @@ Future<void> _selectDirectory(TextEditingController controller) async {
 }
 
 Future<void> _selectSavePath(TextEditingController controller, XTypeGroup typeGroup) async {
-  final path = await getSavePath(acceptedTypeGroups: [typeGroup]);
-  if (path == null) return;
-  controller.text = path;
+  final location = await getSaveLocation(acceptedTypeGroups: [typeGroup]);
+  if (location == null) return;
+  controller.text = location.path;
 }
