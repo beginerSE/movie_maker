@@ -139,6 +139,7 @@ class _StudioShellState extends State<StudioShell> {
   bool _apiServerStarting = false;
   bool _apiServerReady = false;
   String? _apiServerStatus;
+  Directory? _apiServerRoot;
 
   @override
   void initState() {
@@ -192,8 +193,56 @@ class _StudioShellState extends State<StudioShell> {
     _apiServerStarting = false;
   }
 
+  Directory? _findApiServerRoot() {
+    final markers = [
+      ['backend', 'api_server.py'],
+      ['new_video_gui11.py'],
+    ];
+    var current = Directory.current;
+    for (var depth = 0; depth < 6; depth += 1) {
+      final found = markers.every((segments) {
+        final path = _joinFilePath([current.path, ...segments]);
+        return File(path).existsSync();
+      });
+      if (found) {
+        return current;
+      }
+      final parent = current.parent;
+      if (parent.path == current.path) {
+        break;
+      }
+      current = parent;
+    }
+    return null;
+  }
+
+  String _joinFilePath(List<String> segments) {
+    if (segments.isEmpty) {
+      return '';
+    }
+    var current = segments.first;
+    for (var index = 1; index < segments.length; index += 1) {
+      final part = segments[index];
+      if (current.endsWith(Platform.pathSeparator)) {
+        current = '$current$part';
+      } else {
+        current = '$current${Platform.pathSeparator}$part';
+      }
+    }
+    return current;
+  }
+
   Future<void> _startApiServerProcess() async {
     if (_apiServerProcess != null) {
+      return;
+    }
+    _apiServerRoot ??= _findApiServerRoot();
+    if (_apiServerRoot == null) {
+      _setApiServerStatus(
+        ready: false,
+        message: 'API サーバーのパスが見つかりません。Flutter プロジェクトをルートで起動してください。',
+      );
+      _showApiServerSnackBar('API サーバーの配置場所を確認してください。');
       return;
     }
 
@@ -214,7 +263,11 @@ class _StudioShellState extends State<StudioShell> {
             '--port',
             '8000',
           ],
-          workingDirectory: '..',
+          workingDirectory: _apiServerRoot!.path,
+          environment: {
+            ...Platform.environment,
+            'PYTHONPATH': _apiServerRoot!.path,
+          },
           runInShell: true,
         );
         _apiServerProcess = process;
