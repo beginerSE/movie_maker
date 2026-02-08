@@ -89,6 +89,18 @@ class _StudioShellState extends State<StudioShell> {
     switch (_selectedIndex) {
       case 0:
         return const VideoGenerateForm();
+      case 1:
+        return const ScriptGenerateForm();
+      case 2:
+        return const TitleGenerateForm();
+      case 3:
+        return const MaterialsGenerateForm();
+      case 4:
+        return const VideoEditForm();
+      case 5:
+        return const DetailedEditForm();
+      case 6:
+        return const SettingsForm();
       default:
         return PlaceholderPanel(title: _pages[_selectedIndex]);
     }
@@ -116,6 +128,662 @@ class VideoGenerateForm extends StatefulWidget {
 
   @override
   State<VideoGenerateForm> createState() => _VideoGenerateFormState();
+}
+
+class ScriptGenerateForm extends StatefulWidget {
+  const ScriptGenerateForm({super.key});
+
+  @override
+  State<ScriptGenerateForm> createState() => _ScriptGenerateFormState();
+}
+
+class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _promptController = TextEditingController();
+  final _outputController = TextEditingController(text: 'dialogue_input.txt');
+  final _maxTokensController = TextEditingController(text: '20000');
+  String _provider = 'Gemini';
+  String _model = 'gemini-2.0-flash';
+
+  @override
+  void dispose() {
+    _promptController.dispose();
+    _outputController.dispose();
+    _maxTokensController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: _formKey,
+      child: ListView(
+        children: [
+          Text(
+            '台本生成',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            value: _provider,
+            decoration: const InputDecoration(labelText: '生成AI'),
+            items: const [
+              DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+              DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
+              DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _provider = value;
+              });
+            },
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _model,
+            decoration: const InputDecoration(labelText: 'モデル'),
+            items: const [
+              DropdownMenuItem(value: 'gemini-2.0-flash', child: Text('gemini-2.0-flash')),
+              DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
+              DropdownMenuItem(value: 'claude-opus-4-5-20251101', child: Text('claude-opus-4-5-20251101')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _model = value;
+              });
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _maxTokensController,
+            decoration: const InputDecoration(labelText: 'Claude max_tokens'),
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _promptController,
+            maxLines: 8,
+            decoration: const InputDecoration(labelText: 'プロンプト'),
+            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _outputController,
+            decoration: const InputDecoration(labelText: '保存ファイル'),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('台本生成'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.copy),
+                label: const Text('コピー'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.save),
+                label: const Text('保存'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class TitleGenerateForm extends StatefulWidget {
+  const TitleGenerateForm({super.key});
+
+  @override
+  State<TitleGenerateForm> createState() => _TitleGenerateFormState();
+}
+
+class _TitleGenerateFormState extends State<TitleGenerateForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _scriptPathController = TextEditingController();
+  final _countController = TextEditingController(text: '5');
+  final _instructionsController = TextEditingController();
+  String _provider = 'Gemini';
+  String _model = 'gemini-2.0-flash';
+
+  @override
+  void dispose() {
+    _scriptPathController.dispose();
+    _countController.dispose();
+    _instructionsController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: _formKey,
+      child: ListView(
+        children: [
+          Text(
+            '動画タイトル・説明作成',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _scriptPathController,
+            decoration: const InputDecoration(labelText: '台本ファイル（SRT/TXT）'),
+            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _provider,
+            decoration: const InputDecoration(labelText: '生成AI'),
+            items: const [
+              DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+              DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
+              DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _provider = value;
+              });
+            },
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _model,
+            decoration: const InputDecoration(labelText: 'モデル'),
+            items: const [
+              DropdownMenuItem(value: 'gemini-2.0-flash', child: Text('gemini-2.0-flash')),
+              DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
+              DropdownMenuItem(value: 'claude-opus-4-5-20251101', child: Text('claude-opus-4-5-20251101')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _model = value;
+              });
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _countController,
+            decoration: const InputDecoration(labelText: 'タイトル案の数'),
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _instructionsController,
+            maxLines: 4,
+            decoration: const InputDecoration(labelText: '追加指示（任意）'),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('タイトル生成'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.copy),
+                label: const Text('コピー'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class MaterialsGenerateForm extends StatefulWidget {
+  const MaterialsGenerateForm({super.key});
+
+  @override
+  State<MaterialsGenerateForm> createState() => _MaterialsGenerateFormState();
+}
+
+class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _modelController = TextEditingController(text: 'gemini-2.0-flash');
+  final _promptController = TextEditingController();
+  final _outputController = TextEditingController();
+
+  @override
+  void dispose() {
+    _modelController.dispose();
+    _promptController.dispose();
+    _outputController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: _formKey,
+      child: ListView(
+        children: [
+          Text(
+            '資料作成',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _modelController,
+            decoration: const InputDecoration(labelText: 'モデル名'),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _promptController,
+            maxLines: 6,
+            decoration: const InputDecoration(labelText: '画像生成プロンプト'),
+            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _outputController,
+            decoration: const InputDecoration(labelText: '保存フォルダ'),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.image),
+                label: const Text('画像生成'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.save),
+                label: const Text('保存'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VideoEditForm extends StatefulWidget {
+  const VideoEditForm({super.key});
+
+  @override
+  State<VideoEditForm> createState() => _VideoEditFormState();
+}
+
+class _VideoEditFormState extends State<VideoEditForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _inputVideoController = TextEditingController();
+  final _outputVideoController = TextEditingController();
+  final _overlayImageController = TextEditingController();
+  final _startController = TextEditingController(text: '00:00');
+  final _endController = TextEditingController(text: '00:10');
+  final _xController = TextEditingController(text: '100');
+  final _yController = TextEditingController(text: '200');
+  final _widthController = TextEditingController(text: '0');
+  final _heightController = TextEditingController(text: '0');
+  final _opacityController = TextEditingController(text: '1.0');
+  final List<String> _overlays = [];
+
+  @override
+  void dispose() {
+    _inputVideoController.dispose();
+    _outputVideoController.dispose();
+    _overlayImageController.dispose();
+    _startController.dispose();
+    _endController.dispose();
+    _xController.dispose();
+    _yController.dispose();
+    _widthController.dispose();
+    _heightController.dispose();
+    _opacityController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: _formKey,
+      child: ListView(
+        children: [
+          Text(
+            '動画編集（簡易オーバーレイ）',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _inputVideoController,
+            decoration: const InputDecoration(labelText: '入力動画（MP4）'),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _outputVideoController,
+            decoration: const InputDecoration(labelText: '出力動画'),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _overlayImageController,
+            decoration: const InputDecoration(labelText: 'オーバーレイ画像'),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              SizedBox(
+                width: 120,
+                child: TextFormField(
+                  controller: _startController,
+                  decoration: const InputDecoration(labelText: '開始'),
+                ),
+              ),
+              SizedBox(
+                width: 120,
+                child: TextFormField(
+                  controller: _endController,
+                  decoration: const InputDecoration(labelText: '終了'),
+                ),
+              ),
+              SizedBox(
+                width: 100,
+                child: TextFormField(
+                  controller: _xController,
+                  decoration: const InputDecoration(labelText: 'X'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              SizedBox(
+                width: 100,
+                child: TextFormField(
+                  controller: _yController,
+                  decoration: const InputDecoration(labelText: 'Y'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              SizedBox(
+                width: 100,
+                child: TextFormField(
+                  controller: _widthController,
+                  decoration: const InputDecoration(labelText: 'W'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              SizedBox(
+                width: 100,
+                child: TextFormField(
+                  controller: _heightController,
+                  decoration: const InputDecoration(labelText: 'H'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              SizedBox(
+                width: 120,
+                child: TextFormField(
+                  controller: _opacityController,
+                  decoration: const InputDecoration(labelText: '不透明度'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _overlays.add(
+                      '${_overlayImageController.text} '
+                      '${_startController.text}〜${_endController.text}',
+                    );
+                  });
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('オーバーレイ追加'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.upload_file),
+                label: const Text('JSONインポート'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.search),
+                label: const Text('SRT検索'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text('オーバーレイ一覧', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          ..._overlays.map((overlay) => ListTile(title: Text(overlay))),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: () {},
+            icon: const Icon(Icons.movie),
+            label: const Text('書き出し'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class DetailedEditForm extends StatefulWidget {
+  const DetailedEditForm({super.key});
+
+  @override
+  State<DetailedEditForm> createState() => _DetailedEditFormState();
+}
+
+class _DetailedEditFormState extends State<DetailedEditForm> {
+  final _projectNameController = TextEditingController(text: 'project.mmproj');
+  final _resolutionController = TextEditingController(text: '1080x1920');
+  final _fpsController = TextEditingController(text: '30');
+  bool _audioEnabled = true;
+
+  @override
+  void dispose() {
+    _projectNameController.dispose();
+    _resolutionController.dispose();
+    _fpsController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        Text(
+          '詳細動画編集',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _projectNameController,
+          decoration: const InputDecoration(labelText: 'プロジェクトファイル'),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            ElevatedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.create_new_folder),
+              label: const Text('新規'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.folder_open),
+              label: const Text('読み込み'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.save),
+              label: const Text('保存'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text('素材管理', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          children: [
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.add_photo_alternate),
+              label: const Text('素材追加'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.delete),
+              label: const Text('削除'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.link),
+              label: const Text('再リンク'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text('タイムライン', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          children: [
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.video_library),
+              label: const Text('メイン動画読込'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.cut),
+              label: const Text('クリップ分割'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.swap_horiz),
+              label: const Text('順序変更'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text('音声設定', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          value: _audioEnabled,
+          onChanged: (value) {
+            setState(() {
+              _audioEnabled = value;
+            });
+          },
+          title: const Text('動画音声 ON/OFF'),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            SizedBox(
+              width: 160,
+              child: TextFormField(
+                controller: _resolutionController,
+                decoration: const InputDecoration(labelText: '解像度'),
+              ),
+            ),
+            SizedBox(
+              width: 120,
+              child: TextFormField(
+                controller: _fpsController,
+                decoration: const InputDecoration(labelText: 'FPS'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton.icon(
+          onPressed: () {},
+          icon: const Icon(Icons.movie_creation),
+          label: const Text('書き出し'),
+        ),
+      ],
+    );
+  }
+}
+
+class SettingsForm extends StatefulWidget {
+  const SettingsForm({super.key});
+
+  @override
+  State<SettingsForm> createState() => _SettingsFormState();
+}
+
+class _SettingsFormState extends State<SettingsForm> {
+  final _geminiController = TextEditingController();
+  final _openAiController = TextEditingController();
+  final _claudeController = TextEditingController();
+
+  @override
+  void dispose() {
+    _geminiController.dispose();
+    _openAiController.dispose();
+    _claudeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        Text(
+          '設定',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _geminiController,
+          decoration: const InputDecoration(labelText: 'Gemini API キー'),
+          obscureText: true,
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _openAiController,
+          decoration: const InputDecoration(labelText: 'ChatGPT API キー'),
+          obscureText: true,
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _claudeController,
+          decoration: const InputDecoration(labelText: 'ClaudeCode API キー'),
+          obscureText: true,
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton.icon(
+          onPressed: () {},
+          icon: const Icon(Icons.save),
+          label: const Text('保存'),
+        ),
+      ],
+    );
+  }
 }
 
 class _VideoGenerateFormState extends State<VideoGenerateForm> {
