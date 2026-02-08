@@ -320,11 +320,11 @@ class _StudioShellState extends State<StudioShell> {
         _apiServerProcess = process;
         _clearApiServerError();
         process.stderr
-            .transform(utf8.decoder)
+            .transform(const Utf8Decoder(allowMalformed: true))
             .transform(const LineSplitter())
             .listen(_appendApiServerError);
         process.stdout
-            .transform(utf8.decoder)
+            .transform(const Utf8Decoder(allowMalformed: true))
             .transform(const LineSplitter())
             .listen((line) {
           if (line.contains('ERROR') || line.contains('Error')) {
