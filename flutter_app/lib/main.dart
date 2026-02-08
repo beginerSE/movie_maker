@@ -135,6 +135,47 @@ class _StudioShellState extends State<StudioShell> {
     '設定',
   ];
   int _selectedIndex = 0;
+  Process? _apiServerProcess;
+
+  @override
+  void initState() {
+    super.initState();
+    _startApiServer();
+  }
+
+  @override
+  void dispose() {
+    _apiServerProcess?.kill();
+    super.dispose();
+  }
+
+  Future<void> _startApiServer() async {
+    if (_apiServerProcess != null) {
+      return;
+    }
+    if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return;
+    }
+    final pythonExecutable = Platform.isWindows ? 'python' : 'python3';
+    try {
+      _apiServerProcess = await Process.start(
+        pythonExecutable,
+        [
+          '-m',
+          'uvicorn',
+          'backend.api_server:app',
+          '--host',
+          '0.0.0.0',
+          '--port',
+          '8000',
+        ],
+        workingDirectory: '..',
+        runInShell: true,
+      );
+    } catch (_) {
+      _apiServerProcess = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
