@@ -424,9 +424,19 @@ def write_srt(lines: List[Tuple[str, str]], out_srt: Path, per_line_secs: List[f
 def fetch_voicevox_speakers(base_url: str) -> List[Dict[str, Any]]:
     base_url = base_url.rstrip("/")
     url = f"{base_url}/speakers"
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(
+            "VOICEVOX サーバーに接続できません。起動しているかURLを確認してください。"
+        ) from exc
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            "VOICEVOX の /speakers から有効なJSONを取得できませんでした。"
+        ) from exc
 
 
 def resolve_voicevox_speaker_label(
@@ -514,8 +524,14 @@ def tts_with_voicevox(
         out_wav.parent.mkdir(parents=True, exist_ok=True)
         with out_wav.open("wb") as f:
             f.write(s_res.content)
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(
+            "VOICEVOX サーバーに接続できません。起動しているかURLを確認してください。"
+        ) from exc
+    except ValueError as exc:
+        raise RuntimeError("VOICEVOX の応答を解析できませんでした。") from exc
     except Exception as exc:
-        raise RuntimeError(f"VOICEVOX 合成に失敗しました (speaker_id={speaker_id}): {exc}") from exc
+        raise RuntimeError(f"VOICEVOX 合成に失敗しました (speaker_id={speaker_id})。") from exc
 
 
 class TkMoviePyLogger(ProgressBarLogger):
