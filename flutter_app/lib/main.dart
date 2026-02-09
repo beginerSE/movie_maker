@@ -774,15 +774,9 @@ class _StudioShellState extends State<StudioShell> {
                       destinations: _pages
                           .map(
                             (page) => NavigationRailDestination(
-                              icon: _buildNavDot(
-                                context,
-                                isSelected: false,
-                              ),
-                              selectedIcon: _buildNavDot(
-                                context,
-                                isSelected: true,
-                              ),
-                              label: Text(page),
+                              icon: const SizedBox.shrink(),
+                              selectedIcon: const SizedBox.shrink(),
+                              label: Text('○ $page'),
                             ),
                           )
                           .toList(),
@@ -818,29 +812,6 @@ class _StudioShellState extends State<StudioShell> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildNavDot(BuildContext context, {required bool isSelected}) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      width: _navDotSize,
-      height: _navDotSize,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: isSelected ? colorScheme.primary : Colors.white,
-        border: Border.all(
-          color: isSelected ? colorScheme.primary : const Color(0xFFD6DBE6),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.18),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
     );
   }
