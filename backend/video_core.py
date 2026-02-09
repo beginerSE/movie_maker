@@ -9,6 +9,7 @@ import wave
 from itertools import cycle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
 
 import numpy as np
 import requests
@@ -90,8 +91,15 @@ def normalize_voicevox_url(base_url: str) -> str:
     if not base_url:
         return DEFAULT_VOICEVOX_URL
     if not re.match(r"^https?://", base_url):
-        return f"http://{base_url}"
-    return base_url
+        base_url = f"http://{base_url}"
+    parsed = urlparse(base_url)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/speakers"):
+        path = path[: -len("/speakers")]
+    elif path.endswith("/speaker"):
+        path = path[: -len("/speaker")]
+    normalized = parsed._replace(path=path)
+    return urlunparse(normalized)
 
 
 def split_sentences_jp(text: str) -> List[str]:

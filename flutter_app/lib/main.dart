@@ -3356,8 +3356,13 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
         }
       } else {
         setState(() {
-          _voicevoxSpeakersError =
-              '取得に失敗しました (${response.statusCode})';
+          if (response.statusCode == 404) {
+            _voicevoxSpeakersError =
+                '取得に失敗しました (404)。APIサーバURL/VOICEVOX エンジンURLを確認してください。';
+          } else {
+            _voicevoxSpeakersError =
+                '取得に失敗しました (${response.statusCode})';
+          }
         });
       }
     } on TimeoutException {
