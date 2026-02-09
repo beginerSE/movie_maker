@@ -21,7 +21,7 @@ from moviepy import (
     concatenate_videoclips,
     concatenate_audioclips,
 )
-from moviepy.audio.AudioClip import CompositeAudioClip
+from moviepy.audio.AudioClip import CompositeAudioClip, AudioArrayClip
 from PIL import Image, ImageDraw, ImageFont
 from proglog import ProgressBarLogger
 
@@ -380,7 +380,13 @@ def image_to_clip_with_audio(
     bg_rgba = letterbox_fit(base, target_size).convert("RGBA")
 
     audio_full = AudioFileClip(str(audio_path))
-    total_dur = audio_full.duration
+    try:
+        total_dur = audio_full.duration or 0.0
+        fps_audio = 48000
+        snd = audio_full.to_soundarray(fps=fps_audio)
+        audio_mem = AudioArrayClip(snd, fps=fps_audio).with_duration(total_dur)
+    finally:
+        audio_full.close()
 
     sentences = split_sentences_jp(text) or [text]
     durations = allocate_durations_by_length(sentences, total_dur)
@@ -408,7 +414,9 @@ def image_to_clip_with_audio(
         sentence_clips.append(c)
 
     line_visual = concatenate_videoclips(sentence_clips, method="compose")
-    line_visual.audio = audio_full
+    for c in sentence_clips:
+        c.close()
+    line_visual.audio = audio_mem
     return line_visual
 
 
@@ -717,7 +725,7 @@ def generate_video(
         img_cycle = cycle([Path(p) for p in image_paths])
 
         # ===== TTS ===== (0%〜40%)
-        audio_paths = []
+        audio_paths: List[Path] = []
         for i, (speaker, text) in enumerate(lines, 1):
             log_fn(f"[TTS] {i}/{total_lines} 生成中... (話者: {speaker})")
 
@@ -806,13 +814,19 @@ def generate_video(
             try:
                 log_fn("動画全体にBGMをループ適用中...")
                 bgm_clip = AudioFileClip(bgm_path)
+                try:
+                    fps_audio = 48000
+                    bgm_snd = bgm_clip.to_soundarray(fps=fps_audio)
+                    bgm_mem = AudioArrayClip(bgm_snd, fps=fps_audio).with_duration(bgm_clip.duration)
+                finally:
+                    bgm_clip.close()
 
-                bgm_duration = bgm_clip.duration
+                bgm_duration = bgm_mem.duration
                 if not bgm_duration or bgm_duration <= 0:
                     raise RuntimeError("BGM の長さが 0 秒です。")
 
                 loops = int(final.duration // bgm_duration) + 1
-                bgm_long = concatenate_audioclips([bgm_clip] * loops)
+                bgm_long = concatenate_audioclips([bgm_mem] * loops)
                 bgm_looped = bgm_long.with_duration(final.duration)
 
                 gain = 10 ** (bgm_gain_db / 20.0)
