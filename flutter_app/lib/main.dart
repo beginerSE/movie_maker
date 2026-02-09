@@ -3357,8 +3357,13 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       } else {
         setState(() {
           if (response.statusCode == 404) {
+            final apiBase = ApiConfig.baseUrl.value.trim();
+            final engineUrl = baseUrl;
             _voicevoxSpeakersError =
-                '取得に失敗しました (404)。APIサーバURL/VOICEVOX エンジンURLを確認してください。';
+                '取得に失敗しました (404)。APIサーバURLとVOICEVOX エンジンURLを確認してください。\n'
+                'APIサーバURL例: http://127.0.0.1:8000\n'
+                '現在のAPIサーバURL: $apiBase\n'
+                'VOICEVOX エンジンURL: $engineUrl';
           } else {
             _voicevoxSpeakersError =
                 '取得に失敗しました (${response.statusCode})';
