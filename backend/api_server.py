@@ -555,27 +555,22 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
 
 
 @app.get("/voicevox/speakers", response_model=VoicevoxSpeakersResponse)
-async def list_voicevox_speakers(
-    base_url: str = "http://127.0.0.1:50021",
-) -> VoicevoxSpeakersResponse:
+async def list_voicevox_speakers(base_url: str) -> VoicevoxSpeakersResponse:
+    base_url = (base_url or "").strip()
+    if not base_url:
+        raise HTTPException(status_code=400, detail="base_url is required")
+
     try:
-        speakers = fetch_voicevox_speakers(base_url)
+        raw = fetch_voicevox_speakers(base_url)
+        names: List[str] = []
+        for sp in raw:
+            name = (sp.get("name") or "").strip()
+            if name:
+                names.append(name)
+        speakers = list(dict.fromkeys(names))
+        return VoicevoxSpeakersResponse(speakers=speakers)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    labels: List[str] = []
-    seen = set()
-    for sp in speakers:
-        name = sp.get("name")
-        if not isinstance(name, str):
-            continue
-        name = name.strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        labels.append(name)
-
-    return VoicevoxSpeakersResponse(speakers=labels)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
