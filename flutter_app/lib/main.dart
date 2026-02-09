@@ -978,6 +978,13 @@ class ScriptGenerateForm extends StatefulWidget {
   State<ScriptGenerateForm> createState() => _ScriptGenerateFormState();
 }
 
+class _TemplateDialogResult {
+  const _TemplateDialogResult(this.name, this.content);
+
+  final String name;
+  final String content;
+}
+
 class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   final _formKey = GlobalKey<FormState>();
   final _promptController = TextEditingController();
@@ -991,12 +998,15 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   String _claudeModel = 'claude-opus-4-5-20251101';
   String _template = '（テンプレなし）';
   bool _isSubmitting = false;
-  final List<String> _templates = [
-    '（テンプレなし）',
-    'ニュース原稿',
-    '要約',
-    'YouTube Shorts',
-  ];
+  static const Map<String, String> _defaultTemplates = {
+    '（テンプレなし）': '',
+    'ニュース原稿': '',
+    '要約': '',
+    'YouTube Shorts': '',
+  };
+  late Map<String, String> _templateContents =
+      Map<String, String>.from(_defaultTemplates);
+  late List<String> _templates = _defaultTemplates.keys.toList();
 
   @override
   void initState() {
@@ -1016,13 +1026,20 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     final chatGptModel = await _persistence.readString('chatgpt_model');
     final claudeModel = await _persistence.readString('claude_model');
     final template = await _persistence.readString('template');
+    final templateContents = await _readTemplates();
+    final templateKeys = templateContents.keys.toList();
     if (!mounted) return;
     setState(() {
       _provider = provider ?? _provider;
       _geminiModel = geminiModel ?? _geminiModel;
       _chatGptModel = chatGptModel ?? _chatGptModel;
       _claudeModel = claudeModel ?? _claudeModel;
+      _templateContents = templateContents;
+      _templates = templateKeys;
       _template = template ?? _template;
+      if (!_templates.contains(_template) && _templates.isNotEmpty) {
+        _template = _templates.first;
+      }
     });
   }
 
@@ -1047,76 +1064,30 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 16),
-          DropdownButtonFormField<String>(
-            value: _provider,
-            decoration: const InputDecoration(labelText: '生成AI'),
-            items: const [
-              DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
-              DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
-              DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _provider = value;
-              });
-              _persistence.setString('provider', value);
-            },
-          ),
-          const SizedBox(height: 12),
-          if (_provider == 'Gemini')
-            DropdownButtonFormField<String>(
-              value: _geminiModel,
-              decoration: const InputDecoration(labelText: 'Gemini モデル'),
-              items: const [
-                DropdownMenuItem(value: 'gemini-2.0-flash', child: Text('gemini-2.0-flash')),
-                DropdownMenuItem(value: 'gemini-1.5-flash', child: Text('gemini-1.5-flash')),
-                DropdownMenuItem(value: 'gemini-1.5-pro', child: Text('gemini-1.5-pro')),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  _geminiModel = value;
-                });
-                _persistence.setString('gemini_model', value);
-              },
-            ),
-          if (_provider == 'ChatGPT')
-            DropdownButtonFormField<String>(
-              value: _chatGptModel,
-              decoration: const InputDecoration(labelText: 'ChatGPT モデル'),
-              items: const [
-                DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
-                DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
-                DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
-                DropdownMenuItem(value: 'gpt-4o', child: Text('gpt-4o')),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  _chatGptModel = value;
-                });
-                _persistence.setString('chatgpt_model', value);
-              },
-            ),
-          if (_provider == 'ClaudeCode')
-            DropdownButtonFormField<String>(
-              value: _claudeModel,
-              decoration: const InputDecoration(labelText: 'ClaudeCode モデル'),
-              items: const [
-                DropdownMenuItem(
-                  value: 'claude-opus-4-5-20251101',
-                  child: Text('claude-opus-4-5-20251101'),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _provider,
+                  decoration: const InputDecoration(labelText: '生成AI'),
+                  items: const [
+                    DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+                    DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
+                    DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _provider = value;
+                    });
+                    _persistence.setString('provider', value);
+                  },
                 ),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  _claudeModel = value;
-                });
-                _persistence.setString('claude_model', value);
-              },
-            ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: _buildModelDropdown()),
+            ],
+          ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _maxTokensController,
@@ -1137,6 +1108,28 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
               });
               _persistence.setString('template', value);
             },
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _applySelectedTemplate,
+                icon: const Icon(Icons.download),
+                label: const Text('呼び出し'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _openSaveTemplateDialog,
+                icon: const Icon(Icons.save),
+                label: const Text('保存'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _openEditTemplateDialog,
+                icon: const Icon(Icons.edit),
+                label: const Text('編集'),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           TextFormField(
@@ -1194,6 +1187,242 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
         ],
       ),
     );
+  }
+
+  Widget _buildModelDropdown() {
+    switch (_provider) {
+      case 'ChatGPT':
+        return DropdownButtonFormField<String>(
+          value: _chatGptModel,
+          decoration: const InputDecoration(labelText: 'モデル'),
+          items: const [
+            DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
+            DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
+            DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
+            DropdownMenuItem(value: 'gpt-4o', child: Text('gpt-4o')),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _chatGptModel = value;
+            });
+            _persistence.setString('chatgpt_model', value);
+          },
+        );
+      case 'ClaudeCode':
+        return DropdownButtonFormField<String>(
+          value: _claudeModel,
+          decoration: const InputDecoration(labelText: 'モデル'),
+          items: const [
+            DropdownMenuItem(
+              value: 'claude-opus-4-5-20251101',
+              child: Text('claude-opus-4-5-20251101'),
+            ),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _claudeModel = value;
+            });
+            _persistence.setString('claude_model', value);
+          },
+        );
+      default:
+        return DropdownButtonFormField<String>(
+          value: _geminiModel,
+          decoration: const InputDecoration(labelText: 'モデル'),
+          items: const [
+            DropdownMenuItem(value: 'gemini-2.0-flash', child: Text('gemini-2.0-flash')),
+            DropdownMenuItem(value: 'gemini-1.5-flash', child: Text('gemini-1.5-flash')),
+            DropdownMenuItem(value: 'gemini-1.5-pro', child: Text('gemini-1.5-pro')),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _geminiModel = value;
+            });
+            _persistence.setString('gemini_model', value);
+          },
+        );
+    }
+  }
+
+  Future<Map<String, String>> _readTemplates() async {
+    final stored = await _persistence.readString('templates');
+    if (stored == null || stored.isEmpty) {
+      return Map<String, String>.from(_defaultTemplates);
+    }
+    try {
+      final decoded = jsonDecode(stored);
+      if (decoded is List) {
+        final Map<String, String> result =
+            Map<String, String>.from(_defaultTemplates);
+        for (final entry in decoded) {
+          if (entry is Map<String, dynamic>) {
+            final name = entry['name'] as String?;
+            final content = entry['content'] as String?;
+            if (name != null) {
+              result[name] = content ?? '';
+            }
+          }
+        }
+        return result;
+      }
+    } catch (_) {}
+    return Map<String, String>.from(_defaultTemplates);
+  }
+
+  Future<void> _saveTemplates() async {
+    final data = _templateContents.entries
+        .map((entry) => {'name': entry.key, 'content': entry.value})
+        .toList();
+    await _persistence.setString('templates', jsonEncode(data));
+  }
+
+  void _applySelectedTemplate() {
+    if (_template == '（テンプレなし）') {
+      _showSnackBar('テンプレートが選択されていません。');
+      return;
+    }
+    final content = _templateContents[_template];
+    if (content == null || content.trim().isEmpty) {
+      _showSnackBar('テンプレート内容がありません。');
+      return;
+    }
+    _promptController.text = content;
+    _showSnackBar('テンプレートを呼び出しました。');
+  }
+
+  Future<void> _openSaveTemplateDialog() async {
+    final nameController = TextEditingController(text: _template);
+    final contentController = TextEditingController(text: _promptController.text);
+    final saved = await showDialog<_TemplateDialogResult>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('テンプレート保存'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(labelText: 'テンプレート名'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: contentController,
+                  maxLines: 8,
+                  decoration: const InputDecoration(labelText: 'テンプレート内容'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('キャンセル'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(
+                  _TemplateDialogResult(
+                    nameController.text.trim(),
+                    contentController.text,
+                  ),
+                );
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    );
+    nameController.dispose();
+    contentController.dispose();
+    if (saved == null) return;
+    if (saved.name.isEmpty || saved.name == '（テンプレなし）') {
+      _showSnackBar('テンプレート名を入力してください。');
+      return;
+    }
+    setState(() {
+      _templateContents[saved.name] = saved.content;
+      _templates = _templateContents.keys.toList();
+      _template = saved.name;
+    });
+    await _saveTemplates();
+    _persistence.setString('template', saved.name);
+    _showSnackBar('テンプレートを保存しました。');
+  }
+
+  Future<void> _openEditTemplateDialog() async {
+    if (_template == '（テンプレなし）') {
+      _showSnackBar('編集するテンプレートを選択してください。');
+      return;
+    }
+    final currentContent = _templateContents[_template] ?? '';
+    final nameController = TextEditingController(text: _template);
+    final contentController = TextEditingController(text: currentContent);
+    final updated = await showDialog<_TemplateDialogResult>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('テンプレート編集'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(labelText: 'テンプレート名'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: contentController,
+                  maxLines: 8,
+                  decoration: const InputDecoration(labelText: 'テンプレート内容'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('キャンセル'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(
+                  _TemplateDialogResult(
+                    nameController.text.trim(),
+                    contentController.text,
+                  ),
+                );
+              },
+              child: const Text('更新'),
+            ),
+          ],
+        );
+      },
+    );
+    nameController.dispose();
+    contentController.dispose();
+    if (updated == null) return;
+    if (updated.name.isEmpty || updated.name == '（テンプレなし）') {
+      _showSnackBar('テンプレート名を入力してください。');
+      return;
+    }
+    setState(() {
+      if (updated.name != _template) {
+        _templateContents.remove(_template);
+      }
+      _templateContents[updated.name] = updated.content;
+      _templates = _templateContents.keys.toList();
+      _template = updated.name;
+    });
+    await _saveTemplates();
+    _persistence.setString('template', updated.name);
+    _showSnackBar('テンプレートを更新しました。');
   }
 
   void _showSnackBar(String message) {
@@ -1404,76 +1633,30 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
             validator: (value) => value == null || value.isEmpty ? '必須です' : null,
           ),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _provider,
-            decoration: const InputDecoration(labelText: '生成AI'),
-            items: const [
-              DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
-              DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
-              DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _provider = value;
-              });
-              _persistence.setString('provider', value);
-            },
-          ),
-          const SizedBox(height: 12),
-          if (_provider == 'Gemini')
-            DropdownButtonFormField<String>(
-              value: _geminiModel,
-              decoration: const InputDecoration(labelText: 'Gemini モデル'),
-              items: const [
-                DropdownMenuItem(value: 'gemini-2.0-flash', child: Text('gemini-2.0-flash')),
-                DropdownMenuItem(value: 'gemini-1.5-flash', child: Text('gemini-1.5-flash')),
-                DropdownMenuItem(value: 'gemini-1.5-pro', child: Text('gemini-1.5-pro')),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  _geminiModel = value;
-                });
-                _persistence.setString('gemini_model', value);
-              },
-            ),
-          if (_provider == 'ChatGPT')
-            DropdownButtonFormField<String>(
-              value: _chatGptModel,
-              decoration: const InputDecoration(labelText: 'ChatGPT モデル'),
-              items: const [
-                DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
-                DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
-                DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
-                DropdownMenuItem(value: 'gpt-4o', child: Text('gpt-4o')),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  _chatGptModel = value;
-                });
-                _persistence.setString('chatgpt_model', value);
-              },
-            ),
-          if (_provider == 'ClaudeCode')
-            DropdownButtonFormField<String>(
-              value: _claudeModel,
-              decoration: const InputDecoration(labelText: 'ClaudeCode モデル'),
-              items: const [
-                DropdownMenuItem(
-                  value: 'claude-opus-4-5-20251101',
-                  child: Text('claude-opus-4-5-20251101'),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _provider,
+                  decoration: const InputDecoration(labelText: '生成AI'),
+                  items: const [
+                    DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+                    DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
+                    DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _provider = value;
+                    });
+                    _persistence.setString('provider', value);
+                  },
                 ),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  _claudeModel = value;
-                });
-                _persistence.setString('claude_model', value);
-              },
-            ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: _buildModelDropdown()),
+            ],
+          ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _countController,
@@ -1513,6 +1696,64 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
         ],
       ),
     );
+  }
+
+  Widget _buildModelDropdown() {
+    switch (_provider) {
+      case 'ChatGPT':
+        return DropdownButtonFormField<String>(
+          value: _chatGptModel,
+          decoration: const InputDecoration(labelText: 'モデル'),
+          items: const [
+            DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
+            DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
+            DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
+            DropdownMenuItem(value: 'gpt-4o', child: Text('gpt-4o')),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _chatGptModel = value;
+            });
+            _persistence.setString('chatgpt_model', value);
+          },
+        );
+      case 'ClaudeCode':
+        return DropdownButtonFormField<String>(
+          value: _claudeModel,
+          decoration: const InputDecoration(labelText: 'モデル'),
+          items: const [
+            DropdownMenuItem(
+              value: 'claude-opus-4-5-20251101',
+              child: Text('claude-opus-4-5-20251101'),
+            ),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _claudeModel = value;
+            });
+            _persistence.setString('claude_model', value);
+          },
+        );
+      default:
+        return DropdownButtonFormField<String>(
+          value: _geminiModel,
+          decoration: const InputDecoration(labelText: 'モデル'),
+          items: const [
+            DropdownMenuItem(value: 'gemini-2.0-flash', child: Text('gemini-2.0-flash')),
+            DropdownMenuItem(value: 'gemini-1.5-flash', child: Text('gemini-1.5-flash')),
+            DropdownMenuItem(value: 'gemini-1.5-pro', child: Text('gemini-1.5-pro')),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _geminiModel = value;
+            });
+            _persistence.setString('gemini_model', value);
+          },
+        );
+    }
   }
 
   void _showSnackBar(String message) {
