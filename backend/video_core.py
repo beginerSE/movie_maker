@@ -85,6 +85,15 @@ SPEAKER_ALIASES = {
 SPEAKER_KEYS = list(SPEAKER_ALIASES.keys())
 
 
+def normalize_voicevox_url(base_url: str) -> str:
+    base_url = (base_url or "").strip()
+    if not base_url:
+        return DEFAULT_VOICEVOX_URL
+    if not re.match(r"^https?://", base_url):
+        return f"http://{base_url}"
+    return base_url
+
+
 def split_sentences_jp(text: str) -> List[str]:
     """「。」「．」「！」「？」などの直後で文を分割（句点は残す）"""
     parts = re.split(r"(?<=[。．！？?!])", text)
@@ -422,7 +431,7 @@ def write_srt(lines: List[Tuple[str, str]], out_srt: Path, per_line_secs: List[f
 
 
 def fetch_voicevox_speakers(base_url: str) -> List[Dict[str, Any]]:
-    base_url = base_url.rstrip("/")
+    base_url = normalize_voicevox_url(base_url).rstrip("/")
     url = f"{base_url}/speakers"
     try:
         resp = requests.get(url, timeout=10)
@@ -451,7 +460,18 @@ def resolve_voicevox_speaker_label(
         raise RuntimeError("VOICEVOX 話者ラベルが空です。")
 
     try:
-        return int(label)
+        numeric_id = int(label)
+        style_ids = {
+            int(style.get("id"))
+            for sp in speakers
+            for style in sp.get("styles", [])
+            if isinstance(style.get("id"), (int, float, str))
+        }
+        if numeric_id in style_ids:
+            return numeric_id
+        if default_id is not None:
+            return default_id
+        raise RuntimeError(f"VOICEVOX 話者ID '{numeric_id}' が /speakers に存在しません。")
     except ValueError:
         pass
 
@@ -486,6 +506,19 @@ def resolve_voicevox_speaker_label(
     return int(styles[0].get("id"))
 
 
+def collect_voicevox_style_ids(speakers: List[Dict[str, Any]]) -> List[int]:
+    ids: List[int] = []
+    for sp in speakers:
+        for style in sp.get("styles", []):
+            try:
+                style_id = int(style.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if style_id not in ids:
+                ids.append(style_id)
+    return ids
+
+
 def tts_with_voicevox(
     text: str,
     speaker_id: int,
@@ -493,7 +526,7 @@ def tts_with_voicevox(
     base_url: str = DEFAULT_VOICEVOX_URL,
     speed_scale: float = DEFAULT_VV_SPEED,
 ) -> None:
-    base_url = base_url.rstrip("/")
+    base_url = normalize_voicevox_url(base_url).rstrip("/")
     audio_query_url = f"{base_url}/audio_query"
     synthesis_url = f"{base_url}/synthesis"
 
@@ -620,6 +653,8 @@ def generate_video(
         output_dir_path.mkdir(parents=True, exist_ok=True)
 
         engine = (tts_engine or "Gemini").strip().lower()
+        vv_base_url = normalize_voicevox_url(vv_base_url)
+        vv_mode_normalized = (vv_mode or "rotation").strip().lower()
         log_fn(f"TTS エンジン: {tts_engine}")
 
         client = None
@@ -637,14 +672,21 @@ def generate_video(
         else:
             raise RuntimeError(f"サポートされていない TTS エンジンです: {tts_engine}")
 
-        vv_mode_int = "rotation" if vv_mode == "rotation" else "two_person"
+        vv_mode_int = "rotation" if vv_mode_normalized == "rotation" else "two_person"
         vv_rotation_ids: List[int] = DEFAULT_VV_ROTATION
 
         if engine == "voicevox":
+            available_style_ids = collect_voicevox_style_ids(vv_speakers)
+            if available_style_ids:
+                vv_rotation_ids = available_style_ids[:2]
             if vv_rotation_labels:
                 resolved_ids = []
                 for lbl in vv_rotation_labels:
-                    sid = resolve_voicevox_speaker_label(lbl, vv_speakers, None)
+                    sid = resolve_voicevox_speaker_label(
+                        lbl,
+                        vv_speakers,
+                        vv_rotation_ids[0] if vv_rotation_ids else None,
+                    )
                     resolved_ids.append(sid)
                 if resolved_ids:
                     vv_rotation_ids = resolved_ids
@@ -654,6 +696,9 @@ def generate_video(
                 vv_analyst_label,
                 vv_speakers,
                 vv_rotation_ids[1] if len(vv_rotation_ids) > 1 else vv_rotation_ids[0],
+            )
+            log_fn(
+                f"VOICEVOX 話者ID: rotation={vv_rotation_ids} caster={vv_caster_id} analyst={vv_analyst_id}"
             )
         else:
             vv_caster_id = vv_analyst_id = vv_rotation_ids[0]
