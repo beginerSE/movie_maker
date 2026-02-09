@@ -776,7 +776,7 @@ class _StudioShellState extends State<StudioShell> {
                             (page) => NavigationRailDestination(
                               icon: const SizedBox.shrink(),
                               selectedIcon: const SizedBox.shrink(),
-                              label: Text('○ $page'),
+                              label: Text(page),
                             ),
                           )
                           .toList(),
