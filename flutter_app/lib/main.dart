@@ -191,7 +191,7 @@ class StudioShell extends StatefulWidget {
 class _StudioShellState extends State<StudioShell> {
   final List<String> _pages = const [
     '台本生成',
-    '○ 動画作成',
+    '動画作成',
     '動画タイトル・説明',
     'サムネイル作成',
     'ポンチ絵作成',
