@@ -174,6 +174,7 @@ class _StudioShellState extends State<StudioShell> {
   Directory? _apiServerRoot;
   int _apiServerPort = 8000;
   final ValueNotifier<String?> _latestJobId = ValueNotifier<String?>(null);
+  final ValueNotifier<bool> _videoJobInProgress = ValueNotifier<bool>(false);
   static const double _navDotSize = 10;
 
   @override
@@ -186,6 +187,7 @@ class _StudioShellState extends State<StudioShell> {
   void dispose() {
     _apiServerProcess?.kill();
     _latestJobId.dispose();
+    _videoJobInProgress.dispose();
     super.dispose();
   }
 
@@ -807,6 +809,7 @@ class _StudioShellState extends State<StudioShell> {
                       child: LogPanel(
                         pageName: _pages[_selectedIndex],
                         latestJobId: _latestJobId,
+                        jobInProgress: _videoJobInProgress,
                       ),
                     ),
                   ),
@@ -851,6 +854,7 @@ class _StudioShellState extends State<StudioShell> {
       case 1:
         return VideoGenerateForm(
           checkApiHealth: _checkApiHealthAndUpdate,
+          jobInProgress: _videoJobInProgress,
           onJobSubmitted: (jobId) {
             _latestJobId.value = jobId;
           },
@@ -901,10 +905,12 @@ class VideoGenerateForm extends StatefulWidget {
   const VideoGenerateForm({
     super.key,
     required this.checkApiHealth,
+    required this.jobInProgress,
     this.onJobSubmitted,
   });
 
   final ApiHealthCheck checkApiHealth;
+  final ValueNotifier<bool> jobInProgress;
   final ValueChanged<String?>? onJobSubmitted;
 
   @override
@@ -3604,16 +3610,22 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             keyboardType: TextInputType.number,
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              ElevatedButton.icon(
-                onPressed: _isSubmitting ? null : _submitJob,
-                icon: const Icon(Icons.play_arrow),
-                label: Text(_isSubmitting ? '送信中...' : '動画を生成する'),
-              ),
-              const SizedBox(width: 16),
-              Expanded(child: Text('状態: $_statusMessage')),
-            ],
+          ValueListenableBuilder<bool>(
+            valueListenable: widget.jobInProgress,
+            builder: (context, jobInProgress, _) {
+              final isBusy = _isSubmitting || jobInProgress;
+              return Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: isBusy ? null : _submitJob,
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text(isBusy ? '送信中...' : '動画を生成する'),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(child: Text('状態: $_statusMessage')),
+                ],
+              );
+            },
           ),
           if (_jobId != null) ...[
             const SizedBox(height: 12),
@@ -3633,6 +3645,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _isSubmitting = true;
       _statusMessage = 'Checking API...';
     });
+    widget.jobInProgress.value = true;
 
     final isHealthy = await widget.checkApiHealth();
     if (!isHealthy) {
@@ -3641,6 +3654,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             'Error: API サーバーに接続できません。バックエンドURLを確認するか、サーバーを起動してください。';
         _isSubmitting = false;
       });
+      widget.jobInProgress.value = false;
       return;
     }
 
@@ -3708,25 +3722,35 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final jobId = data['job_id'] as String?;
-        setState(() {
-          _jobId = jobId;
-          _statusMessage = 'Submitted';
-        });
-        widget.onJobSubmitted?.call(jobId);
+        if (jobId == null || jobId.isEmpty) {
+          setState(() {
+            _statusMessage = 'Error: job_id が取得できませんでした。';
+          });
+          widget.jobInProgress.value = false;
+        } else {
+          setState(() {
+            _jobId = jobId;
+            _statusMessage = 'Submitted';
+          });
+          widget.onJobSubmitted?.call(jobId);
+        }
       } else {
         final responseBody = response.body.isEmpty ? '' : ' ${response.body}';
         setState(() {
           _statusMessage = 'Error: ${response.statusCode}$responseBody';
         });
+        widget.jobInProgress.value = false;
       }
     } on TimeoutException {
       setState(() {
         _statusMessage = 'Error: request timed out (30s)';
       });
+      widget.jobInProgress.value = false;
     } catch (error) {
       setState(() {
         _statusMessage = 'Error: $error';
       });
+      widget.jobInProgress.value = false;
     } finally {
       setState(() {
         _isSubmitting = false;
@@ -3741,10 +3765,12 @@ class LogPanel extends StatefulWidget {
     super.key,
     required this.pageName,
     this.latestJobId,
+    this.jobInProgress,
   });
 
   final String pageName;
   final ValueListenable<String?>? latestJobId;
+  final ValueNotifier<bool>? jobInProgress;
 
   @override
   State<LogPanel> createState() => _LogPanelState();
@@ -3898,6 +3924,7 @@ class _LogPanelState extends State<LogPanel> {
       _eta = null;
       _channel = channel;
     });
+    _setJobInProgress(true);
     _addLog('Connecting to $jobId ...');
 
     _subscription = channel.stream.listen(
@@ -3906,9 +3933,11 @@ class _LogPanelState extends State<LogPanel> {
       },
       onError: (error) {
         _addLog('WebSocket error: $error', level: _LogLevel.error);
+        _setJobInProgress(false);
       },
       onDone: () {
         _addLog('WebSocket closed', level: _LogLevel.warning);
+        _setJobInProgress(false);
       },
     );
   }
@@ -3949,15 +3978,23 @@ class _LogPanelState extends State<LogPanel> {
         return;
       case 'error':
         _addLog('エラー: ${payload['message']}', level: _LogLevel.error);
+        _setJobInProgress(false);
         return;
       case 'completed':
         _addLog('完了: ${jsonEncode(payload['result'])}', level: _LogLevel.success);
+        _setJobInProgress(false);
         return;
       case 'log':
       default:
         _addLog('${payload['message']}');
         return;
     }
+  }
+
+  void _setJobInProgress(bool value) {
+    final notifier = widget.jobInProgress;
+    if (notifier == null || notifier.value == value) return;
+    notifier.value = value;
   }
 
   void _addLog(String message, { _LogLevel level = _LogLevel.info }) {
