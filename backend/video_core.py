@@ -413,7 +413,7 @@ def image_to_clip_with_audio(
         c = ImageClip(frame_np, duration=dur)
         sentence_clips.append(c)
 
-    line_visual = concatenate_videoclips(sentence_clips, method="compose")
+    line_visual = concatenate_videoclips(sentence_clips, method="chain")
     for c in sentence_clips:
         c.close()
     line_visual.audio = audio_mem
@@ -806,7 +806,7 @@ def generate_video(
             update_progress(0.6 + 0.2 * i / total_lines)
 
         log_fn("クリップの連結中...")
-        final = concatenate_videoclips(clips, method="compose")
+        final = concatenate_videoclips(clips, method="chain")
         update_progress(0.8)
 
         # ===== BGM を動画全体にループ適用 =====
