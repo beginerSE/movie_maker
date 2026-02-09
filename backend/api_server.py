@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import logging
 import mimetypes
@@ -570,9 +571,30 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=1008)
         return
     await websocket.accept()
+    subscriber = manager.subscribe(job_id)
+    if subscriber is None:
+        await websocket.close(code=1008)
+        return
     try:
+        for message in job.logs:
+            await websocket.send_json({"type": "log", "message": message, "ts": job.updated_at})
+        if job.progress > 0.0 or job.eta_seconds is not None:
+            await websocket.send_json(
+                {
+                    "type": "progress",
+                    "progress": job.progress,
+                    "eta_seconds": job.eta_seconds,
+                    "ts": job.updated_at,
+                }
+            )
+        if job.status == "error" and job.error:
+            await websocket.send_json({"type": "error", "message": job.error, "ts": job.updated_at})
+        if job.status == "completed" and job.result:
+            await websocket.send_json({"type": "completed", "result": job.result, "ts": job.updated_at})
         while True:
-            event = job.log_queue.get()
+            event = await asyncio.to_thread(subscriber.get)
             await websocket.send_json(event)
     except WebSocketDisconnect:
         return
+    finally:
+        manager.unsubscribe(job_id, subscriber)
