@@ -11,7 +11,8 @@ import time
 import traceback
 from typing import Any, List, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
@@ -53,6 +54,42 @@ if not logger.handlers:
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
     logger.setLevel(logging.INFO)
+
+
+@app.middleware("http")
+async def log_request_errors(request: Request, call_next) -> Response:
+    try:
+        response = await call_next(request)
+    except HTTPException as exc:
+        logger.warning(
+            "HTTP error on %s %s: %s",
+            request.method,
+            request.url.path,
+            exc.detail,
+        )
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Unhandled error on %s %s",
+            request.method,
+            request.url.path,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Internal Server Error",
+                "path": request.url.path,
+                "error": str(exc),
+            },
+        )
+    if response.status_code >= 500:
+        logger.error(
+            "Server error response on %s %s: status=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+        )
+    return response
 
 
 def _normalize_engine(value: str) -> str:
