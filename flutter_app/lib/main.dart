@@ -7,8 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'config/input_persistence.dart';
 
 void main() {
   runApp(const MovieMakerApp());
@@ -155,7 +155,7 @@ class StudioShell extends StatefulWidget {
 class _StudioShellState extends State<StudioShell> {
   final List<String> _pages = const [
     '台本生成',
-    '動画生成',
+    '○ 動画作成',
     '動画タイトル・説明',
     'サムネイル作成',
     'ポンチ絵作成',
@@ -929,6 +929,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   final _outputController = TextEditingController(text: 'dialogue_input.txt');
   final _maxTokensController = TextEditingController(text: '20000');
   final _outputTextController = TextEditingController();
+  late final InputPersistence _persistence;
   String _provider = 'Gemini';
   String _geminiModel = 'gemini-2.0-flash';
   String _chatGptModel = 'gpt-4.1-mini';
@@ -943,11 +944,39 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _persistence = InputPersistence('script_generate.');
+    _persistence.registerController(_promptController, 'prompt');
+    _persistence.registerController(_outputController, 'output');
+    _persistence.registerController(_maxTokensController, 'max_tokens');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+    final provider = await _persistence.readString('provider');
+    final geminiModel = await _persistence.readString('gemini_model');
+    final chatGptModel = await _persistence.readString('chatgpt_model');
+    final claudeModel = await _persistence.readString('claude_model');
+    final template = await _persistence.readString('template');
+    if (!mounted) return;
+    setState(() {
+      _provider = provider ?? _provider;
+      _geminiModel = geminiModel ?? _geminiModel;
+      _chatGptModel = chatGptModel ?? _chatGptModel;
+      _claudeModel = claudeModel ?? _claudeModel;
+      _template = template ?? _template;
+    });
+  }
+
+  @override
   void dispose() {
     _promptController.dispose();
     _outputController.dispose();
     _maxTokensController.dispose();
     _outputTextController.dispose();
+    _persistence.dispose();
     super.dispose();
   }
 
@@ -975,6 +1004,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
               setState(() {
                 _provider = value;
               });
+              _persistence.setString('provider', value);
             },
           ),
           const SizedBox(height: 12),
@@ -992,6 +1022,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                 setState(() {
                   _geminiModel = value;
                 });
+                _persistence.setString('gemini_model', value);
               },
             ),
           if (_provider == 'ChatGPT')
@@ -1009,6 +1040,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                 setState(() {
                   _chatGptModel = value;
                 });
+                _persistence.setString('chatgpt_model', value);
               },
             ),
           if (_provider == 'ClaudeCode')
@@ -1026,6 +1058,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                 setState(() {
                   _claudeModel = value;
                 });
+                _persistence.setString('claude_model', value);
               },
             ),
           const SizedBox(height: 12),
@@ -1046,6 +1079,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
               setState(() {
                 _template = value;
               });
+              _persistence.setString('template', value);
             },
           ),
           const SizedBox(height: 12),
@@ -1245,6 +1279,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   final _countController = TextEditingController(text: '5');
   final _instructionsController = TextEditingController();
   final _outputController = TextEditingController();
+  late final InputPersistence _persistence;
   String _provider = 'Gemini';
   String _geminiModel = 'gemini-2.0-flash';
   String _chatGptModel = 'gpt-4.1-mini';
@@ -1252,11 +1287,37 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   bool _isSubmitting = false;
 
   @override
+  void initState() {
+    super.initState();
+    _persistence = InputPersistence('title_generate.');
+    _persistence.registerController(_scriptPathController, 'script_path');
+    _persistence.registerController(_countController, 'count');
+    _persistence.registerController(_instructionsController, 'instructions');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+    final provider = await _persistence.readString('provider');
+    final geminiModel = await _persistence.readString('gemini_model');
+    final chatGptModel = await _persistence.readString('chatgpt_model');
+    final claudeModel = await _persistence.readString('claude_model');
+    if (!mounted) return;
+    setState(() {
+      _provider = provider ?? _provider;
+      _geminiModel = geminiModel ?? _geminiModel;
+      _chatGptModel = chatGptModel ?? _chatGptModel;
+      _claudeModel = claudeModel ?? _claudeModel;
+    });
+  }
+
+  @override
   void dispose() {
     _scriptPathController.dispose();
     _countController.dispose();
     _instructionsController.dispose();
     _outputController.dispose();
+    _persistence.dispose();
     super.dispose();
   }
 
@@ -1299,6 +1360,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
               setState(() {
                 _provider = value;
               });
+              _persistence.setString('provider', value);
             },
           ),
           const SizedBox(height: 12),
@@ -1316,6 +1378,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
                 setState(() {
                   _geminiModel = value;
                 });
+                _persistence.setString('gemini_model', value);
               },
             ),
           if (_provider == 'ChatGPT')
@@ -1333,6 +1396,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
                 setState(() {
                   _chatGptModel = value;
                 });
+                _persistence.setString('chatgpt_model', value);
               },
             ),
           if (_provider == 'ClaudeCode')
@@ -1350,6 +1414,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
                 setState(() {
                   _claudeModel = value;
                 });
+                _persistence.setString('claude_model', value);
               },
             ),
           const SizedBox(height: 12),
@@ -1512,7 +1577,22 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   final _promptController = TextEditingController();
   final _outputController = TextEditingController();
   final _previewController = TextEditingController();
+  late final InputPersistence _persistence;
   bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _persistence = InputPersistence('materials_generate.');
+    _persistence.registerController(_modelController, 'model');
+    _persistence.registerController(_promptController, 'prompt');
+    _persistence.registerController(_outputController, 'output_dir');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+  }
 
   @override
   void dispose() {
@@ -1520,6 +1600,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
     _promptController.dispose();
     _outputController.dispose();
     _previewController.dispose();
+    _persistence.dispose();
     super.dispose();
   }
 
@@ -1726,9 +1807,30 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _geminiModelController = TextEditingController(text: 'gemini-2.0-flash');
   final _chatGptModelController = TextEditingController(text: 'gpt-4.1-mini');
   final _outputTextController = TextEditingController();
+  late final InputPersistence _persistence;
   String _engine = 'Gemini';
   bool _isSubmittingIdeas = false;
   bool _isSubmittingImages = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _persistence = InputPersistence('ponchi_generate.');
+    _persistence.registerController(_srtController, 'srt_path');
+    _persistence.registerController(_outputController, 'output_dir');
+    _persistence.registerController(_geminiModelController, 'gemini_model');
+    _persistence.registerController(_chatGptModelController, 'chatgpt_model');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+    final engine = await _persistence.readString('engine');
+    if (!mounted) return;
+    setState(() {
+      _engine = engine ?? _engine;
+    });
+  }
 
   @override
   void dispose() {
@@ -1737,6 +1839,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _geminiModelController.dispose();
     _chatGptModelController.dispose();
     _outputTextController.dispose();
+    _persistence.dispose();
     super.dispose();
   }
 
@@ -1785,6 +1888,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               setState(() {
                 _engine = value;
               });
+              _persistence.setString('engine', value);
             },
           ),
           const SizedBox(height: 12),
@@ -2032,11 +2136,52 @@ class _VideoEditFormState extends State<VideoEditForm> {
   final _defaultWController = TextEditingController(text: '0');
   final _defaultHController = TextEditingController(text: '0');
   final _defaultOpacityController = TextEditingController(text: '1.0');
+  late final InputPersistence _persistence;
   String _searchProvider = 'Google';
   double _previewX = 0;
   double _previewY = 0;
   double _previewScale = 100;
   final List<Map<String, String>> _overlays = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _persistence = InputPersistence('video_edit.');
+    _persistence.registerController(_inputVideoController, 'input_video');
+    _persistence.registerController(_outputVideoController, 'output_video');
+    _persistence.registerController(_overlayImageController, 'overlay_image');
+    _persistence.registerController(_startController, 'overlay_start');
+    _persistence.registerController(_endController, 'overlay_end');
+    _persistence.registerController(_xController, 'overlay_x');
+    _persistence.registerController(_yController, 'overlay_y');
+    _persistence.registerController(_widthController, 'overlay_w');
+    _persistence.registerController(_heightController, 'overlay_h');
+    _persistence.registerController(_opacityController, 'overlay_opacity');
+    _persistence.registerController(_srtController, 'srt_path');
+    _persistence.registerController(_imageOutputController, 'image_output');
+    _persistence.registerController(_searchApiKeyController, 'search_api_key');
+    _persistence.registerController(_defaultXController, 'default_x');
+    _persistence.registerController(_defaultYController, 'default_y');
+    _persistence.registerController(_defaultWController, 'default_w');
+    _persistence.registerController(_defaultHController, 'default_h');
+    _persistence.registerController(_defaultOpacityController, 'default_opacity');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+    final searchProvider = await _persistence.readString('search_provider');
+    final previewX = await _persistence.readDouble('preview_x');
+    final previewY = await _persistence.readDouble('preview_y');
+    final previewScale = await _persistence.readDouble('preview_scale');
+    if (!mounted) return;
+    setState(() {
+      _searchProvider = searchProvider ?? _searchProvider;
+      _previewX = previewX ?? _previewX;
+      _previewY = previewY ?? _previewY;
+      _previewScale = previewScale ?? _previewScale;
+    });
+  }
 
   @override
   void dispose() {
@@ -2058,6 +2203,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _defaultWController.dispose();
     _defaultHController.dispose();
     _defaultOpacityController.dispose();
+    _persistence.dispose();
     super.dispose();
   }
 
@@ -2102,6 +2248,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                       setState(() {
                         _previewX = value;
                       });
+                      _persistence.setDouble('preview_x', value);
                     },
                     displayValue: _previewX.toStringAsFixed(0),
                   ),
@@ -2114,6 +2261,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                       setState(() {
                         _previewY = value;
                       });
+                      _persistence.setDouble('preview_y', value);
                     },
                     displayValue: _previewY.toStringAsFixed(0),
                   ),
@@ -2126,6 +2274,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                       setState(() {
                         _previewScale = value;
                       });
+                      _persistence.setDouble('preview_scale', value);
                     },
                     displayValue: '${_previewScale.toStringAsFixed(0)}%',
                   ),
@@ -2360,6 +2509,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
               setState(() {
                 _searchProvider = value;
               });
+              _persistence.setString('search_provider', value);
             },
           ),
           const SizedBox(height: 12),
@@ -2489,8 +2639,38 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
   final _overlayYController = TextEditingController(text: '200');
   final _overlayOpacityController = TextEditingController(text: '1.0');
   final _exportPathController = TextEditingController();
+  late final InputPersistence _persistence;
   bool _audioEnabled = true;
   String _autoSaveStatus = '未設定';
+
+  @override
+  void initState() {
+    super.initState();
+    _persistence = InputPersistence('detailed_edit.');
+    _persistence.registerController(_projectNameController, 'project_name');
+    _persistence.registerController(_resolutionController, 'resolution');
+    _persistence.registerController(_fpsController, 'fps');
+    _persistence.registerController(_mainVideoController, 'main_video');
+    _persistence.registerController(_clipInController, 'clip_in');
+    _persistence.registerController(_clipOutController, 'clip_out');
+    _persistence.registerController(_overlayImageController, 'overlay_image');
+    _persistence.registerController(_overlayStartController, 'overlay_start');
+    _persistence.registerController(_overlayEndController, 'overlay_end');
+    _persistence.registerController(_overlayXController, 'overlay_x');
+    _persistence.registerController(_overlayYController, 'overlay_y');
+    _persistence.registerController(_overlayOpacityController, 'overlay_opacity');
+    _persistence.registerController(_exportPathController, 'export_path');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+    final audioEnabled = await _persistence.readBool('audio_enabled');
+    if (!mounted) return;
+    setState(() {
+      _audioEnabled = audioEnabled ?? _audioEnabled;
+    });
+  }
 
   @override
   void dispose() {
@@ -2507,6 +2687,7 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
     _overlayYController.dispose();
     _overlayOpacityController.dispose();
     _exportPathController.dispose();
+    _persistence.dispose();
     super.dispose();
   }
 
@@ -2682,6 +2863,7 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
                     setState(() {
                       _audioEnabled = value;
                     });
+                    _persistence.setBool('audio_enabled', value);
                   },
                   title: const Text('動画音声 ON/OFF'),
                 ),
@@ -2865,26 +3047,45 @@ class _SettingsFormState extends State<SettingsForm> {
   final _geminiController = TextEditingController();
   final _openAiController = TextEditingController();
   final _claudeController = TextEditingController();
+  late final InputPersistence _persistence;
 
   @override
   void initState() {
     super.initState();
+    _persistence = InputPersistence('settings.');
     _backendController.text = ApiConfig.baseUrl.value;
     _backendController.addListener(() {
       ApiConfig.baseUrl.value = _backendController.text.trim();
+      _persistence.setString('backend_url', _backendController.text.trim());
     });
     _geminiController.text = ApiKeys.gemini.value;
     _openAiController.text = ApiKeys.openAi.value;
     _claudeController.text = ApiKeys.claude.value;
     _geminiController.addListener(() {
       ApiKeys.gemini.value = _geminiController.text.trim();
+      _persistence.setString('gemini_key', _geminiController.text.trim());
     });
     _openAiController.addListener(() {
       ApiKeys.openAi.value = _openAiController.text.trim();
+      _persistence.setString('openai_key', _openAiController.text.trim());
     });
     _claudeController.addListener(() {
       ApiKeys.claude.value = _claudeController.text.trim();
+      _persistence.setString('claude_key', _claudeController.text.trim());
     });
+    _persistence.registerController(_backendController, 'backend_url');
+    _persistence.registerController(_geminiController, 'gemini_key');
+    _persistence.registerController(_openAiController, 'openai_key');
+    _persistence.registerController(_claudeController, 'claude_key');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+    ApiConfig.baseUrl.value = _backendController.text.trim();
+    ApiKeys.gemini.value = _geminiController.text.trim();
+    ApiKeys.openAi.value = _openAiController.text.trim();
+    ApiKeys.claude.value = _claudeController.text.trim();
   }
 
   @override
@@ -2893,6 +3094,7 @@ class _SettingsFormState extends State<SettingsForm> {
     _geminiController.dispose();
     _openAiController.dispose();
     _claudeController.dispose();
+    _persistence.dispose();
     super.dispose();
   }
 
@@ -2962,6 +3164,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   final _speakerFontSizeController = TextEditingController(text: '30');
   final _captionMaxCharsController = TextEditingController(text: '22');
   final _captionBoxHeightController = TextEditingController(text: '420');
+  late final InputPersistence _persistence;
   bool _useBgm = false;
   final _bgmController = TextEditingController();
   double _bgmGainDb = -18;
@@ -2977,6 +3180,40 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   @override
   void initState() {
     super.initState();
+    _persistence = InputPersistence(_prefsPrefix);
+    _persistence.registerController(_scriptController, 'script');
+    _persistence.registerController(_imageListController, 'images');
+    _persistence.registerController(_outputController, 'output');
+    _persistence.registerController(_widthController, 'width');
+    _persistence.registerController(_heightController, 'height');
+    _persistence.registerController(_fpsController, 'fps');
+    _persistence.registerController(_voiceController, 'voice');
+    _persistence.registerController(_voicevoxUrlController, 'vv_url');
+    _persistence.registerController(_voicevoxRotationController, 'vv_rotation');
+    _persistence.registerController(_voicevoxCasterController, 'vv_caster');
+    _persistence.registerController(_voicevoxAnalystController, 'vv_analyst');
+    _persistence.registerController(
+      _captionFontSizeController,
+      'caption_font_size',
+    );
+    _persistence.registerController(_captionAlphaController, 'caption_alpha');
+    _persistence.registerController(
+      _captionTextColorController,
+      'caption_text_color',
+    );
+    _persistence.registerController(
+      _speakerFontSizeController,
+      'speaker_font_size',
+    );
+    _persistence.registerController(
+      _captionMaxCharsController,
+      'caption_max_chars',
+    );
+    _persistence.registerController(
+      _captionBoxHeightController,
+      'caption_box_height',
+    );
+    _persistence.registerController(_bgmController, 'bgm_path');
     _loadSavedValues();
   }
 
@@ -3000,136 +3237,30 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     _captionMaxCharsController.dispose();
     _captionBoxHeightController.dispose();
     _bgmController.dispose();
+    _persistence.dispose();
     super.dispose();
   }
 
   Future<void> _loadSavedValues() async {
-    final prefs = await SharedPreferences.getInstance();
-    _setIfSaved(_scriptController, prefs.getString('${_prefsPrefix}script'));
-    _setIfSaved(_imageListController, prefs.getString('${_prefsPrefix}images'));
-    _setIfSaved(_outputController, prefs.getString('${_prefsPrefix}output'));
-    _setIfSaved(_widthController, prefs.getString('${_prefsPrefix}width'));
-    _setIfSaved(_heightController, prefs.getString('${_prefsPrefix}height'));
-    _setIfSaved(_fpsController, prefs.getString('${_prefsPrefix}fps'));
-    _setIfSaved(_voiceController, prefs.getString('${_prefsPrefix}voice'));
-    _setIfSaved(_voicevoxUrlController, prefs.getString('${_prefsPrefix}vv_url'));
-    _setIfSaved(
-      _voicevoxRotationController,
-      prefs.getString('${_prefsPrefix}vv_rotation'),
-    );
-    _setIfSaved(
-      _voicevoxCasterController,
-      prefs.getString('${_prefsPrefix}vv_caster'),
-    );
-    _setIfSaved(
-      _voicevoxAnalystController,
-      prefs.getString('${_prefsPrefix}vv_analyst'),
-    );
-    _setIfSaved(
-      _captionFontSizeController,
-      prefs.getString('${_prefsPrefix}caption_font_size'),
-    );
-    _setIfSaved(
-      _captionAlphaController,
-      prefs.getString('${_prefsPrefix}caption_alpha'),
-    );
-    _setIfSaved(
-      _captionTextColorController,
-      prefs.getString('${_prefsPrefix}caption_text_color'),
-    );
-    _setIfSaved(
-      _speakerFontSizeController,
-      prefs.getString('${_prefsPrefix}speaker_font_size'),
-    );
-    _setIfSaved(
-      _captionMaxCharsController,
-      prefs.getString('${_prefsPrefix}caption_max_chars'),
-    );
-    _setIfSaved(
-      _captionBoxHeightController,
-      prefs.getString('${_prefsPrefix}caption_box_height'),
-    );
-    _setIfSaved(_bgmController, prefs.getString('${_prefsPrefix}bgm_path'));
-
+    await _persistence.init();
+    final useBgm = await _persistence.readBool('use_bgm');
+    final bgmGainDb = await _persistence.readDouble('bgm_gain_db');
+    final ttsEngine = await _persistence.readString('tts_engine');
+    final voicevoxMode = await _persistence.readString('vv_mode');
+    final voicevoxSpeed = await _persistence.readDouble('vv_speed');
+    final captionBoxEnabled =
+        await _persistence.readBool('caption_box_enabled');
+    final bgOffStyle = await _persistence.readString('bg_off_style');
+    if (!mounted) return;
     setState(() {
-      _useBgm = prefs.getBool('${_prefsPrefix}use_bgm') ?? _useBgm;
-      _bgmGainDb = prefs.getDouble('${_prefsPrefix}bgm_gain_db') ?? _bgmGainDb;
-      _ttsEngine = prefs.getString('${_prefsPrefix}tts_engine') ?? _ttsEngine;
-      _voicevoxMode =
-          prefs.getString('${_prefsPrefix}vv_mode') ?? _voicevoxMode;
-      _voicevoxSpeed =
-          prefs.getDouble('${_prefsPrefix}vv_speed') ?? _voicevoxSpeed;
-      _captionBoxEnabled =
-          prefs.getBool('${_prefsPrefix}caption_box_enabled') ??
-              _captionBoxEnabled;
-      _bgOffStyle = prefs.getString('${_prefsPrefix}bg_off_style') ?? _bgOffStyle;
+      _useBgm = useBgm ?? _useBgm;
+      _bgmGainDb = bgmGainDb ?? _bgmGainDb;
+      _ttsEngine = ttsEngine ?? _ttsEngine;
+      _voicevoxMode = voicevoxMode ?? _voicevoxMode;
+      _voicevoxSpeed = voicevoxSpeed ?? _voicevoxSpeed;
+      _captionBoxEnabled = captionBoxEnabled ?? _captionBoxEnabled;
+      _bgOffStyle = bgOffStyle ?? _bgOffStyle;
     });
-  }
-
-  void _setIfSaved(TextEditingController controller, String? value) {
-    if (value == null || value.isEmpty) {
-      return;
-    }
-    controller.text = value;
-  }
-
-  Future<void> _persistFormValues() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('${_prefsPrefix}script', _scriptController.text);
-    await prefs.setString('${_prefsPrefix}images', _imageListController.text);
-    await prefs.setString('${_prefsPrefix}output', _outputController.text);
-    await prefs.setString('${_prefsPrefix}width', _widthController.text);
-    await prefs.setString('${_prefsPrefix}height', _heightController.text);
-    await prefs.setString('${_prefsPrefix}fps', _fpsController.text);
-    await prefs.setString('${_prefsPrefix}voice', _voiceController.text);
-    await prefs.setString('${_prefsPrefix}vv_url', _voicevoxUrlController.text);
-    await prefs.setString(
-      '${_prefsPrefix}vv_rotation',
-      _voicevoxRotationController.text,
-    );
-    await prefs.setString(
-      '${_prefsPrefix}vv_caster',
-      _voicevoxCasterController.text,
-    );
-    await prefs.setString(
-      '${_prefsPrefix}vv_analyst',
-      _voicevoxAnalystController.text,
-    );
-    await prefs.setString(
-      '${_prefsPrefix}caption_font_size',
-      _captionFontSizeController.text,
-    );
-    await prefs.setString(
-      '${_prefsPrefix}caption_alpha',
-      _captionAlphaController.text,
-    );
-    await prefs.setString(
-      '${_prefsPrefix}caption_text_color',
-      _captionTextColorController.text,
-    );
-    await prefs.setString(
-      '${_prefsPrefix}speaker_font_size',
-      _speakerFontSizeController.text,
-    );
-    await prefs.setString(
-      '${_prefsPrefix}caption_max_chars',
-      _captionMaxCharsController.text,
-    );
-    await prefs.setString(
-      '${_prefsPrefix}caption_box_height',
-      _captionBoxHeightController.text,
-    );
-    await prefs.setString('${_prefsPrefix}bgm_path', _bgmController.text);
-    await prefs.setBool('${_prefsPrefix}use_bgm', _useBgm);
-    await prefs.setDouble('${_prefsPrefix}bgm_gain_db', _bgmGainDb);
-    await prefs.setString('${_prefsPrefix}tts_engine', _ttsEngine);
-    await prefs.setString('${_prefsPrefix}vv_mode', _voicevoxMode);
-    await prefs.setDouble('${_prefsPrefix}vv_speed', _voicevoxSpeed);
-    await prefs.setBool(
-      '${_prefsPrefix}caption_box_enabled',
-      _captionBoxEnabled,
-    );
-    await prefs.setString('${_prefsPrefix}bg_off_style', _bgOffStyle);
   }
 
   @override
@@ -3277,6 +3408,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               setState(() {
                 _useBgm = value;
               });
+              _persistence.setBool('use_bgm', value);
             },
           ),
           if (_useBgm)
@@ -3313,6 +3445,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                         setState(() {
                           _bgmGainDb = value;
                         });
+                        _persistence.setDouble('bgm_gain_db', value);
                       },
                     ),
                   ],
@@ -3337,6 +3470,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               setState(() {
                 _ttsEngine = value;
               });
+              _persistence.setString('tts_engine', value);
             },
           ),
           const SizedBox(height: 12),
@@ -3363,6 +3497,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                 setState(() {
                   _voicevoxMode = value;
                 });
+                _persistence.setString('vv_mode', value);
               },
             ),
             const SizedBox(height: 12),
@@ -3395,6 +3530,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                     setState(() {
                       _voicevoxSpeed = value;
                     });
+                    _persistence.setDouble('vv_speed', value);
                   },
                 ),
               ],
@@ -3431,6 +3567,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               setState(() {
                 _bgOffStyle = value;
               });
+              _persistence.setString('bg_off_style', value);
             },
           ),
           const SizedBox(height: 12),
@@ -3458,6 +3595,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               setState(() {
                 _captionBoxEnabled = value;
               });
+              _persistence.setBool('caption_box_enabled', value);
             },
           ),
           TextFormField(
@@ -3487,7 +3625,6 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   }
 
   Future<void> _submitJob() async {
-    await _persistFormValues();
     if (!_formKey.currentState!.validate()) {
       return;
     }
