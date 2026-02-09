@@ -165,6 +165,7 @@ class _StudioShellState extends State<StudioShell> {
     'About',
   ];
   int _selectedIndex = 0;
+  int? _hoveredIndex;
   Process? _apiServerProcess;
   bool _apiServerStarting = false;
   bool _apiServerReady = false;
@@ -682,123 +683,98 @@ class _StudioShellState extends State<StudioShell> {
                         ),
                       ],
                     ),
-                    child: Theme(
-                      data: Theme.of(context).copyWith(
-                        hoverColor: Colors.black.withOpacity(0.06),
-                        splashColor: Colors.transparent,
-                        highlightColor: Colors.transparent,
-                      ),
-                      child: NavigationRailTheme(
-                        data: NavigationRailThemeData(
-                          backgroundColor: Colors.transparent,
-                          useIndicator: true,
-                          indicatorColor: Colors.black.withOpacity(0.06),
-                          indicatorShape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: NavigationRail(
-                          extended: true,
-                          selectedIndex: _selectedIndex,
-                          onDestinationSelected: (index) {
-                            setState(() {
-                              _selectedIndex = index;
-                            });
-                          },
-                          labelType: NavigationRailLabelType.all,
-                          leading: Padding(
-                            padding: const EdgeInsets.only(top: 24, bottom: 16),
-                            child: Column(
-                              children: [
-                                CircleAvatar(
-                                  radius: 24,
-                                  backgroundColor: Theme.of(context)
-                                      .colorScheme
-                                      .primary
-                                      .withOpacity(0.15),
-                                  child: Icon(
-                                    Icons.movie_creation,
-                                    color: Theme.of(context).colorScheme.primary,
-                                  ),
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: 24, bottom: 16),
+                          child: Column(
+                            children: [
+                              CircleAvatar(
+                                radius: 24,
+                                backgroundColor: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withOpacity(0.15),
+                                child: Icon(
+                                  Icons.movie_creation,
+                                  color: Theme.of(context).colorScheme.primary,
                                 ),
-                                const SizedBox(height: 12),
-                                const Text(
-                                  'Studio',
-                                  style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Studio',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
                                 ),
-                                const SizedBox(height: 12),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
+                                decoration: BoxDecoration(
+                                  color: _apiServerReady
+                                      ? const Color(0xFFE7F7EF)
+                                      : _apiServerStarting
+                                          ? const Color(0xFFFFF4E1)
+                                          : const Color(0xFFFFECEC),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
                                     color: _apiServerReady
-                                        ? const Color(0xFFE7F7EF)
+                                        ? const Color(0xFFBEE8D0)
                                         : _apiServerStarting
-                                            ? const Color(0xFFFFF4E1)
-                                            : const Color(0xFFFFECEC),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: _apiServerReady
-                                          ? const Color(0xFFBEE8D0)
-                                          : _apiServerStarting
-                                              ? const Color(0xFFFFD29A)
-                                              : const Color(0xFFF7B8B8),
-                                    ),
+                                            ? const Color(0xFFFFD29A)
+                                            : const Color(0xFFF7B8B8),
                                   ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        _apiServerReady
-                                            ? Icons.cloud_done
-                                            : _apiServerStarting
-                                                ? Icons.cloud_sync
-                                                : Icons.cloud_off,
-                                        size: 16,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      _apiServerReady
+                                          ? Icons.cloud_done
+                                          : _apiServerStarting
+                                              ? Icons.cloud_sync
+                                              : Icons.cloud_off,
+                                      size: 16,
+                                      color: _apiServerReady
+                                          ? Colors.green.shade700
+                                          : _apiServerStarting
+                                              ? Colors.orange.shade700
+                                              : Colors.red.shade700,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      _apiServerReady
+                                          ? 'API 稼働中'
+                                          : _apiServerStarting
+                                              ? 'API 起動中'
+                                              : 'API 停止中',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
                                         color: _apiServerReady
-                                            ? Colors.green.shade700
+                                            ? Colors.green.shade800
                                             : _apiServerStarting
                                                 ? Colors.orange.shade700
                                                 : Colors.red.shade700,
                                       ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        _apiServerReady
-                                            ? 'API 稼働中'
-                                            : _apiServerStarting
-                                                ? 'API 起動中'
-                                                : 'API 停止中',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: _apiServerReady
-                                              ? Colors.green.shade800
-                                              : _apiServerStarting
-                                                  ? Colors.orange.shade700
-                                                  : Colors.red.shade700,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                          destinations: _pages
-                              .map(
-                                (page) => NavigationRailDestination(
-                                  icon: const SizedBox.shrink(),
-                                  selectedIcon: const SizedBox.shrink(),
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 4),
-                                  label: Text('○ $page'),
-                                ),
-                              )
-                              .toList(),
                         ),
-                      ),
+                        Expanded(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            itemCount: _pages.length,
+                            itemBuilder: (context, index) {
+                              return _buildMenuItem(index: index, label: _pages[index]);
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   Expanded(
@@ -828,6 +804,55 @@ class _StudioShellState extends State<StudioShell> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuItem({required int index, required String label}) {
+    final bool isSelected = _selectedIndex == index;
+    final bool isHovered = _hoveredIndex == index;
+    final Color backgroundColor = isSelected
+        ? Colors.black.withOpacity(0.06)
+        : isHovered
+            ? Colors.black.withOpacity(0.04)
+            : Colors.transparent;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            setState(() {
+              _selectedIndex = index;
+            });
+          },
+          onHover: (hovered) {
+            setState(() {
+              if (hovered) {
+                _hoveredIndex = index;
+              } else if (_hoveredIndex == index) {
+                _hoveredIndex = null;
+              }
+            });
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '○ $label',
+              style: TextStyle(
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                color: isSelected ? Colors.black87 : Colors.black54,
+              ),
+            ),
+          ),
         ),
       ),
     );
