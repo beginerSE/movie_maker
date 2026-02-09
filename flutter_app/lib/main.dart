@@ -416,11 +416,19 @@ class _StudioShellState extends State<StudioShell> {
       if (await _isPortAvailable(baseUri.port)) {
         return baseUri.port;
       }
+      final released = await _attemptPortRelease(baseUri.port);
+      if (released && await _isPortAvailable(baseUri.port)) {
+        return baseUri.port;
+      }
     }
 
     const fallbackPorts = [8000, 8001, 8002, 8003, 8004, 8005];
     for (final port in fallbackPorts) {
       if (await _isPortAvailable(port)) {
+        return port;
+      }
+      final released = await _attemptPortRelease(port);
+      if (released && await _isPortAvailable(port)) {
         return port;
       }
     }
@@ -436,6 +444,39 @@ class _StudioShellState extends State<StudioShell> {
     } catch (_) {
       return false;
     }
+  }
+
+  Future<bool> _attemptPortRelease(int port) async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run(
+          'powershell',
+          [
+            '-NoProfile',
+            '-Command',
+            'Get-NetTCPConnection -LocalPort $port '
+                '| Select-Object -ExpandProperty OwningProcess '
+                '| ForEach-Object { Stop-Process -Id $_ -Force }',
+          ],
+          runInShell: true,
+        );
+      } else if (Platform.isLinux || Platform.isMacOS) {
+        await Process.run(
+          'sh',
+          [
+            '-c',
+            'pids=$(lsof -ti tcp:$port 2>/dev/null); '
+                'if [ -n "$pids" ]; then kill -9 $pids; fi',
+          ],
+          runInShell: true,
+        );
+      } else {
+        return false;
+      }
+    } catch (_) {
+      return false;
+    }
+    return true;
   }
 
   bool _isLocalHost(String host) {
