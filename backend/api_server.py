@@ -31,6 +31,7 @@ from backend.video_core import (
     DEFAULT_TITLE_MAX_TOKENS,
     GEMINI_MATERIAL_DEFAULT_MODEL,
     extract_script_text,
+    fetch_voicevox_speakers,
     generate_materials_with_gemini,
     generate_ponchi_suggestions_with_gemini,
     generate_ponchi_suggestions_with_openai,
@@ -270,6 +271,10 @@ class PonchiImagesResponse(BaseModel):
 
 class JobResponse(BaseModel):
     job_id: str = Field(..., description="Job identifier")
+
+
+class VoicevoxSpeakersResponse(BaseModel):
+    speakers: List[str]
 
 
 class JobStatusResponse(BaseModel):
@@ -547,6 +552,30 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
 
     threading.Thread(target=worker, daemon=True).start()
     return JobResponse(job_id=job.job_id)
+
+
+@app.get("/voicevox/speakers", response_model=VoicevoxSpeakersResponse)
+async def list_voicevox_speakers(
+    base_url: str = "http://127.0.0.1:50021",
+) -> VoicevoxSpeakersResponse:
+    try:
+        speakers = fetch_voicevox_speakers(base_url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    labels: List[str] = []
+    seen = set()
+    for sp in speakers:
+        name = sp.get("name")
+        if not isinstance(name, str):
+            continue
+        name = name.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        labels.append(name)
+
+    return VoicevoxSpeakersResponse(speakers=labels)
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)

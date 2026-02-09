@@ -3153,6 +3153,9 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   bool _isSubmitting = false;
   String? _jobId;
   String _statusMessage = 'Ready';
+  List<String> _voicevoxSpeakers = [];
+  bool _voicevoxSpeakersLoading = false;
+  String? _voicevoxSpeakersError;
 
   @override
   void initState() {
@@ -3238,6 +3241,109 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _captionBoxEnabled = captionBoxEnabled ?? _captionBoxEnabled;
       _bgOffStyle = bgOffStyle ?? _bgOffStyle;
     });
+    if (_ttsEngine == 'VOICEVOX') {
+      await _fetchVoicevoxSpeakers();
+    }
+  }
+
+  List<String> _voicevoxSpeakerOptions(String current) {
+    final options = [..._voicevoxSpeakers];
+    final trimmed = current.trim();
+    if (trimmed.isNotEmpty && !options.contains(trimmed)) {
+      options.insert(0, trimmed);
+    }
+    return options;
+  }
+
+  Future<void> _fetchVoicevoxSpeakers() async {
+    final baseUrl = _voicevoxUrlController.text.trim();
+    if (baseUrl.isEmpty) {
+      setState(() {
+        _voicevoxSpeakers = [];
+        _voicevoxSpeakersError = 'VOICEVOX エンジンURLを入力してください。';
+      });
+      return;
+    }
+
+    setState(() {
+      _voicevoxSpeakersLoading = true;
+      _voicevoxSpeakersError = null;
+    });
+
+    try {
+      final uri = ApiConfig.httpUri('/voicevox/speakers')
+          .replace(queryParameters: {'base_url': baseUrl});
+      final response = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final speakers = (data['speakers'] as List<dynamic>? ?? [])
+            .whereType<String>()
+            .toList();
+        setState(() {
+          _voicevoxSpeakers = speakers;
+          _voicevoxSpeakersError =
+              speakers.isEmpty ? '話者一覧が空でした。' : null;
+        });
+        if (speakers.isNotEmpty) {
+          if (_voicevoxCasterController.text.trim().isEmpty) {
+            _voicevoxCasterController.text = speakers.first;
+          }
+          if (_voicevoxAnalystController.text.trim().isEmpty) {
+            _voicevoxAnalystController.text = speakers.first;
+          }
+        }
+      } else {
+        setState(() {
+          _voicevoxSpeakersError =
+              '取得に失敗しました (${response.statusCode})';
+        });
+      }
+    } on TimeoutException {
+      setState(() {
+        _voicevoxSpeakersError = '取得がタイムアウトしました。';
+      });
+    } catch (error) {
+      setState(() {
+        _voicevoxSpeakersError = '取得に失敗しました: $error';
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _voicevoxSpeakersLoading = false;
+      });
+    }
+  }
+
+  Widget _buildVoicevoxSpeakerDropdown({
+    required String label,
+    required TextEditingController controller,
+    required String persistenceKey,
+  }) {
+    final options = _voicevoxSpeakerOptions(controller.text);
+    final current =
+        options.contains(controller.text) ? controller.text : null;
+    return DropdownButtonFormField<String>(
+      value: current,
+      decoration: InputDecoration(labelText: label),
+      items: options
+          .map((speaker) => DropdownMenuItem(
+                value: speaker,
+                child: Text(speaker),
+              ))
+          .toList(),
+      hint: const Text('話者一覧を取得してください'),
+      onChanged: options.isEmpty
+          ? null
+          : (value) {
+              if (value == null) return;
+              setState(() {
+                controller.text = value;
+              });
+              _persistence.setString(persistenceKey, value);
+            },
+    );
   }
 
   @override
@@ -3448,6 +3554,9 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                 _ttsEngine = value;
               });
               _persistence.setString('tts_engine', value);
+              if (value == 'VOICEVOX') {
+                _fetchVoicevoxSpeakers();
+              }
             },
           ),
           const SizedBox(height: 12),
@@ -3460,7 +3569,39 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             TextFormField(
               controller: _voicevoxUrlController,
               decoration: const InputDecoration(labelText: 'VOICEVOX エンジンURL'),
+              onChanged: (_) {
+                setState(() {
+                  _voicevoxSpeakers = [];
+                  _voicevoxSpeakersError = null;
+                });
+              },
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed:
+                      _voicevoxSpeakersLoading ? null : _fetchVoicevoxSpeakers,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('話者一覧を取得'),
+                ),
+                if (_voicevoxSpeakersLoading) ...[
+                  const SizedBox(width: 12),
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              ],
+            ),
+            if (_voicevoxSpeakersError != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _voicevoxSpeakersError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: _voicevoxMode,
@@ -3483,14 +3624,16 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               decoration: const InputDecoration(labelText: 'ローテーション話者(カンマ)'),
             ),
             const SizedBox(height: 12),
-            TextFormField(
+            _buildVoicevoxSpeakerDropdown(
+              label: 'キャスター話者',
               controller: _voicevoxCasterController,
-              decoration: const InputDecoration(labelText: 'キャスター話者'),
+              persistenceKey: 'vv_caster',
             ),
             const SizedBox(height: 12),
-            TextFormField(
+            _buildVoicevoxSpeakerDropdown(
+              label: 'アナリスト話者',
               controller: _voicevoxAnalystController,
-              decoration: const InputDecoration(labelText: 'アナリスト話者'),
+              persistenceKey: 'vv_analyst',
             ),
             const SizedBox(height: 12),
             Column(
