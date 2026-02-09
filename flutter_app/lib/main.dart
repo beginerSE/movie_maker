@@ -4038,50 +4038,75 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
-          TextFormField(
-            controller: _captionFontSizeController,
-            decoration: const InputDecoration(labelText: '字幕フォントサイズ'),
-            keyboardType: TextInputType.number,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _captionAlphaController,
-            decoration: const InputDecoration(labelText: '字幕背景の透明度(alpha 0-255)'),
-            keyboardType: TextInputType.number,
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _bgOffStyle,
-            decoration: const InputDecoration(labelText: '背景OFF時のデザイン'),
-            items: const [
-              DropdownMenuItem(value: '影', child: Text('影')),
-              DropdownMenuItem(value: '角丸パネル', child: Text('角丸パネル')),
-              DropdownMenuItem(value: 'なし', child: Text('なし')),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _captionFontSizeController,
+                  decoration: const InputDecoration(labelText: '字幕フォントサイズ'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: _captionAlphaController,
+                  decoration:
+                      const InputDecoration(labelText: '字幕背景の透明度(alpha 0-255)'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
             ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _bgOffStyle = value;
-              });
-              _persistence.setString('bg_off_style', value);
-            },
           ),
           const SizedBox(height: 12),
-          TextFormField(
-            controller: _captionTextColorController,
-            decoration: const InputDecoration(labelText: '字幕文字色（#RRGGBB）'),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _bgOffStyle,
+                  decoration: const InputDecoration(labelText: '背景OFF時のデザイン'),
+                  items: const [
+                    DropdownMenuItem(value: '影', child: Text('影')),
+                    DropdownMenuItem(value: '角丸パネル', child: Text('角丸パネル')),
+                    DropdownMenuItem(value: 'なし', child: Text('なし')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _bgOffStyle = value;
+                    });
+                    _persistence.setString('bg_off_style', value);
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: _captionTextColorController,
+                  decoration: const InputDecoration(labelText: '字幕文字色（#RRGGBB）'),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
-          TextFormField(
-            controller: _speakerFontSizeController,
-            decoration: const InputDecoration(labelText: '話者名フォントサイズ'),
-            keyboardType: TextInputType.number,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _captionMaxCharsController,
-            decoration: const InputDecoration(labelText: '1行あたり最大文字数'),
-            keyboardType: TextInputType.number,
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _speakerFontSizeController,
+                  decoration: const InputDecoration(labelText: '話者名フォントサイズ'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: _captionMaxCharsController,
+                  decoration: const InputDecoration(labelText: '1行あたり最大文字数'),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           SwitchListTile(
