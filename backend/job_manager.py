@@ -20,6 +20,7 @@ class Job:
     error: Optional[str] = None
     result: Dict[str, Any] = field(default_factory=dict)
     log_queue: "queue.Queue[dict[str, Any]]" = field(default_factory=queue.Queue)
+    subscribers: list["queue.Queue[dict[str, Any]]"] = field(default_factory=list)
 
 
 class JobManager:
@@ -50,10 +51,12 @@ class JobManager:
         job = self.get_job(job_id)
         if job is None:
             return
+        event = {"type": "log", "message": message, "ts": time.time()}
         with self._lock:
             job.logs.append(message)
             job.updated_at = time.time()
-        job.log_queue.put({"type": "log", "message": message, "ts": time.time()})
+            subscribers = list(job.subscribers)
+        self._publish_event(job, event, subscribers)
 
     def update_progress(self, job_id: str, progress: float, eta_seconds: Optional[float] = None) -> None:
         job = self.get_job(job_id)
@@ -64,14 +67,14 @@ class JobManager:
             job.progress = progress
             job.eta_seconds = eta_seconds
             job.updated_at = time.time()
-        job.log_queue.put(
-            {
-                "type": "progress",
-                "progress": job.progress,
-                "eta_seconds": job.eta_seconds,
-                "ts": time.time(),
-            }
-        )
+            subscribers = list(job.subscribers)
+        event = {
+            "type": "progress",
+            "progress": job.progress,
+            "eta_seconds": job.eta_seconds,
+            "ts": time.time(),
+        }
+        self._publish_event(job, event, subscribers)
 
     def set_error(self, job_id: str, message: str) -> None:
         job = self.get_job(job_id)
@@ -81,7 +84,9 @@ class JobManager:
             job.status = "error"
             job.error = message
             job.updated_at = time.time()
-        job.log_queue.put({"type": "error", "message": message, "ts": time.time()})
+            subscribers = list(job.subscribers)
+        event = {"type": "error", "message": message, "ts": time.time()}
+        self._publish_event(job, event, subscribers)
 
     def set_result(self, job_id: str, result: Dict[str, Any]) -> None:
         job = self.get_job(job_id)
@@ -91,4 +96,33 @@ class JobManager:
             job.status = "completed"
             job.result = result
             job.updated_at = time.time()
-        job.log_queue.put({"type": "completed", "result": result, "ts": time.time()})
+            subscribers = list(job.subscribers)
+        event = {"type": "completed", "result": result, "ts": time.time()}
+        self._publish_event(job, event, subscribers)
+
+    def subscribe(self, job_id: str) -> Optional["queue.Queue[dict[str, Any]]"]:
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        q: "queue.Queue[dict[str, Any]]" = queue.Queue()
+        with self._lock:
+            job.subscribers.append(q)
+        return q
+
+    def unsubscribe(self, job_id: str, q: "queue.Queue[dict[str, Any]]") -> None:
+        job = self.get_job(job_id)
+        if job is None:
+            return
+        with self._lock:
+            if q in job.subscribers:
+                job.subscribers.remove(q)
+
+    def _publish_event(
+        self,
+        job: Job,
+        event: Dict[str, Any],
+        subscribers: Optional[list["queue.Queue[dict[str, Any]]"]] = None,
+    ) -> None:
+        job.log_queue.put(event)
+        for subscriber in subscribers or []:
+            subscriber.put(event)
