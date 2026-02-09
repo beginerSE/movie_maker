@@ -87,6 +87,11 @@ class ApiConfig {
   }
 }
 
+class VoicevoxConfig {
+  static final ValueNotifier<String> baseUrl =
+      ValueNotifier<String>('http://127.0.0.1:50021');
+}
+
 typedef ApiHealthCheck = Future<bool> Function();
 
 class ApiKeys {
@@ -3354,12 +3359,15 @@ class _SettingsFormState extends State<SettingsForm> {
   final _geminiController = TextEditingController();
   final _openAiController = TextEditingController();
   final _claudeController = TextEditingController();
+  final _voicevoxUrlController = TextEditingController();
   late final InputPersistence _persistence;
+  late final InputPersistence _voicevoxPersistence;
 
   @override
   void initState() {
     super.initState();
     _persistence = InputPersistence('settings.');
+    _voicevoxPersistence = InputPersistence('video_generate.');
     _backendController.text = ApiConfig.baseUrl.value;
     _backendController.addListener(() {
       ApiConfig.baseUrl.value = _backendController.text.trim();
@@ -3368,6 +3376,7 @@ class _SettingsFormState extends State<SettingsForm> {
     _geminiController.text = ApiKeys.gemini.value;
     _openAiController.text = ApiKeys.openAi.value;
     _claudeController.text = ApiKeys.claude.value;
+    _voicevoxUrlController.text = VoicevoxConfig.baseUrl.value;
     _geminiController.addListener(() {
       ApiKeys.gemini.value = _geminiController.text.trim();
       _persistence.setString('gemini_key', _geminiController.text.trim());
@@ -3380,19 +3389,29 @@ class _SettingsFormState extends State<SettingsForm> {
       ApiKeys.claude.value = _claudeController.text.trim();
       _persistence.setString('claude_key', _claudeController.text.trim());
     });
+    _voicevoxUrlController.addListener(() {
+      VoicevoxConfig.baseUrl.value = _voicevoxUrlController.text.trim();
+      _voicevoxPersistence.setString(
+        'vv_url',
+        _voicevoxUrlController.text.trim(),
+      );
+    });
     _persistence.registerController(_backendController, 'backend_url');
     _persistence.registerController(_geminiController, 'gemini_key');
     _persistence.registerController(_openAiController, 'openai_key');
     _persistence.registerController(_claudeController, 'claude_key');
+    _voicevoxPersistence.registerController(_voicevoxUrlController, 'vv_url');
     _initPersistence();
   }
 
   Future<void> _initPersistence() async {
     await _persistence.init();
+    await _voicevoxPersistence.init();
     ApiConfig.baseUrl.value = _backendController.text.trim();
     ApiKeys.gemini.value = _geminiController.text.trim();
     ApiKeys.openAi.value = _openAiController.text.trim();
     ApiKeys.claude.value = _claudeController.text.trim();
+    VoicevoxConfig.baseUrl.value = _voicevoxUrlController.text.trim();
   }
 
   @override
@@ -3401,7 +3420,9 @@ class _SettingsFormState extends State<SettingsForm> {
     _geminiController.dispose();
     _openAiController.dispose();
     _claudeController.dispose();
+    _voicevoxUrlController.dispose();
     _persistence.dispose();
+    _voicevoxPersistence.dispose();
     super.dispose();
   }
 
@@ -3422,23 +3443,31 @@ class _SettingsFormState extends State<SettingsForm> {
           ),
         ),
         const SizedBox(height: 12),
-          TextFormField(
-            controller: _geminiController,
-            decoration: const InputDecoration(labelText: 'Gemini API キー'),
-            obscureText: true,
-          ),
+        TextFormField(
+          controller: _geminiController,
+          decoration: const InputDecoration(labelText: 'Gemini API キー'),
+          obscureText: true,
+        ),
         const SizedBox(height: 12),
-          TextFormField(
-            controller: _openAiController,
-            decoration: const InputDecoration(labelText: 'ChatGPT API キー'),
-            obscureText: true,
-          ),
+        TextFormField(
+          controller: _openAiController,
+          decoration: const InputDecoration(labelText: 'ChatGPT API キー'),
+          obscureText: true,
+        ),
         const SizedBox(height: 12),
-          TextFormField(
-            controller: _claudeController,
-            decoration: const InputDecoration(labelText: 'ClaudeCode API キー'),
-            obscureText: true,
+        TextFormField(
+          controller: _claudeController,
+          decoration: const InputDecoration(labelText: 'ClaudeCode API キー'),
+          obscureText: true,
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _voicevoxUrlController,
+          decoration: const InputDecoration(
+            labelText: 'VOICEVOX エンジンURL',
+            helperText: '例: http://127.0.0.1:50021',
           ),
+        ),
         const SizedBox(height: 16),
         ElevatedButton.icon(
           onPressed: () {
@@ -3495,6 +3524,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   List<String> _voicevoxSpeakers = [];
   bool _voicevoxSpeakersLoading = false;
   String? _voicevoxSpeakersError;
+  late final VoidCallback _voicevoxUrlListener;
 
   @override
   void initState() {
@@ -3533,6 +3563,19 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       'caption_box_height',
     );
     _persistence.registerController(_bgmController, 'bgm_path');
+    _voicevoxUrlListener = () {
+      final value = VoicevoxConfig.baseUrl.value.trim();
+      if (_voicevoxUrlController.text.trim() == value) {
+        return;
+      }
+      _voicevoxUrlController.text = value;
+      if (!mounted) return;
+      setState(() {
+        _voicevoxSpeakers = [];
+        _voicevoxSpeakersError = null;
+      });
+    };
+    VoicevoxConfig.baseUrl.addListener(_voicevoxUrlListener);
     _loadSavedValues();
   }
 
@@ -3556,6 +3599,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     _captionMaxCharsController.dispose();
     _captionBoxHeightController.dispose();
     _bgmController.dispose();
+    VoicevoxConfig.baseUrl.removeListener(_voicevoxUrlListener);
     _persistence.dispose();
     super.dispose();
   }
@@ -3580,6 +3624,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _captionBoxEnabled = captionBoxEnabled ?? _captionBoxEnabled;
       _bgOffStyle = bgOffStyle ?? _bgOffStyle;
     });
+    VoicevoxConfig.baseUrl.value = _voicevoxUrlController.text.trim();
     if (_ttsEngine == 'VOICEVOX') {
       await _fetchVoicevoxSpeakers();
     }
@@ -3942,17 +3987,6 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               decoration: const InputDecoration(labelText: 'Gemini 音声'),
             ),
           if (_ttsEngine == 'VOICEVOX') ...[
-            TextFormField(
-              controller: _voicevoxUrlController,
-              decoration: const InputDecoration(labelText: 'VOICEVOX エンジンURL'),
-              onChanged: (_) {
-                setState(() {
-                  _voicevoxSpeakers = [];
-                  _voicevoxSpeakersError = null;
-                });
-              },
-            ),
-            const SizedBox(height: 12),
             Row(
               children: [
                 ElevatedButton.icon(
@@ -3979,37 +4013,57 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               ),
             ],
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _voicevoxMode,
-              decoration: const InputDecoration(labelText: '話者モード'),
-              items: const [
-                DropdownMenuItem(value: 'ローテーション', child: Text('ローテーション')),
-                DropdownMenuItem(value: '2人対談', child: Text('2人対談')),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _voicevoxMode,
+                    decoration: const InputDecoration(labelText: '話者モード'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'ローテーション',
+                        child: Text('ローテーション'),
+                      ),
+                      DropdownMenuItem(value: '2人対談', child: Text('2人対談')),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _voicevoxMode = value;
+                      });
+                      _persistence.setString('vv_mode', value);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: _voicevoxRotationController,
+                    decoration:
+                        const InputDecoration(labelText: 'ローテーション話者(カンマ)'),
+                  ),
+                ),
               ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  _voicevoxMode = value;
-                });
-                _persistence.setString('vv_mode', value);
-              },
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _voicevoxRotationController,
-              decoration: const InputDecoration(labelText: 'ローテーション話者(カンマ)'),
-            ),
-            const SizedBox(height: 12),
-            _buildVoicevoxSpeakerDropdown(
-              label: 'キャスター話者',
-              controller: _voicevoxCasterController,
-              persistenceKey: 'vv_caster',
-            ),
-            const SizedBox(height: 12),
-            _buildVoicevoxSpeakerDropdown(
-              label: 'アナリスト話者',
-              controller: _voicevoxAnalystController,
-              persistenceKey: 'vv_analyst',
+            Row(
+              children: [
+                Expanded(
+                  child: _buildVoicevoxSpeakerDropdown(
+                    label: 'キャスター話者',
+                    controller: _voicevoxCasterController,
+                    persistenceKey: 'vv_caster',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildVoicevoxSpeakerDropdown(
+                    label: 'アナリスト話者',
+                    controller: _voicevoxAnalystController,
+                    persistenceKey: 'vv_analyst',
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             Column(
