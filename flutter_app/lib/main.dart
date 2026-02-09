@@ -3767,7 +3767,8 @@ class _LogPanelState extends State<LogPanel> {
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
   String? _currentJobId;
-  double _progress = 0.0;
+  double? _progress;
+  String _progressLabel = '';
   String? _eta;
 
   @override
@@ -3819,15 +3820,28 @@ class _LogPanelState extends State<LogPanel> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: Text('Job: $_currentJobId'),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: LinearProgressIndicator(value: _progress),
-          ),
-          if (_eta != null)
+          if (_progress != null) ...[
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-              child: Text('ETA: $_eta'),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(
+                _progressLabel,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              child: LinearProgressIndicator(value: _progress),
+            ),
+            if (_eta != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: Text('ETA: $_eta'),
+              ),
+          ],
         ],
         const SizedBox(height: 8),
         Expanded(
@@ -3891,7 +3905,8 @@ class _LogPanelState extends State<LogPanel> {
     setState(() {
       _currentJobId = jobId;
       _logs.clear();
-      _progress = 0.0;
+      _progress = null;
+      _progressLabel = '';
       _eta = null;
       _channel = channel;
     });
@@ -3938,14 +3953,21 @@ class _LogPanelState extends State<LogPanel> {
       case 'progress':
         final progress = (payload['progress'] as num?)?.toDouble() ?? 0.0;
         final etaSeconds = payload['eta_seconds'];
-        setState(() {
-          _progress = progress;
-          _eta = etaSeconds == null ? null : '${etaSeconds.toString()} sec';
-        });
-        _addLog(
-          '進捗: ${(progress * 100).toStringAsFixed(1)}% '
-          '${_eta == null ? '' : '(ETA: $_eta)'}',
-        );
+        final nextEta = etaSeconds == null ? null : '${etaSeconds.toString()} sec';
+        final shouldUpdateProgress =
+            _progress == null || (progress - _progress!).abs() >= 0.005;
+        final shouldUpdateEta = nextEta != _eta;
+        if (shouldUpdateProgress || shouldUpdateEta) {
+          setState(() {
+            if (shouldUpdateProgress) {
+              _progress = progress;
+              _progressLabel = '現在 ${(progress * 100).toStringAsFixed(1)}%';
+            }
+            if (shouldUpdateEta) {
+              _eta = nextEta;
+            }
+          });
+        }
         return;
       case 'error':
         _addLog('エラー: ${payload['message']}', level: _LogLevel.error);
@@ -3971,6 +3993,10 @@ class _LogPanelState extends State<LogPanel> {
   void _addLog(String message, { _LogLevel level = _LogLevel.info }) {
     setState(() {
       _logs.add(_LogEntry(timestamp: DateTime.now(), message: message, level: level));
+      const maxLogs = 200;
+      if (_logs.length > maxLogs) {
+        _logs.removeRange(0, _logs.length - maxLogs);
+      }
     });
     _scrollToBottom();
   }
