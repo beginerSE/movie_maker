@@ -1005,6 +1005,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     _persistence.registerController(_promptController, 'prompt');
     _persistence.registerController(_outputController, 'output');
     _persistence.registerController(_maxTokensController, 'max_tokens');
+    _persistence.registerController(_outputTextController, 'output_text');
     _initPersistence();
   }
 
@@ -1348,6 +1349,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
     _persistence.registerController(_scriptPathController, 'script_path');
     _persistence.registerController(_countController, 'count');
     _persistence.registerController(_instructionsController, 'instructions');
+    _persistence.registerController(_outputController, 'output_text');
     _initPersistence();
   }
 
