@@ -12,7 +12,8 @@ import time
 import traceback
 from typing import Any, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+import requests
+from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -31,7 +32,6 @@ from backend.video_core import (
     DEFAULT_TITLE_MAX_TOKENS,
     GEMINI_MATERIAL_DEFAULT_MODEL,
     extract_script_text,
-    fetch_voicevox_speakers,
     generate_materials_with_gemini,
     generate_ponchi_suggestions_with_gemini,
     generate_ponchi_suggestions_with_openai,
@@ -271,10 +271,6 @@ class PonchiImagesResponse(BaseModel):
 
 class JobResponse(BaseModel):
     job_id: str = Field(..., description="Job identifier")
-
-
-class VoicevoxSpeakersResponse(BaseModel):
-    speakers: List[str]
 
 
 class JobStatusResponse(BaseModel):
@@ -554,23 +550,14 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
     return JobResponse(job_id=job.job_id)
 
 
-@app.get("/voicevox/speakers", response_model=VoicevoxSpeakersResponse)
-async def list_voicevox_speakers(base_url: str) -> VoicevoxSpeakersResponse:
-    base_url = (base_url or "").strip()
-    if not base_url:
-        raise HTTPException(status_code=400, detail="base_url is required")
-
+@app.get("/voicevox/speakers")
+async def list_voicevox_speakers(base_url: str = Query(...)) -> Any:
     try:
-        raw = fetch_voicevox_speakers(base_url)
-        names: List[str] = []
-        for sp in raw:
-            name = (sp.get("name") or "").strip()
-            if name:
-                names.append(name)
-        speakers = list(dict.fromkeys(names))
-        return VoicevoxSpeakersResponse(speakers=speakers)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        response = requests.get(f"{base_url}/speakers", timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return response.json()
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
