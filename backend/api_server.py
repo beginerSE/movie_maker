@@ -116,6 +116,22 @@ def _ponchi_ideas_path(output_dir: Optional[str], srt_path: str) -> Optional[pat
     return pathlib.Path(output_dir) / srt_stem / f"{srt_stem}_ponchi_ideas.json"
 
 
+def _validate_video_request(payload: "VideoGenerateRequest") -> None:
+    if not payload.script_path:
+        raise HTTPException(status_code=400, detail="script_path が空です。")
+    script_path = pathlib.Path(payload.script_path)
+    if not script_path.exists():
+        raise HTTPException(status_code=400, detail=f"script_path が見つかりません: {payload.script_path}")
+    if not payload.image_paths:
+        raise HTTPException(status_code=400, detail="image_paths が空です。")
+    missing_images = [path for path in payload.image_paths if not pathlib.Path(path).exists()]
+    if missing_images:
+        detail = "image_paths が見つかりません: " + ", ".join(missing_images[:5])
+        if len(missing_images) > 5:
+            detail += " ..."
+        raise HTTPException(status_code=400, detail=detail)
+
+
 class VideoGenerateRequest(BaseModel):
     api_key: str
     script_path: str
@@ -435,8 +451,13 @@ async def generate_ponchi_images(payload: PonchiImagesRequest) -> PonchiImagesRe
 
 @app.post("/video/generate", response_model=JobResponse)
 async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
-    job = manager.create_job()
-    manager.update_status(job.job_id, "running")
+    _validate_video_request(payload)
+    try:
+        job = manager.create_job()
+        manager.update_status(job.job_id, "running")
+    except Exception as exc:
+        logger.exception("Failed to create job")
+        raise HTTPException(status_code=500, detail=f"ジョブ作成に失敗しました: {exc}") from exc
 
     def log_fn(message: str) -> None:
         manager.add_log(job.job_id, message)
