@@ -50,6 +50,8 @@ class ApiConfig {
   }
 }
 
+typedef ApiHealthCheck = Future<bool> Function();
+
 class ApiKeys {
   static final ValueNotifier<String> gemini = ValueNotifier<String>('');
   static final ValueNotifier<String> openAi = ValueNotifier<String>('');
@@ -466,6 +468,20 @@ class _StudioShellState extends State<StudioShell> {
     return false;
   }
 
+  Future<bool> _checkApiHealthAndUpdate() async {
+    final healthy = await _isApiHealthy();
+    if (healthy) {
+      _setApiServerStatus(ready: true, message: 'API サーバー稼働中');
+      _clearApiServerError();
+    } else {
+      _setApiServerStatus(
+        ready: false,
+        message: 'API サーバーに接続できません。',
+      );
+    }
+    return healthy;
+  }
+
   void _setApiServerStatus({required bool ready, required String message}) {
     if (!mounted) {
       return;
@@ -756,19 +772,28 @@ class _StudioShellState extends State<StudioShell> {
   Widget _buildCenterPanel() {
     switch (_selectedIndex) {
       case 0:
-        return const ScriptGenerateForm();
+        return ScriptGenerateForm(
+          checkApiHealth: _checkApiHealthAndUpdate,
+        );
       case 1:
         return VideoGenerateForm(
+          checkApiHealth: _checkApiHealthAndUpdate,
           onJobSubmitted: (jobId) {
             _latestJobId.value = jobId;
           },
         );
       case 2:
-        return const TitleGenerateForm();
+        return TitleGenerateForm(
+          checkApiHealth: _checkApiHealthAndUpdate,
+        );
       case 3:
-        return const MaterialsGenerateForm();
+        return MaterialsGenerateForm(
+          checkApiHealth: _checkApiHealthAndUpdate,
+        );
       case 4:
-        return const PonchiGenerateForm();
+        return PonchiGenerateForm(
+          checkApiHealth: _checkApiHealthAndUpdate,
+        );
       case 5:
         return const VideoEditForm();
       case 6:
@@ -800,8 +825,13 @@ class PlaceholderPanel extends StatelessWidget {
 }
 
 class VideoGenerateForm extends StatefulWidget {
-  const VideoGenerateForm({super.key, this.onJobSubmitted});
+  const VideoGenerateForm({
+    super.key,
+    required this.checkApiHealth,
+    this.onJobSubmitted,
+  });
 
+  final ApiHealthCheck checkApiHealth;
   final ValueChanged<String?>? onJobSubmitted;
 
   @override
@@ -809,7 +839,12 @@ class VideoGenerateForm extends StatefulWidget {
 }
 
 class ScriptGenerateForm extends StatefulWidget {
-  const ScriptGenerateForm({super.key});
+  const ScriptGenerateForm({
+    super.key,
+    required this.checkApiHealth,
+  });
+
+  final ApiHealthCheck checkApiHealth;
 
   @override
   State<ScriptGenerateForm> createState() => _ScriptGenerateFormState();
@@ -1040,6 +1075,16 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     setState(() {
       _isSubmitting = true;
     });
+    final healthy = await widget.checkApiHealth();
+    if (!healthy) {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+      _showSnackBar('API サーバーに接続できません。');
+      return;
+    }
     try {
       final payload = {
         'api_key': apiKey,
@@ -1110,7 +1155,12 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
 }
 
 class TitleGenerateForm extends StatefulWidget {
-  const TitleGenerateForm({super.key});
+  const TitleGenerateForm({
+    super.key,
+    required this.checkApiHealth,
+  });
+
+  final ApiHealthCheck checkApiHealth;
 
   @override
   State<TitleGenerateForm> createState() => _TitleGenerateFormState();
@@ -1312,6 +1362,16 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
     setState(() {
       _isSubmitting = true;
     });
+    final healthy = await widget.checkApiHealth();
+    if (!healthy) {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+      _showSnackBar('API サーバーに接続できません。');
+      return;
+    }
     try {
       final payload = {
         'api_key': apiKey,
@@ -1362,7 +1422,12 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
 }
 
 class MaterialsGenerateForm extends StatefulWidget {
-  const MaterialsGenerateForm({super.key});
+  const MaterialsGenerateForm({
+    super.key,
+    required this.checkApiHealth,
+  });
+
+  final ApiHealthCheck checkApiHealth;
 
   @override
   State<MaterialsGenerateForm> createState() => _MaterialsGenerateFormState();
@@ -1503,6 +1568,16 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
     setState(() {
       _isSubmitting = true;
     });
+    final healthy = await widget.checkApiHealth();
+    if (!healthy) {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+      _showSnackBar('API サーバーに接続できません。');
+      return;
+    }
     try {
       final payload = {
         'api_key': apiKey,
@@ -1560,7 +1635,12 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
 }
 
 class PonchiGenerateForm extends StatefulWidget {
-  const PonchiGenerateForm({super.key});
+  const PonchiGenerateForm({
+    super.key,
+    required this.checkApiHealth,
+  });
+
+  final ApiHealthCheck checkApiHealth;
 
   @override
   State<PonchiGenerateForm> createState() => _PonchiGenerateFormState();
@@ -1709,6 +1789,16 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     setState(() {
       _isSubmittingIdeas = true;
     });
+    final healthy = await widget.checkApiHealth();
+    if (!healthy) {
+      if (mounted) {
+        setState(() {
+          _isSubmittingIdeas = false;
+        });
+      }
+      _showSnackBar('API サーバーに接続できません。');
+      return;
+    }
     try {
       final payload = {
         'api_key': apiKey,
@@ -1778,6 +1868,16 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     setState(() {
       _isSubmittingImages = true;
     });
+    final healthy = await widget.checkApiHealth();
+    if (!healthy) {
+      if (mounted) {
+        setState(() {
+          _isSubmittingImages = false;
+        });
+      }
+      _showSnackBar('API サーバーに接続できません。');
+      return;
+    }
     try {
       final payload = {
         'api_key': apiKey,
@@ -3187,7 +3287,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _statusMessage = 'Checking API...';
     });
 
-    final isHealthy = await _isApiHealthy();
+    final isHealthy = await widget.checkApiHealth();
     if (!isHealthy) {
       setState(() {
         _statusMessage =
@@ -3287,16 +3387,6 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     }
   }
 
-  Future<bool> _isApiHealthy() async {
-    try {
-      final response = await http
-          .get(ApiConfig.httpUri('/health'))
-          .timeout(const Duration(seconds: 3));
-      return response.statusCode >= 200 && response.statusCode < 300;
-    } catch (_) {
-      return false;
-    }
-  }
 }
 
 class LogPanel extends StatefulWidget {

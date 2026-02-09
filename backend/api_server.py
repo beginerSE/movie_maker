@@ -44,7 +44,15 @@ app = FastAPI(title="News Short Generator Studio API")
 manager = JobManager()
 logger = logging.getLogger("movie_maker.api")
 if not logger.handlers:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    log_path = ROOT_DIR / "backend" / "log.txt"
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+    logger.setLevel(logging.INFO)
 
 
 def _normalize_engine(value: str) -> str:

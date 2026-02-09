@@ -80,7 +80,8 @@ class VideoEditorPage(ttk.Frame):
 # ==========================
 # 設定保存ファイル
 # ==========================
-CONFIG_PATH = Path.home() / ".news_short_generator_studio.json"
+CONFIG_PATH = Path.home() / "Config.json"
+LEGACY_CONFIG_PATH = Path.home() / ".news_short_generator_studio.json"
 
 
 # ==========================
@@ -4810,6 +4811,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_input_entry.delete(0, "end")
             self.edit_input_entry.insert(0, path)
             self._load_edit_video_preview(path)
+            self.save_config()
 
     def browse_edit_output_mp4(self):
         path = filedialog.asksaveasfilename(
@@ -4820,6 +4822,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path:
             self.edit_output_entry.delete(0, "end")
             self.edit_output_entry.insert(0, path)
+            self.save_config()
 
     def browse_edit_overlay_image(self):
         path = filedialog.askopenfilename(
@@ -4830,6 +4833,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.edit_overlay_img_entry.delete(0, "end")
             self.edit_overlay_img_entry.insert(0, path)
             self._load_edit_overlay_preview(path)
+            self.save_config()
 
     def browse_edit_srt(self):
         path = filedialog.askopenfilename(
@@ -4839,6 +4843,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path and hasattr(self, "edit_srt_entry"):
             self.edit_srt_entry.delete(0, "end")
             self.edit_srt_entry.insert(0, path)
+            self.save_config()
 
     def browse_ponchi_srt(self):
         path = filedialog.askopenfilename(
@@ -4848,18 +4853,21 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path and hasattr(self, "ponchi_srt_entry"):
             self.ponchi_srt_entry.delete(0, "end")
             self.ponchi_srt_entry.insert(0, path)
+            self.save_config()
 
     def browse_ponchi_output_dir(self):
         path = filedialog.askdirectory(title="出力フォルダを選択")
         if path and hasattr(self, "ponchi_output_dir_entry"):
             self.ponchi_output_dir_entry.delete(0, "end")
             self.ponchi_output_dir_entry.insert(0, path)
+            self.save_config()
 
     def browse_edit_image_output_dir(self):
         path = filedialog.askdirectory(title="画像の保存先フォルダを選択")
         if path and hasattr(self, "edit_image_output_entry"):
             self.edit_image_output_entry.delete(0, "end")
             self.edit_image_output_entry.insert(0, path)
+            self.save_config()
 
     def add_edit_overlay(self):
         try:
@@ -5320,6 +5328,11 @@ class NewsShortGeneratorStudio(ctk.CTk):
     # Config
     # --------------------------
     def load_config(self):
+        if not CONFIG_PATH.exists() and LEGACY_CONFIG_PATH.exists():
+            try:
+                LEGACY_CONFIG_PATH.replace(CONFIG_PATH)
+            except Exception:
+                pass
         if not CONFIG_PATH.exists():
             # 初回はテンプレだけ初期化
             self.prompt_templates = self._default_prompt_templates()
@@ -6713,6 +6726,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path:
             self.script_entry.delete(0, "end")
             self.script_entry.insert(0, path)
+            self.save_config()
 
     def browse_title_script(self):
         path = filedialog.askopenfilename(
@@ -6722,6 +6736,7 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path and hasattr(self, "title_script_entry"):
             self.title_script_entry.delete(0, "end")
             self.title_script_entry.insert(0, path)
+            self.save_config()
 
     def add_images(self):
         paths = filedialog.askopenfilenames(
@@ -6732,10 +6747,12 @@ class NewsShortGeneratorStudio(ctk.CTk):
             self.image_paths.extend(paths)
             self.image_paths = list(dict.fromkeys(self.image_paths))
             self.refresh_image_listbox()
+            self.save_config()
 
     def clear_images(self):
         self.image_paths = []
         self.refresh_image_listbox()
+        self.save_config()
 
     def refresh_image_listbox(self):
         self.img_listbox.delete("1.0", "end")
@@ -6750,12 +6767,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path:
             self.bgm_entry.delete(0, "end")
             self.bgm_entry.insert(0, path)
+            self.save_config()
 
     def browse_output(self):
         path = filedialog.askdirectory(title="出力フォルダを選択")
         if path:
             self.output_entry.delete(0, "end")
             self.output_entry.insert(0, path)
+            self.save_config()
 
     def browse_script_save_path(self):
         path = filedialog.asksaveasfilename(
@@ -6766,12 +6785,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
         if path:
             self.script_save_path_entry.delete(0, "end")
             self.script_save_path_entry.insert(0, path)
+            self.save_config()
 
     def browse_material_save_path(self):
         path = filedialog.askdirectory(title="画像の保存先フォルダを選択")
         if path:
             self.material_save_path_entry.delete(0, "end")
             self.material_save_path_entry.insert(0, path)
+            self.save_config()
 
     # --------------------------
     # Script generation actions
