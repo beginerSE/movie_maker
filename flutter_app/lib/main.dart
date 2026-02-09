@@ -690,16 +690,6 @@ class _StudioShellState extends State<StudioShell> {
                         indicatorShape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        overlayColor: MaterialStateProperty.resolveWith<Color?>(
-                          (states) {
-                            if (states.contains(MaterialState.hovered) ||
-                                states.contains(MaterialState.focused) ||
-                                states.contains(MaterialState.pressed)) {
-                              return Colors.black.withOpacity(0.06);
-                            }
-                            return Colors.transparent;
-                          },
-                        ),
                       ),
                       child: NavigationRail(
                         extended: true,
