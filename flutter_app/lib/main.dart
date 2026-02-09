@@ -33,6 +33,42 @@ String _joinPaths(String basePath, String relativePath) {
   return '$normalizedBase$normalizedRelative';
 }
 
+Uri _normalizeVoicevoxSpeakersUri(String baseUrl) {
+  final rawUri = Uri.parse(baseUrl.trim());
+  var path = rawUri.path;
+  if (path.endsWith('/speakers')) {
+    path = path.substring(0, path.length - '/speakers'.length);
+  } else if (path.endsWith('/speaker')) {
+    path = path.substring(0, path.length - '/speaker'.length);
+  }
+  final speakersPath = _joinPaths(path, '/speakers');
+  return rawUri.replace(path: speakersPath);
+}
+
+List<String> _extractVoicevoxSpeakerNames(dynamic data) {
+  if (data is! List) {
+    return [];
+  }
+  final names = <String>[];
+  final seen = <String>{};
+  for (final item in data) {
+    if (item is! Map<String, dynamic>) {
+      continue;
+    }
+    final name = item['name'];
+    if (name is! String) {
+      continue;
+    }
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || seen.contains(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    names.add(trimmed);
+  }
+  return names;
+}
+
 class ApiConfig {
   static final ValueNotifier<String> baseUrl =
       ValueNotifier<String>(_defaultApiBaseUrl());
@@ -3354,20 +3390,35 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             _voicevoxAnalystController.text = speakers.first;
           }
         }
+      } else if (response.statusCode == 404) {
+        final fallbackSpeakers =
+            await _fetchVoicevoxSpeakersDirect(baseUrl);
+        if (fallbackSpeakers.isNotEmpty) {
+          setState(() {
+            _voicevoxSpeakers = fallbackSpeakers;
+            _voicevoxSpeakersError = null;
+          });
+          if (_voicevoxCasterController.text.trim().isEmpty) {
+            _voicevoxCasterController.text = fallbackSpeakers.first;
+          }
+          if (_voicevoxAnalystController.text.trim().isEmpty) {
+            _voicevoxAnalystController.text = fallbackSpeakers.first;
+          }
+          return;
+        }
+        setState(() {
+          final apiBase = ApiConfig.baseUrl.value.trim();
+          final engineUrl = baseUrl;
+          _voicevoxSpeakersError =
+              '取得に失敗しました (404)。APIサーバURLとVOICEVOX エンジンURLを確認してください。\n'
+              'APIサーバURL例: http://127.0.0.1:8000\n'
+              '現在のAPIサーバURL: $apiBase\n'
+              'VOICEVOX エンジンURL: $engineUrl';
+        });
       } else {
         setState(() {
-          if (response.statusCode == 404) {
-            final apiBase = ApiConfig.baseUrl.value.trim();
-            final engineUrl = baseUrl;
-            _voicevoxSpeakersError =
-                '取得に失敗しました (404)。APIサーバURLとVOICEVOX エンジンURLを確認してください。\n'
-                'APIサーバURL例: http://127.0.0.1:8000\n'
-                '現在のAPIサーバURL: $apiBase\n'
-                'VOICEVOX エンジンURL: $engineUrl';
-          } else {
-            _voicevoxSpeakersError =
-                '取得に失敗しました (${response.statusCode})';
-          }
+          _voicevoxSpeakersError =
+              '取得に失敗しました (${response.statusCode})';
         });
       }
     } on TimeoutException {
@@ -3384,6 +3435,18 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
         _voicevoxSpeakersLoading = false;
       });
     }
+  }
+
+  Future<List<String>> _fetchVoicevoxSpeakersDirect(String baseUrl) async {
+    final directUri = _normalizeVoicevoxSpeakersUri(baseUrl);
+    final response = await http
+        .get(directUri)
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return [];
+    }
+    final data = jsonDecode(response.body);
+    return _extractVoicevoxSpeakerNames(data);
   }
 
   Widget _buildVoicevoxSpeakerDropdown({
