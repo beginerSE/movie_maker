@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() {
@@ -173,6 +174,7 @@ class _StudioShellState extends State<StudioShell> {
   Directory? _apiServerRoot;
   int _apiServerPort = 8000;
   final ValueNotifier<String?> _latestJobId = ValueNotifier<String?>(null);
+  static const double _navDotSize = 10;
 
   @override
   void initState() {
@@ -679,6 +681,7 @@ class _StudioShellState extends State<StudioShell> {
                       ],
                     ),
                     child: NavigationRail(
+                      extended: true,
                       selectedIndex: _selectedIndex,
                       onDestinationSelected: (index) {
                         setState(() {
@@ -769,8 +772,14 @@ class _StudioShellState extends State<StudioShell> {
                       destinations: _pages
                           .map(
                             (page) => NavigationRailDestination(
-                              icon: const SizedBox.shrink(),
-                              selectedIcon: const SizedBox.shrink(),
+                              icon: _buildNavDot(
+                                context,
+                                isSelected: false,
+                              ),
+                              selectedIcon: _buildNavDot(
+                                context,
+                                isSelected: true,
+                              ),
                               label: Text(page),
                             ),
                           )
@@ -806,6 +815,29 @@ class _StudioShellState extends State<StudioShell> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildNavDot(BuildContext context, {required bool isSelected}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: _navDotSize,
+      height: _navDotSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: isSelected ? colorScheme.primary : Colors.white,
+        border: Border.all(
+          color: isSelected ? colorScheme.primary : const Color(0xFFD6DBE6),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
     );
   }
@@ -2910,6 +2942,7 @@ class _SettingsFormState extends State<SettingsForm> {
 }
 
 class _VideoGenerateFormState extends State<VideoGenerateForm> {
+  static const String _prefsPrefix = 'video_generate.';
   final _formKey = GlobalKey<FormState>();
   final _scriptController = TextEditingController();
   final _imageListController = TextEditingController();
@@ -2942,6 +2975,12 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   String _statusMessage = 'Ready';
 
   @override
+  void initState() {
+    super.initState();
+    _loadSavedValues();
+  }
+
+  @override
   void dispose() {
     _scriptController.dispose();
     _imageListController.dispose();
@@ -2962,6 +3001,135 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     _captionBoxHeightController.dispose();
     _bgmController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadSavedValues() async {
+    final prefs = await SharedPreferences.getInstance();
+    _setIfSaved(_scriptController, prefs.getString('${_prefsPrefix}script'));
+    _setIfSaved(_imageListController, prefs.getString('${_prefsPrefix}images'));
+    _setIfSaved(_outputController, prefs.getString('${_prefsPrefix}output'));
+    _setIfSaved(_widthController, prefs.getString('${_prefsPrefix}width'));
+    _setIfSaved(_heightController, prefs.getString('${_prefsPrefix}height'));
+    _setIfSaved(_fpsController, prefs.getString('${_prefsPrefix}fps'));
+    _setIfSaved(_voiceController, prefs.getString('${_prefsPrefix}voice'));
+    _setIfSaved(_voicevoxUrlController, prefs.getString('${_prefsPrefix}vv_url'));
+    _setIfSaved(
+      _voicevoxRotationController,
+      prefs.getString('${_prefsPrefix}vv_rotation'),
+    );
+    _setIfSaved(
+      _voicevoxCasterController,
+      prefs.getString('${_prefsPrefix}vv_caster'),
+    );
+    _setIfSaved(
+      _voicevoxAnalystController,
+      prefs.getString('${_prefsPrefix}vv_analyst'),
+    );
+    _setIfSaved(
+      _captionFontSizeController,
+      prefs.getString('${_prefsPrefix}caption_font_size'),
+    );
+    _setIfSaved(
+      _captionAlphaController,
+      prefs.getString('${_prefsPrefix}caption_alpha'),
+    );
+    _setIfSaved(
+      _captionTextColorController,
+      prefs.getString('${_prefsPrefix}caption_text_color'),
+    );
+    _setIfSaved(
+      _speakerFontSizeController,
+      prefs.getString('${_prefsPrefix}speaker_font_size'),
+    );
+    _setIfSaved(
+      _captionMaxCharsController,
+      prefs.getString('${_prefsPrefix}caption_max_chars'),
+    );
+    _setIfSaved(
+      _captionBoxHeightController,
+      prefs.getString('${_prefsPrefix}caption_box_height'),
+    );
+    _setIfSaved(_bgmController, prefs.getString('${_prefsPrefix}bgm_path'));
+
+    setState(() {
+      _useBgm = prefs.getBool('${_prefsPrefix}use_bgm') ?? _useBgm;
+      _bgmGainDb = prefs.getDouble('${_prefsPrefix}bgm_gain_db') ?? _bgmGainDb;
+      _ttsEngine = prefs.getString('${_prefsPrefix}tts_engine') ?? _ttsEngine;
+      _voicevoxMode =
+          prefs.getString('${_prefsPrefix}vv_mode') ?? _voicevoxMode;
+      _voicevoxSpeed =
+          prefs.getDouble('${_prefsPrefix}vv_speed') ?? _voicevoxSpeed;
+      _captionBoxEnabled =
+          prefs.getBool('${_prefsPrefix}caption_box_enabled') ??
+              _captionBoxEnabled;
+      _bgOffStyle = prefs.getString('${_prefsPrefix}bg_off_style') ?? _bgOffStyle;
+    });
+  }
+
+  void _setIfSaved(TextEditingController controller, String? value) {
+    if (value == null || value.isEmpty) {
+      return;
+    }
+    controller.text = value;
+  }
+
+  Future<void> _persistFormValues() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('${_prefsPrefix}script', _scriptController.text);
+    await prefs.setString('${_prefsPrefix}images', _imageListController.text);
+    await prefs.setString('${_prefsPrefix}output', _outputController.text);
+    await prefs.setString('${_prefsPrefix}width', _widthController.text);
+    await prefs.setString('${_prefsPrefix}height', _heightController.text);
+    await prefs.setString('${_prefsPrefix}fps', _fpsController.text);
+    await prefs.setString('${_prefsPrefix}voice', _voiceController.text);
+    await prefs.setString('${_prefsPrefix}vv_url', _voicevoxUrlController.text);
+    await prefs.setString(
+      '${_prefsPrefix}vv_rotation',
+      _voicevoxRotationController.text,
+    );
+    await prefs.setString(
+      '${_prefsPrefix}vv_caster',
+      _voicevoxCasterController.text,
+    );
+    await prefs.setString(
+      '${_prefsPrefix}vv_analyst',
+      _voicevoxAnalystController.text,
+    );
+    await prefs.setString(
+      '${_prefsPrefix}caption_font_size',
+      _captionFontSizeController.text,
+    );
+    await prefs.setString(
+      '${_prefsPrefix}caption_alpha',
+      _captionAlphaController.text,
+    );
+    await prefs.setString(
+      '${_prefsPrefix}caption_text_color',
+      _captionTextColorController.text,
+    );
+    await prefs.setString(
+      '${_prefsPrefix}speaker_font_size',
+      _speakerFontSizeController.text,
+    );
+    await prefs.setString(
+      '${_prefsPrefix}caption_max_chars',
+      _captionMaxCharsController.text,
+    );
+    await prefs.setString(
+      '${_prefsPrefix}caption_box_height',
+      _captionBoxHeightController.text,
+    );
+    await prefs.setString('${_prefsPrefix}bgm_path', _bgmController.text);
+    await prefs.setBool('${_prefsPrefix}use_bgm', _useBgm);
+    await prefs.setDouble('${_prefsPrefix}bgm_gain_db', _bgmGainDb);
+    await prefs.setString('${_prefsPrefix}tts_engine', _ttsEngine);
+    await prefs.setString('${_prefsPrefix}vv_mode', _voicevoxMode);
+    await prefs.setDouble('${_prefsPrefix}vv_speed', _voicevoxSpeed);
+    await prefs.setBool(
+      '${_prefsPrefix}caption_box_enabled',
+      _captionBoxEnabled,
+    );
+    await prefs.setString('${_prefsPrefix}bg_off_style', _bgOffStyle);
   }
 
   @override
@@ -3319,6 +3487,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   }
 
   Future<void> _submitJob() async {
+    await _persistFormValues();
     if (!_formKey.currentState!.validate()) {
       return;
     }
