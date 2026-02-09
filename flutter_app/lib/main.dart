@@ -728,8 +728,8 @@ class _StudioShellState extends State<StudioShell> {
                       destinations: _pages
                           .map(
                             (page) => NavigationRailDestination(
-                              icon: const Icon(Icons.circle_outlined),
-                              selectedIcon: const Icon(Icons.circle),
+                              icon: const SizedBox.shrink(),
+                              selectedIcon: const SizedBox.shrink(),
                               label: Text(page),
                             ),
                           )
