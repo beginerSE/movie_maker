@@ -45,3 +45,110 @@ Windows の設定画面でシステム全体の仮想メモリを増やしてく
 2. **パフォーマンス** → **設定** → **詳細設定** → **仮想メモリ** → **変更**
 3. 「すべてのドライブのページング ファイルのサイズを自動的に管理する」のチェックを外し、
    カスタムサイズを指定して再起動
+
+## Windows 向け配布の具体例（PyInstaller + Flutter 連携）
+
+### 1. PyInstaller の `.spec` 例
+
+`backend/api_server.py` にある FastAPI アプリを PyInstaller で単体実行ファイル化する例です。
+UI からは `movie_maker_api.exe` を起動し、`http://localhost:8000` を使う前提です。
+
+> 注意: `datas` や `hiddenimports` はプロジェクト依存です。
+> モデルファイルやテンプレート類があれば `datas` に追加してください。
+
+```python
+# movie_maker_api.spec
+# ビルド例: pyinstaller --clean --noconfirm movie_maker_api.spec
+from PyInstaller.utils.hooks import collect_submodules
+
+hiddenimports = collect_submodules("backend")
+
+block_cipher = None
+
+a = Analysis(
+    ["backend/api_server.py"],
+    pathex=["."],
+    binaries=[],
+    datas=[],
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="movie_maker_api",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=True,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    name="movie_maker_api",
+)
+```
+
+### 2. Flutter 側の `Process.start()` 実装例
+
+`flutter_app/lib/main.dart` の初期化処理（例: `initState` など）から、
+同梱された API サーバー exe を起動する例です。
+
+> 注意: 実際の配置場所に合わせてパスを調整してください。
+
+```dart
+import 'dart:io';
+import 'package:path/path.dart' as p;
+
+Process? _apiProcess;
+
+Future<void> startApiServer() async {
+  final exeDir = File(Platform.resolvedExecutable).parent.path;
+  final apiExePath = p.join(exeDir, 'api', 'movie_maker_api.exe');
+
+  if (!await File(apiExePath).exists()) {
+    throw Exception('API サーバーが見つかりません: $apiExePath');
+  }
+
+  _apiProcess = await Process.start(
+    apiExePath,
+    ['--host', '127.0.0.1', '--port', '8000'],
+    mode: ProcessStartMode.detachedWithStdio,
+  );
+}
+
+Future<void> stopApiServer() async {
+  _apiProcess?.kill();
+  _apiProcess = null;
+}
+```
+
+### 3. 配布フォルダの整理方法（例）
+
+Flutter ビルド成果物に API サーバーを同梱する例です。
+
+```
+MovieMaker/
+  MovieMaker.exe                  (Flutter)
+  data/                           (Flutter の標準フォルダ)
+  api/
+    movie_maker_api.exe           (PyInstaller)
+    ...必要な DLL / モデル / 設定...
+```
+
+この構成を前提に、Flutter から `api/movie_maker_api.exe` を起動します。
+API 側は `http://localhost:8000` で待ち受ける想定です。
