@@ -12,7 +12,6 @@ import time
 import traceback
 from typing import Any, List, Optional
 
-import requests
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -41,6 +40,7 @@ from backend.video_core import (
     generate_video,
     parse_srt_file,
     resolve_gemini_material_model,
+    fetch_voicevox_speakers,
 )
 
 app = FastAPI(title="News Short Generator Studio API")
@@ -553,11 +553,22 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
 @app.get("/voicevox/speakers")
 async def list_voicevox_speakers(base_url: str = Query(...)) -> Any:
     try:
-        response = requests.get(f"{base_url}/speakers", timeout=10)
-        response.raise_for_status()
-    except requests.RequestException as exc:
+        speakers = fetch_voicevox_speakers(base_url)
+    except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return response.json()
+
+    names: List[str] = []
+    seen = set()
+    for speaker in speakers:
+        name = speaker.get("name") if isinstance(speaker, dict) else None
+        if not isinstance(name, str):
+            continue
+        name = name.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return {"speakers": names}
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
