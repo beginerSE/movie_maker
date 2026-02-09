@@ -454,9 +454,9 @@ class _StudioShellState extends State<StudioShell> {
           [
             '-NoProfile',
             '-Command',
-            'Get-NetTCPConnection -LocalPort $port '
+            'Get-NetTCPConnection -LocalPort ${port} '
                 '| Select-Object -ExpandProperty OwningProcess '
-                '| ForEach-Object { Stop-Process -Id $_ -Force }',
+                '| ForEach-Object { Stop-Process -Id \$_ -Force }',
           ],
           runInShell: true,
         );
@@ -465,8 +465,8 @@ class _StudioShellState extends State<StudioShell> {
           'sh',
           [
             '-c',
-            'pids=$(lsof -ti tcp:$port 2>/dev/null); '
-                'if [ -n "$pids" ]; then kill -9 $pids; fi',
+            'pids=\$(lsof -ti tcp:${port} 2>/dev/null); '
+                'if [ -n "\$pids" ]; then kill -9 \$pids; fi',
           ],
           runInShell: true,
         );
