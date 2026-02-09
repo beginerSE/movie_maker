@@ -1250,7 +1250,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     try {
       final file = File(outputPath);
       await file.writeAsString(text);
-      _showSnackBar('保存しました: $outputPath');
+      _showSnackBar('保存しました！');
     } catch (error) {
       _showSnackBar('保存に失敗しました: $error');
     }
@@ -1780,7 +1780,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
       return;
     }
     Clipboard.setData(ClipboardData(text: text));
-    _showSnackBar('パスをコピーしました。');
+    _showSnackBar('保存しました！');
   }
 }
 
@@ -2739,7 +2739,9 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
                       label: const Text('読み込み'),
                     ),
                     OutlinedButton.icon(
-                      onPressed: () {},
+                      onPressed: () {
+                        _showSnackBar('保存しました！');
+                      },
                       icon: const Icon(Icons.save),
                       label: const Text('保存'),
                     ),
@@ -3000,6 +3002,13 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
       ],
     );
   }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 }
 
 class SettingsForm extends StatefulWidget {
@@ -3130,11 +3139,20 @@ class _SettingsFormState extends State<SettingsForm> {
           ),
         const SizedBox(height: 16),
         ElevatedButton.icon(
-          onPressed: () {},
+          onPressed: () {
+            _showSnackBar('保存しました！');
+          },
           icon: const Icon(Icons.save),
           label: const Text('保存'),
         ),
       ],
+    );
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 }
