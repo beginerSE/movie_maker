@@ -15,6 +15,19 @@ from typing import Any, List, Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from pathlib import Path
+
+
+from pathlib import Path
+
+def app_root() -> Path:
+    # PyInstaller exe で動いているときは exe のあるフォルダ
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    # 通常実行（python api_server.py）のときはこのファイルのフォルダ
+    return Path(__file__).resolve().parent
+
+APP_ROOT = app_root()
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -48,6 +61,8 @@ manager = JobManager()
 logger = logging.getLogger("movie_maker.api")
 if not logger.handlers:
     log_path = ROOT_DIR / "backend" / "log.txt"
+    log_path.parent.mkdir(parents=True, exist_ok=True)  # ★追加：backend/ を作る
+
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
@@ -620,3 +635,7 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
         return
     finally:
         manager.unsubscribe(job_id, subscriber)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
