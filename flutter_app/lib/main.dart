@@ -682,107 +682,127 @@ class _StudioShellState extends State<StudioShell> {
                         ),
                       ],
                     ),
-                    child: NavigationRail(
-                      extended: true,
-                      selectedIndex: _selectedIndex,
-                      onDestinationSelected: (index) {
-                        setState(() {
-                          _selectedIndex = index;
-                        });
-                      },
-                      labelType: NavigationRailLabelType.all,
-                      leading: Padding(
-                        padding: const EdgeInsets.only(top: 24, bottom: 16),
-                        child: Column(
-                          children: [
-                            CircleAvatar(
-                              radius: 24,
-                              backgroundColor: Theme.of(context)
-                                  .colorScheme
-                                  .primary
-                                  .withOpacity(0.15),
-                              child: Icon(
-                                Icons.movie_creation,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            const Text(
-                              'Studio',
-                              style: TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 12),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _apiServerReady
-                                    ? const Color(0xFFE7F7EF)
-                                    : _apiServerStarting
-                                        ? const Color(0xFFFFF4E1)
-                                        : const Color(0xFFFFECEC),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: _apiServerReady
-                                      ? const Color(0xFFBEE8D0)
-                                      : _apiServerStarting
-                                          ? const Color(0xFFFFD29A)
-                                          : const Color(0xFFF7B8B8),
+                    child: NavigationRailTheme(
+                      data: NavigationRailThemeData(
+                        backgroundColor: Colors.transparent,
+                        useIndicator: true,
+                        indicatorColor: Colors.black.withOpacity(0.06),
+                        indicatorShape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        overlayColor: MaterialStateProperty.resolveWith<Color?>(
+                          (states) {
+                            if (states.contains(MaterialState.hovered) ||
+                                states.contains(MaterialState.focused) ||
+                                states.contains(MaterialState.pressed)) {
+                              return Colors.black.withOpacity(0.06);
+                            }
+                            return Colors.transparent;
+                          },
+                        ),
+                      ),
+                      child: NavigationRail(
+                        extended: true,
+                        selectedIndex: _selectedIndex,
+                        onDestinationSelected: (index) {
+                          setState(() {
+                            _selectedIndex = index;
+                          });
+                        },
+                        labelType: NavigationRailLabelType.all,
+                        leading: Padding(
+                          padding: const EdgeInsets.only(top: 24, bottom: 16),
+                          child: Column(
+                            children: [
+                              CircleAvatar(
+                                radius: 24,
+                                backgroundColor: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withOpacity(0.15),
+                                child: Icon(
+                                  Icons.movie_creation,
+                                  color: Theme.of(context).colorScheme.primary,
                                 ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    _apiServerReady
-                                        ? Icons.cloud_done
-                                        : _apiServerStarting
-                                            ? Icons.cloud_sync
-                                            : Icons.cloud_off,
-                                    size: 16,
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Studio',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _apiServerReady
+                                      ? const Color(0xFFE7F7EF)
+                                      : _apiServerStarting
+                                          ? const Color(0xFFFFF4E1)
+                                          : const Color(0xFFFFECEC),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
                                     color: _apiServerReady
-                                        ? Colors.green.shade700
+                                        ? const Color(0xFFBEE8D0)
                                         : _apiServerStarting
-                                            ? Colors.orange.shade700
-                                            : Colors.red.shade700,
+                                            ? const Color(0xFFFFD29A)
+                                            : const Color(0xFFF7B8B8),
                                   ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    _apiServerReady
-                                        ? 'API 稼働中'
-                                        : _apiServerStarting
-                                            ? 'API 起動中'
-                                            : 'API 停止中',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      _apiServerReady
+                                          ? Icons.cloud_done
+                                          : _apiServerStarting
+                                              ? Icons.cloud_sync
+                                              : Icons.cloud_off,
+                                      size: 16,
                                       color: _apiServerReady
-                                          ? Colors.green.shade800
+                                          ? Colors.green.shade700
                                           : _apiServerStarting
                                               ? Colors.orange.shade700
                                               : Colors.red.shade700,
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      _apiServerReady
+                                          ? 'API 稼働中'
+                                          : _apiServerStarting
+                                              ? 'API 起動中'
+                                              : 'API 停止中',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: _apiServerReady
+                                            ? Colors.green.shade800
+                                            : _apiServerStarting
+                                                ? Colors.orange.shade700
+                                                : Colors.red.shade700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
+                        destinations: _pages
+                            .map(
+                              (page) => NavigationRailDestination(
+                                icon: const SizedBox.shrink(),
+                                selectedIcon: const SizedBox.shrink(),
+                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                label: Text('○ $page'),
+                              ),
+                            )
+                            .toList(),
                       ),
-                      destinations: _pages
-                          .map(
-                            (page) => NavigationRailDestination(
-                              icon: const SizedBox.shrink(),
-                              selectedIcon: const SizedBox.shrink(),
-                              label: Text(page),
-                            ),
-                          )
-                          .toList(),
                     ),
                   ),
-                  const VerticalDivider(width: 1),
                   Expanded(
                     flex: 3,
                     child: Padding(
@@ -795,7 +815,6 @@ class _StudioShellState extends State<StudioShell> {
                       ),
                     ),
                   ),
-                  const VerticalDivider(width: 1),
                   Expanded(
                     flex: 2,
                     child: Card(
