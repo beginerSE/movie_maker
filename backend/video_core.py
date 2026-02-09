@@ -586,6 +586,10 @@ class TkMoviePyLogger(ProgressBarLogger):
         self.progress_fn = progress_fn
         self.base = float(base)
         self.span = float(span)
+        self._last_progress: Optional[float] = None
+        self._last_emit_time = 0.0
+        self._min_step = 0.005
+        self._min_interval = 0.2
 
     def bars_callback(self, bar, attr, value, old_value=None):
         if bar != "frame_index" or attr != "index":
@@ -612,10 +616,19 @@ class TkMoviePyLogger(ProgressBarLogger):
                 eta = max(0.0, total_est - float(elapsed))
 
             if self.progress_fn:
-                try:
-                    self.progress_fn(v, eta)
-                except TypeError:
-                    self.progress_fn(v)
+                now = time.monotonic()
+                if (
+                    self._last_progress is None
+                    or abs(v - self._last_progress) >= self._min_step
+                    or (now - self._last_emit_time) >= self._min_interval
+                    or v >= 1.0
+                ):
+                    self._last_progress = v
+                    self._last_emit_time = now
+                    try:
+                        self.progress_fn(v, eta)
+                    except TypeError:
+                        self.progress_fn(v)
 
         except Exception:
             pass
@@ -652,9 +665,26 @@ def generate_video(
     bg_off_style: str = DEFAULT_BG_OFF_STYLE,
     caption_text_color: str = DEFAULT_CAPTION_TEXT_COLOR,
 ) -> None:
+    last_progress: Optional[float] = None
+    last_emit_time = 0.0
+    min_step = 0.005
+    min_interval = 0.2
+
     def update_progress(v: float):
-        if progress_fn is not None:
-            progress_fn(max(0.0, min(1.0, float(v))))
+        nonlocal last_progress, last_emit_time
+        if progress_fn is None:
+            return
+        value = max(0.0, min(1.0, float(v)))
+        now = time.monotonic()
+        if (
+            last_progress is None
+            or abs(value - last_progress) >= min_step
+            or (now - last_emit_time) >= min_interval
+            or value >= 1.0
+        ):
+            last_progress = value
+            last_emit_time = now
+            progress_fn(value)
 
     try:
         output_dir_path = Path(output_dir)
