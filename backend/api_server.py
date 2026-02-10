@@ -60,7 +60,22 @@ from backend.video_core import (
     fetch_voicevox_speakers,
 )
 
+class StripApiPrefixMiddleware:
+    """Allow clients to access endpoints with or without an `/api` prefix."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if path == "/api" or path.startswith("/api/"):
+            stripped = path[4:] or "/"
+            scope = {**scope, "path": stripped}
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(title="News Short Generator Studio API")
+app.add_middleware(StripApiPrefixMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
