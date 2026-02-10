@@ -2445,6 +2445,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         'api_key': apiKey,
         'srt_path': _srtController.text,
         'output_dir': _outputController.text.trim(),
+        'model': _geminiModelController.text.trim(),
       };
       final response = await http
           .post(
