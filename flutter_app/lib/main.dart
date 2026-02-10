@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:video_player/video_player.dart';
 import 'config/input_persistence.dart';
 
 Future<void> main() async {
@@ -4941,6 +4942,9 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   bool _isSubmitting = false;
   String? _jobId;
   String _statusMessage = 'Ready';
+  String? _generatedVideoPath;
+  VideoPlayerController? _previewController;
+  bool _previewInitializing = false;
   List<String> _voicevoxSpeakers = [];
   bool _voicevoxSpeakersLoading = false;
   String? _voicevoxSpeakersError;
@@ -4957,6 +4961,91 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     }
     final prefs = await SharedPreferences.getInstance();
     return (prefs.getString(_flowScriptPrefsKey()) ?? '').trim();
+  }
+
+  String _expectedVideoPath(String scriptPath, String outputDir) {
+    final stem = File(scriptPath).uri.pathSegments.isEmpty
+        ? 'output'
+        : File(scriptPath).uri.pathSegments.last.split('.').first;
+    final baseDir = outputDir.trim().isEmpty ? Directory.current.path : outputDir.trim();
+    return '$baseDir${Platform.pathSeparator}$stem.mp4';
+  }
+
+  Future<void> _initVideoPreview(String videoPath) async {
+    final file = File(videoPath);
+    if (!await file.exists()) {
+      return;
+    }
+    setState(() {
+      _previewInitializing = true;
+      _generatedVideoPath = videoPath;
+    });
+    try {
+      final old = _previewController;
+      final controller = VideoPlayerController.file(file);
+      await controller.initialize();
+      await old?.dispose();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _previewController = controller;
+        _previewInitializing = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _previewInitializing = false;
+      });
+    }
+  }
+
+  Future<void> _watchJobUntilFinished({
+    required String jobId,
+    required String scriptPath,
+    required String outputDir,
+  }) async {
+    final fallbackVideoPath = _expectedVideoPath(scriptPath, outputDir);
+    for (var i = 0; i < 180; i += 1) {
+      if (!mounted || _jobId != jobId) {
+        return;
+      }
+      try {
+        final response = await http
+            .get(ApiConfig.httpUri('/jobs/$jobId'))
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          continue;
+        }
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final status = (data['status'] as String? ?? '').trim().toLowerCase();
+        if (status == 'completed') {
+          final result = data['result'] as Map<String, dynamic>? ?? {};
+          final videoPath = (result['video_path'] as String? ?? '').trim();
+          final resolvedPath = videoPath.isEmpty ? fallbackVideoPath : videoPath;
+          await _initVideoPreview(resolvedPath);
+          if (!mounted) return;
+          setState(() {
+            _statusMessage = 'Completed';
+          });
+          widget.jobInProgress.value = false;
+          return;
+        }
+        if (status == 'error') {
+          if (!mounted) return;
+          setState(() {
+            _statusMessage = 'Error: ジョブ失敗';
+          });
+          widget.jobInProgress.value = false;
+          return;
+        }
+      } catch (_) {
+        // ignore transient polling errors
+      }
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
   }
 
   @override
@@ -5036,6 +5125,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     _captionMaxCharsController.dispose();
     _captionBoxHeightController.dispose();
     _bgmController.dispose();
+    _previewController?.dispose();
     VoicevoxConfig.baseUrl.removeListener(_voicevoxUrlListener);
     ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
@@ -5697,6 +5787,61 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             const SizedBox(height: 12),
             SelectableText('Job ID: $_jobId'),
           ],
+          const SizedBox(height: 16),
+          Text('生成動画プレビュー', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (_previewInitializing) const LinearProgressIndicator(),
+          if (_generatedVideoPath != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(_generatedVideoPath!, style: Theme.of(context).textTheme.bodySmall),
+            ),
+          if (_previewController != null && _previewController!.value.isInitialized)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AspectRatio(
+                  aspectRatio: _previewController!.value.aspectRatio,
+                  child: VideoPlayer(_previewController!),
+                ),
+                const SizedBox(height: 8),
+                VideoProgressIndicator(
+                  _previewController!,
+                  allowScrubbing: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    FilledButton.icon(
+                      onPressed: () {
+                        final c = _previewController!;
+                        if (c.value.isPlaying) {
+                          c.pause();
+                        } else {
+                          c.play();
+                        }
+                        setState(() {});
+                      },
+                      icon: Icon(_previewController!.value.isPlaying ? Icons.pause : Icons.play_arrow),
+                      label: Text(_previewController!.value.isPlaying ? '一時停止' : '再生'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final path = _generatedVideoPath;
+                        if (path == null || path.isEmpty) return;
+                        await _initVideoPreview(path);
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('再読込'),
+                    ),
+                  ],
+                ),
+              ],
+            )
+          else
+            const Text('動画生成完了後にここでプレビュー再生できます。'),
         ],
       ),
     );
@@ -5710,6 +5855,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     setState(() {
       _isSubmitting = true;
       _statusMessage = 'Checking API...';
+      _generatedVideoPath = null;
     });
     widget.jobInProgress.value = true;
 
@@ -5812,6 +5958,13 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             _statusMessage = 'Submitted';
           });
           widget.onJobSubmitted?.call(jobId);
+          unawaited(
+            _watchJobUntilFinished(
+              jobId: jobId,
+              scriptPath: scriptPath,
+              outputDir: _outputController.text,
+            ),
+          );
         }
       } else {
         final responseBody = response.body.isEmpty ? '' : ' ${response.body}';

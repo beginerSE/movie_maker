@@ -963,7 +963,18 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
                 bg_off_style=payload.bg_off_style,
                 caption_text_color=payload.caption_text_color,
             )
-            manager.set_result(job.job_id, {"message": "completed"})
+            stem = pathlib.Path(payload.script_path).stem
+            output_dir = pathlib.Path(payload.output_dir)
+            video_path = str(output_dir / f"{stem}.mp4")
+            srt_path = str(output_dir / f"{stem}.srt")
+            manager.set_result(
+                job.job_id,
+                {
+                    "message": "completed",
+                    "video_path": video_path,
+                    "srt_path": srt_path,
+                },
+            )
         except Exception as exc:
             error_message = f"{type(exc).__name__}: {exc}"
             traceback_text = traceback.format_exc()
