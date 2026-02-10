@@ -48,6 +48,44 @@ Uri _normalizeVoicevoxSpeakersUri(String baseUrl) {
   return rawUri.replace(path: speakersPath);
 }
 
+Uri _withApiPrefix(Uri uri) {
+  if (uri.path == '/api' || uri.path.startsWith('/api/')) {
+    return uri;
+  }
+  final normalizedPath = uri.path.startsWith('/') ? uri.path : '/${uri.path}';
+  return uri.replace(path: '/api$normalizedPath');
+}
+
+Future<http.Response> _getWithApiPrefixFallback(String path) async {
+  final uri = ApiConfig.httpUri(path);
+  final response = await http.get(uri);
+  if (response.statusCode != 404) {
+    return response;
+  }
+  final fallbackUri = _withApiPrefix(uri);
+  if (fallbackUri.path == uri.path) {
+    return response;
+  }
+  return http.get(fallbackUri);
+}
+
+Future<http.Response> _postWithApiPrefixFallback(
+  String path, {
+  Map<String, String>? headers,
+  Object? body,
+}) async {
+  final uri = ApiConfig.httpUri(path);
+  final response = await http.post(uri, headers: headers, body: body);
+  if (response.statusCode != 404) {
+    return response;
+  }
+  final fallbackUri = _withApiPrefix(uri);
+  if (fallbackUri.path == uri.path) {
+    return response;
+  }
+  return http.post(fallbackUri, headers: headers, body: body);
+}
+
 List<String> _extractVoicevoxSpeakerNames(dynamic data) {
   if (data is! List) {
     return [];
@@ -324,7 +362,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     });
     try {
       final uri = ApiConfig.httpUri('/projects');
-      final response = await http.get(uri);
+      final response = await _getWithApiPrefixFallback('/projects');
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception(
           _formatApiFailureMessage(
@@ -398,8 +436,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
     });
     try {
       final uri = ApiConfig.httpUri('/projects');
-      final response = await http.post(
-        uri,
+      final response = await _postWithApiPrefixFallback(
+        '/projects',
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'name': name}),
       );
@@ -770,10 +808,20 @@ class _StudioShellState extends State<StudioShell> {
 
   Future<bool> _isApiHealthy() async {
     try {
-      final response = await http
-          .get(ApiConfig.httpUri('/health'))
+      final primaryUri = ApiConfig.httpUri('/health');
+      final primaryResponse = await http
+          .get(primaryUri)
           .timeout(const Duration(seconds: 3));
-      return response.statusCode >= 200 && response.statusCode < 300;
+      if (primaryResponse.statusCode >= 200 && primaryResponse.statusCode < 300) {
+        return true;
+      }
+      if (primaryResponse.statusCode != 404) {
+        return false;
+      }
+      final fallbackResponse = await http
+          .get(_withApiPrefix(primaryUri))
+          .timeout(const Duration(seconds: 3));
+      return fallbackResponse.statusCode >= 200 && fallbackResponse.statusCode < 300;
     } catch (_) {
       return false;
     }
@@ -897,7 +945,7 @@ class _StudioShellState extends State<StudioShell> {
       _projectsLoading = true;
     });
     try {
-      final response = await http.get(ApiConfig.httpUri('/projects'));
+      final response = await _getWithApiPrefixFallback('/projects');
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return;
       }
