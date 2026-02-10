@@ -1522,8 +1522,7 @@ class _FlowProjectPanelState extends State<FlowProjectPanel> {
     if (!selected.isFlowProject) {
       return Center(
         child: Text(
-          '選択中のプロジェクト（${selected.name}）は通常作成です。
-AI作成（フロー型）プロジェクトを選択してください。',
+          '選択中のプロジェクト（${selected.name}）は通常作成です。\nAI作成（フロー型）プロジェクトを選択してください。',
           textAlign: TextAlign.center,
         ),
       );
