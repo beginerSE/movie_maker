@@ -12,7 +12,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'config/input_persistence.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ApiSettingsBootstrap.load();
   runApp(const MovieMakerApp());
 }
 
@@ -391,7 +393,6 @@ class _StudioShellState extends State<StudioShell> {
   @override
   void initState() {
     super.initState();
-    ApiSettingsBootstrap.load();
     _ensureApiServerRunning();
     _loadProjects();
   }
@@ -618,20 +619,10 @@ class _StudioShellState extends State<StudioShell> {
 
   Future<bool> _isApiHealthy() async {
     try {
-      final primaryUri = ApiConfig.httpUri('/health');
-      final primaryResponse = await http
-          .get(primaryUri)
+      final response = await http
+          .get(ApiConfig.httpUri('/health'))
           .timeout(const Duration(seconds: 3));
-      if (primaryResponse.statusCode >= 200 && primaryResponse.statusCode < 300) {
-        return true;
-      }
-      if (primaryResponse.statusCode != 404) {
-        return false;
-      }
-      final fallbackResponse = await http
-          .get(_withApiPrefix(primaryUri))
-          .timeout(const Duration(seconds: 3));
-      return fallbackResponse.statusCode >= 200 && fallbackResponse.statusCode < 300;
+      return response.statusCode >= 200 && response.statusCode < 300;
     } catch (_) {
       return false;
     }
