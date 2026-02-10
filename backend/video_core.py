@@ -1241,6 +1241,7 @@ def generate_ponchi_suggestions_with_gemini(
         "あなたは動画用の資料（ポンチ絵）を企画する担当者です。",
         "次の字幕ごとに、表示すると良い資料の内容を提案してください。",
         "各項目で「visual_suggestion（表示内容の説明）」と「image_prompt（画像生成用の日本語プロンプト）」を作ってください。",
+        "ユーザーが後でMarkdown表（開始/終了/内容/プロンプト）として編集できるよう、各値は簡潔かつ列に入る長さで作ってください。",
         "出力は JSON 配列のみで、各要素は次のキーを含めてください:",
         "start, end, text, visual_suggestion, image_prompt",
         "",
