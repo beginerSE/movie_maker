@@ -271,6 +271,7 @@ class ApiSettingsBootstrap {
 
 class MovieMakerApp extends StatelessWidget {
   const MovieMakerApp({super.key});
+  static const String appTitle = 'News Short Generator Studio';
 
   @override
   Widget build(BuildContext context) {
@@ -286,7 +287,7 @@ class MovieMakerApp extends StatelessWidget {
       background: const Color(0xFFF6F4FF),
     );
     return MaterialApp(
-      title: 'News Short Generator Studio',
+      title: appTitle,
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
@@ -371,11 +372,45 @@ class _ProjectListPageState extends State<ProjectListPage> {
   bool _loading = false;
   bool _creating = false;
   String? _errorMessage;
+  String _apiServerStatusMessage = 'API サーバー確認中...';
+  bool _apiServerReady = false;
+  Timer? _statusPollingTimer;
 
   @override
   void initState() {
     super.initState();
     _loadProjects();
+    _refreshAppStatus();
+    _statusPollingTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _refreshAppStatus(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _statusPollingTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshAppStatus() async {
+    final healthy = await _isApiHealthy();
+    if (!mounted) return;
+    setState(() {
+      _apiServerReady = healthy;
+      _apiServerStatusMessage = healthy ? 'API サーバー稼働中' : 'API サーバー停止中';
+    });
+  }
+
+  Future<bool> _isApiHealthy() async {
+    try {
+      final response = await _getWithApiPrefixFallback('/health').timeout(
+        const Duration(seconds: 3),
+      );
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _loadProjects() async {
@@ -501,7 +536,21 @@ class _ProjectListPageState extends State<ProjectListPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('プロジェクト一覧')),
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(MovieMakerApp.appTitle),
+            Text(
+              _apiServerStatusMessage,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _apiServerReady ? Colors.green.shade700 : Colors.red.shade700,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
