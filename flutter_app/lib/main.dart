@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
@@ -2564,7 +2565,9 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   List<String> _availableModels = const ['gemini-3-pro-image-preview'];
   final _promptController = TextEditingController();
   final _outputController = TextEditingController();
-  final _previewController = TextEditingController();
+  String? _generatedImagePath;
+  Uint8List? _generatedImageBytes;
+  String? _generatedImageMimeType;
   late final InputPersistence _persistence;
   bool _isSubmitting = false;
 
@@ -2621,7 +2624,6 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
     _modelController.dispose();
     _promptController.dispose();
     _outputController.dispose();
-    _previewController.dispose();
     _persistence.dispose();
     super.dispose();
   }
@@ -2712,14 +2714,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
           const SizedBox(height: 16),
           Text('生成画像', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          TextFormField(
-            controller: _previewController,
-            maxLines: 6,
-            readOnly: true,
-            decoration: const InputDecoration(
-              hintText: '生成された画像のパスがここに表示されます。',
-            ),
-          ),
+          _buildGeneratedImagePreview(),
         ],
       ),
     );
@@ -2787,8 +2782,13 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final imagePath = data['image_path'] as String?;
         final imageBase64 = data['image_base64'] as String?;
+        final mimeType = data['mime_type'] as String?;
         setState(() {
-          _previewController.text = imagePath ?? imageBase64 ?? '';
+          _generatedImagePath = imagePath;
+          _generatedImageMimeType = mimeType;
+          _generatedImageBytes = (imageBase64 != null && imageBase64.isNotEmpty)
+              ? base64Decode(imageBase64)
+              : null;
         });
         final modelNote = data['model_note'] as String?;
         if (modelNote != null && modelNote.isNotEmpty) {
@@ -2813,13 +2813,58 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   }
 
   void _copyPreviewPath() {
-    final text = _previewController.text.trim();
+    final text = _generatedImagePath?.trim() ?? '';
     if (text.isEmpty) {
-      _showSnackBar('保存対象がありません。');
+      _showSnackBar('コピーする画像パスがありません。');
       return;
     }
     Clipboard.setData(ClipboardData(text: text));
-    _showSnackBar('保存しました！');
+    _showSnackBar('画像パスをコピーしました。');
+  }
+
+  Widget _buildGeneratedImagePreview() {
+    final hasImageBytes = _generatedImageBytes != null && _generatedImageBytes!.isNotEmpty;
+    final hasImagePath = (_generatedImagePath ?? '').isNotEmpty;
+    Widget content;
+    if (hasImageBytes) {
+      content = Image.memory(_generatedImageBytes!, fit: BoxFit.contain);
+    } else if (hasImagePath) {
+      content = Image.file(
+        File(_generatedImagePath!),
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const Text('画像の読み込みに失敗しました。'),
+      );
+    } else {
+      content = const Text('生成された画像のプレビューがここに表示されます。');
+    }
+
+    final caption = hasImagePath
+        ? _generatedImagePath!
+        : (_generatedImageMimeType == null ? '' : 'MIME: ${_generatedImageMimeType!}');
+
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 220, maxHeight: 360),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: Center(child: content)),
+          if (caption.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            SelectableText(
+              caption,
+              maxLines: 2,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
@@ -2841,6 +2886,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _outputController = TextEditingController(text: 'ponchi_images');
   final _geminiModelController = TextEditingController(text: 'gemini-2.0-flash');
   final _outputTextController = TextEditingController();
+  final List<_PonchiPreviewItem> _previewItems = [];
   late final InputPersistence _persistence;
   String _engine = 'Gemini';
   List<String> _ponchiModels = const ['gemini-2.0-flash'];
@@ -2978,6 +3024,9 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               OutlinedButton.icon(
                 onPressed: () {
                   _outputTextController.clear();
+                  setState(() {
+                    _previewItems.clear();
+                  });
                 },
                 icon: const Icon(Icons.clear),
                 label: const Text('クリア'),
@@ -2987,11 +3036,13 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           const SizedBox(height: 16),
           Text('生成結果', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
+          _buildPonchiPreviewGrid(),
+          const SizedBox(height: 12),
           TextFormField(
             controller: _outputTextController,
-            maxLines: 10,
+            maxLines: 8,
             decoration: const InputDecoration(
-              hintText: '生成結果がここに表示されます。',
+              hintText: '生成結果のテキストがここに表示されます。',
             ),
           ),
         ],
@@ -3085,6 +3136,56 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     }
   }
 
+
+  Widget _buildPonchiPreviewGrid() {
+    if (_previewItems.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).dividerColor),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text('生成されたポンチ絵のプレビューがここに表示されます。'),
+      );
+    }
+    return Column(
+      children: _previewItems
+          .map(
+            (item) => Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).dividerColor),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(item.title, style: Theme.of(context).textTheme.titleSmall),
+                  if (item.subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(item.subtitle, style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 180,
+                    child: item.bytes != null
+                        ? Image.memory(item.bytes!, fit: BoxFit.contain)
+                        : Image.file(
+                            File(item.path),
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Text('画像を読み込めませんでした。'),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
   Future<void> _submitPonchiImages() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -3133,20 +3234,36 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         final jsonPath = data['json_path'] as String? ?? '';
         final buffer = StringBuffer();
         buffer.writeln('✅ ${items.length} 件のポンチ絵を生成しました。');
-        if (outputDir.isNotEmpty) {
-          buffer.writeln('出力フォルダ: $outputDir');
-        }
         if (jsonPath.isNotEmpty) {
           buffer.writeln('JSON: $jsonPath');
         }
+        final previews = <_PonchiPreviewItem>[];
         for (final item in items) {
           final map = item as Map<String, dynamic>;
-          buffer.writeln(
-            '${map['start']}〜${map['end']} | ${map['visual_suggestion']} | ${map['image']}',
+          final imageName = (map['image'] as String? ?? '').trim();
+          final imagePath = (outputDir.isNotEmpty && imageName.isNotEmpty)
+              ? _joinPaths(outputDir, imageName)
+              : imageName;
+          final imageBase64 = (map['image_base64'] as String? ?? '').trim();
+          Uint8List? bytes;
+          if (imageBase64.isNotEmpty) {
+            bytes = base64Decode(imageBase64);
+          }
+          previews.add(
+            _PonchiPreviewItem(
+              title: '${map['start']}〜${map['end']}',
+              subtitle: (map['visual_suggestion'] as String? ?? '').trim(),
+              path: imagePath,
+              bytes: bytes,
+            ),
           );
+          buffer.writeln('${map['start']}〜${map['end']} | ${map['visual_suggestion']}');
         }
         setState(() {
           _outputTextController.text = buffer.toString();
+          _previewItems
+            ..clear()
+            ..addAll(previews);
         });
         _showSnackBar('ポンチ絵作成が完了しました。');
       } else {
@@ -3165,6 +3282,21 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     }
   }
 }
+
+class _PonchiPreviewItem {
+  const _PonchiPreviewItem({
+    required this.title,
+    required this.subtitle,
+    required this.path,
+    required this.bytes,
+  });
+
+  final String title;
+  final String subtitle;
+  final String path;
+  final Uint8List? bytes;
+}
+
 
 class VideoEditForm extends StatefulWidget {
   const VideoEditForm({super.key});
