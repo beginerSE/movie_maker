@@ -72,6 +72,72 @@ List<String> _extractVoicevoxSpeakerNames(dynamic data) {
   return names;
 }
 
+String _extractApiErrorDetail(String responseBody) {
+  final body = responseBody.trim();
+  if (body.isEmpty) {
+    return '';
+  }
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is Map<String, dynamic>) {
+      final detail = decoded['detail'];
+      if (detail is String && detail.trim().isNotEmpty) {
+        return detail.trim();
+      }
+      if (detail is List) {
+        final messages = detail
+            .map((item) {
+              if (item is Map<String, dynamic>) {
+                final loc = (item['loc'] as List<dynamic>? ?? [])
+                    .map((part) => part.toString())
+                    .join('/');
+                final msg = (item['msg'] as String? ?? '').trim();
+                if (loc.isNotEmpty && msg.isNotEmpty) {
+                  return '$loc: $msg';
+                }
+                return msg;
+              }
+              return item.toString();
+            })
+            .where((message) => message.trim().isNotEmpty)
+            .toList();
+        if (messages.isNotEmpty) {
+          return messages.join(', ');
+        }
+      }
+      final message = decoded['message'];
+      if (message is String && message.trim().isNotEmpty) {
+        return message.trim();
+      }
+      final error = decoded['error'];
+      if (error is String && error.trim().isNotEmpty) {
+        return error.trim();
+      }
+    }
+  } catch (_) {
+    // ignore JSON parse errors and fallback to raw body.
+  }
+  return body;
+}
+
+String _formatApiFailureMessage({
+  required String action,
+  required Uri uri,
+  http.Response? response,
+  Object? error,
+}) {
+  final pathInfo = '${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
+  if (response != null) {
+    final detail = _extractApiErrorDetail(response.body);
+    final suffix = detail.isEmpty ? '' : ' / $detail';
+    return '$action (PATH: $pathInfo, HTTP ${response.statusCode}$suffix)';
+  }
+  if (error != null) {
+    return '$action (PATH: $pathInfo, ERROR: $error)';
+  }
+  return '$action (PATH: $pathInfo)';
+}
+
 class ApiConfig {
   static final ValueNotifier<String> baseUrl =
       ValueNotifier<String>(_defaultApiBaseUrl());
@@ -257,9 +323,16 @@ class _ProjectListPageState extends State<ProjectListPage> {
       _errorMessage = null;
     });
     try {
-      final response = await http.get(ApiConfig.httpUri('/projects'));
+      final uri = ApiConfig.httpUri('/projects');
+      final response = await http.get(uri);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('HTTP ${response.statusCode}');
+        throw Exception(
+          _formatApiFailureMessage(
+            action: 'プロジェクト一覧の取得に失敗しました。',
+            uri: uri,
+            response: response,
+          ),
+        );
       }
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final projectsRaw = (body['projects'] as List<dynamic>? ?? [])
@@ -269,10 +342,10 @@ class _ProjectListPageState extends State<ProjectListPage> {
       setState(() {
         _projects = projectsRaw.map(ProjectSummary.fromJson).toList();
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'プロジェクト一覧の取得に失敗しました。';
+        _errorMessage = error.toString().replaceFirst('Exception: ', '');
       });
     } finally {
       if (!mounted) return;
@@ -324,13 +397,20 @@ class _ProjectListPageState extends State<ProjectListPage> {
       _creating = true;
     });
     try {
+      final uri = ApiConfig.httpUri('/projects');
       final response = await http.post(
-        ApiConfig.httpUri('/projects'),
+        uri,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'name': name}),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('HTTP ${response.statusCode}');
+        throw Exception(
+          _formatApiFailureMessage(
+            action: 'プロジェクト作成に失敗しました。',
+            uri: uri,
+            response: response,
+          ),
+        );
       }
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final createdId = (body['project_id'] as String? ?? '').trim();
@@ -340,10 +420,14 @@ class _ProjectListPageState extends State<ProjectListPage> {
       await _setCurrentProject(createdId);
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/home');
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('プロジェクト作成に失敗しました。')),
+        SnackBar(
+          content: Text(
+            error.toString().replaceFirst('Exception: ', ''),
+          ),
+        ),
       );
     } finally {
       if (!mounted) return;
@@ -1309,6 +1393,10 @@ class _ProjectManagerDialog extends StatefulWidget {
 class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
   bool _busy = false;
 
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _createProject() async {
     final controller = TextEditingController();
     final name = await showDialog<String>(
@@ -1325,8 +1413,24 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
     if (name == null || name.isEmpty) return;
     setState(() => _busy = true);
     try {
-      await http.post(ApiConfig.httpUri('/projects'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'name': name}));
+      final uri = ApiConfig.httpUri('/projects');
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'name': name}),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(
+          _formatApiFailureMessage(
+            action: 'プロジェクト作成に失敗しました。',
+            uri: uri,
+            response: response,
+          ),
+        );
+      }
       await widget.onChanged();
+    } catch (error) {
+      _showErrorSnackBar(error.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1348,12 +1452,24 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
     if (name == null || name.isEmpty) return;
     setState(() => _busy = true);
     try {
-      await http.put(
-        ApiConfig.httpUri('/projects/${project.id}'),
+      final uri = ApiConfig.httpUri('/projects/${project.id}');
+      final response = await http.put(
+        uri,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'name': name}),
       );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(
+          _formatApiFailureMessage(
+            action: 'プロジェクト名の変更に失敗しました。',
+            uri: uri,
+            response: response,
+          ),
+        );
+      }
       await widget.onChanged();
+    } catch (error) {
+      _showErrorSnackBar(error.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1362,12 +1478,24 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
   Future<void> _cloneProject(ProjectSummary project) async {
     setState(() => _busy = true);
     try {
-      await http.post(
-        ApiConfig.httpUri('/projects/${project.id}/clone'),
+      final uri = ApiConfig.httpUri('/projects/${project.id}/clone');
+      final response = await http.post(
+        uri,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'name': '${project.name} copy'}),
       );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(
+          _formatApiFailureMessage(
+            action: 'プロジェクト複製に失敗しました。',
+            uri: uri,
+            response: response,
+          ),
+        );
+      }
       await widget.onChanged();
+    } catch (error) {
+      _showErrorSnackBar(error.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1389,11 +1517,23 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
     if (!ok) return;
     setState(() => _busy = true);
     try {
-      await http.delete(ApiConfig.httpUri('/projects/${project.id}'));
+      final uri = ApiConfig.httpUri('/projects/${project.id}');
+      final response = await http.delete(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(
+          _formatApiFailureMessage(
+            action: 'プロジェクト削除に失敗しました。',
+            uri: uri,
+            response: response,
+          ),
+        );
+      }
       if (ProjectState.currentProjectId.value == project.id) {
         ProjectState.currentProjectId.value = null;
       }
       await widget.onChanged();
+    } catch (error) {
+      _showErrorSnackBar(error.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
