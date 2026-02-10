@@ -1148,8 +1148,7 @@ def generate_script_with_openai(
     return content.strip()
 
 
-# GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.5-flash-image"
-GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-3-pro-image-preview"
+GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.5-flash-image"
 GEMINI_MATERIAL_MODEL_ALIASES = {
     "nanobanana": GEMINI_MATERIAL_DEFAULT_MODEL,
 }
