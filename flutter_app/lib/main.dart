@@ -4945,6 +4945,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   String? _generatedVideoPath;
   VideoPlayerController? _previewController;
   bool _previewInitializing = false;
+  String _lastJobLogsText = '';
   List<String> _voicevoxSpeakers = [];
   bool _voicevoxSpeakersLoading = false;
   String? _voicevoxSpeakersError;
@@ -4954,6 +4955,10 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
 
   String _flowScriptPrefsKey() => 'flow.script_path.${ProjectState.currentProjectId.value}';
+
+  String _lastVideoPathPrefsKey() => 'video_generate.last_video_path.${ProjectState.currentProjectId.value}';
+
+  String _lastJobLogsPrefsKey() => 'video_generate.last_job_logs.${ProjectState.currentProjectId.value}';
 
   Future<String?> _resolveScriptPathForVideo() async {
     if (!_isFlowProject) {
@@ -5001,6 +5006,54 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     }
   }
 
+
+  Future<void> _saveVideoArtifacts({String? videoPath, String? logsText}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (videoPath != null) {
+      await prefs.setString(_lastVideoPathPrefsKey(), videoPath);
+    }
+    if (logsText != null) {
+      await prefs.setString(_lastJobLogsPrefsKey(), logsText);
+    }
+  }
+
+  Future<void> _loadPersistedVideoArtifacts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedVideoPath = (prefs.getString(_lastVideoPathPrefsKey()) ?? '').trim();
+    final savedLogs = prefs.getString(_lastJobLogsPrefsKey()) ?? '';
+    if (!mounted) return;
+    setState(() {
+      _lastJobLogsText = savedLogs;
+      _generatedVideoPath = savedVideoPath.isEmpty ? null : savedVideoPath;
+    });
+    if (savedVideoPath.isNotEmpty) {
+      await _initVideoPreview(savedVideoPath);
+    }
+  }
+
+  Future<void> _fetchAndPersistJobLogs(String jobId) async {
+    try {
+      final response = await http
+          .get(ApiConfig.httpUri('/jobs/$jobId/logs'))
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final logs = (data['logs'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toList();
+      final combined = logs.join('\n');
+      if (!mounted) return;
+      setState(() {
+        _lastJobLogsText = combined;
+      });
+      await _saveVideoArtifacts(logsText: combined);
+    } catch (_) {
+      // ignore transient log fetch errors
+    }
+  }
+
   Future<void> _watchJobUntilFinished({
     required String jobId,
     required String scriptPath,
@@ -5012,6 +5065,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
         return;
       }
       try {
+        await _fetchAndPersistJobLogs(jobId);
         final response = await http
             .get(ApiConfig.httpUri('/jobs/$jobId'))
             .timeout(const Duration(seconds: 10));
@@ -5026,6 +5080,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
           final videoPath = (result['video_path'] as String? ?? '').trim();
           final resolvedPath = videoPath.isEmpty ? fallbackVideoPath : videoPath;
           await _initVideoPreview(resolvedPath);
+          await _saveVideoArtifacts(videoPath: resolvedPath);
           if (!mounted) return;
           setState(() {
             _statusMessage = 'Completed';
@@ -5100,6 +5155,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     VoicevoxConfig.baseUrl.addListener(_voicevoxUrlListener);
     _projectListener = () {
       _loadProjectSettings();
+      _loadPersistedVideoArtifacts();
     };
     ProjectState.currentProjectId.addListener(_projectListener);
     _loadSavedValues();
@@ -5154,6 +5210,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     });
     VoicevoxConfig.baseUrl.value = _voicevoxUrlController.text.trim();
     await _loadProjectSettings();
+    await _loadPersistedVideoArtifacts();
     if (_ttsEngine == 'VOICEVOX') {
       await _fetchVoicevoxSpeakers();
     }
@@ -5842,6 +5899,24 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             )
           else
             const Text('動画生成完了後にここでプレビュー再生できます。'),
+          const SizedBox(height: 16),
+          Text('前回を含む動画作成ログ', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 120, maxHeight: 240),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                _lastJobLogsText.isEmpty ? 'ログはまだありません。' : _lastJobLogsText,
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -5856,7 +5931,9 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _isSubmitting = true;
       _statusMessage = 'Checking API...';
       _generatedVideoPath = null;
+      _lastJobLogsText = '';
     });
+    unawaited(_saveVideoArtifacts(videoPath: '', logsText: ''));
     widget.jobInProgress.value = true;
 
     final isHealthy = await widget.checkApiHealth();
