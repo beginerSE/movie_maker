@@ -3,10 +3,14 @@ from __future__ import annotations
 import base64
 import asyncio
 import configparser
+import copy
 import json
 import logging
 import mimetypes
+import os
 import pathlib
+import re
+import shutil
 import sys
 import threading
 import time
@@ -70,6 +74,96 @@ if not logger.handlers:
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
     logger.setLevel(logging.INFO)
+
+APP_DATA_DIR_NAME = "NewsShortGeneratorStudio"
+DEFAULT_PROJECT_ID = "default"
+
+
+def user_data_root() -> Path:
+    if os.name == "nt":
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            return Path(appdata) / APP_DATA_DIR_NAME
+        return Path.home() / "AppData" / "Roaming" / APP_DATA_DIR_NAME
+    return Path.home() / ".local" / "share" / APP_DATA_DIR_NAME
+
+
+DATA_ROOT = user_data_root()
+PROJECTS_ROOT = DATA_ROOT / "projects"
+
+
+def _slugify_project_id(name: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.strip().lower())
+    normalized = re.sub(r"-+", "-", normalized).strip("-")
+    return normalized or "project"
+
+
+def _project_dir(project_id: str) -> Path:
+    safe_id = _slugify_project_id(project_id)
+    return PROJECTS_ROOT / safe_id
+
+
+def _project_meta_path(project_id: str) -> Path:
+    return _project_dir(project_id) / "project.json"
+
+
+def _project_settings_path(project_id: str) -> Path:
+    return _project_dir(project_id) / "settings.json"
+
+
+def _ensure_project_structure(project_id: str, display_name: Optional[str] = None) -> Path:
+    project_id = _slugify_project_id(project_id)
+    project_dir = _project_dir(project_id)
+    project_dir.mkdir(parents=True, exist_ok=True)
+    for name in ["scripts", "materials", "outputs", "logs"]:
+        (project_dir / name).mkdir(parents=True, exist_ok=True)
+    meta_path = _project_meta_path(project_id)
+    if not meta_path.exists():
+        meta = {
+            "id": project_id,
+            "name": display_name or ("Default" if project_id == DEFAULT_PROJECT_ID else project_id),
+            "created_at": int(time.time()),
+            "updated_at": int(time.time()),
+        }
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    settings_path = _project_settings_path(project_id)
+    if not settings_path.exists():
+        settings_path.write_text("{}", encoding="utf-8")
+    return project_dir
+
+
+def _read_project_meta(project_id: str) -> dict[str, Any]:
+    meta_path = _project_meta_path(project_id)
+    if not meta_path.exists():
+        raise HTTPException(status_code=404, detail="project not found")
+    data = json.loads(meta_path.read_text(encoding="utf-8"))
+    data.setdefault("id", _slugify_project_id(project_id))
+    data.setdefault("name", data["id"])
+    return data
+
+
+def _write_project_meta(project_id: str, data: dict[str, Any]) -> None:
+    data = copy.deepcopy(data)
+    data["id"] = _slugify_project_id(project_id)
+    data["updated_at"] = int(time.time())
+    _project_meta_path(project_id).write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _ensure_default_project() -> None:
+    _ensure_project_structure(DEFAULT_PROJECT_ID, "Default")
+
+
+def _resolve_project_id(value: Optional[str]) -> str:
+    project_id = _slugify_project_id(value or DEFAULT_PROJECT_ID)
+    _ensure_project_structure(project_id)
+    return project_id
+
+
+def _project_output_dir(project_id: str) -> str:
+    return str(_project_dir(project_id) / "outputs")
 
 
 def _split_csv(value: str) -> List[str]:
@@ -259,6 +353,7 @@ class VideoGenerateRequest(BaseModel):
     caption_box_height: int = 420
     bg_off_style: str = "shadow"
     caption_text_color: str = "#FFFFFF"
+    project_id: Optional[str] = None
 
 
 class ScriptGenerateRequest(BaseModel):
@@ -292,6 +387,7 @@ class MaterialsGenerateRequest(BaseModel):
     prompt: str
     model: str = GEMINI_MATERIAL_DEFAULT_MODEL
     output_dir: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class MaterialsGenerateResponse(BaseModel):
@@ -307,6 +403,7 @@ class PonchiIdeasRequest(BaseModel):
     srt_path: str
     output_dir: Optional[str] = None
     gemini_model: str = DEFAULT_PONCHI_GEMINI_MODEL
+    project_id: Optional[str] = None
 
 
 class PonchiIdeasResponse(BaseModel):
@@ -320,6 +417,25 @@ class PonchiImagesRequest(BaseModel):
     output_dir: str
     suggestions: Optional[List[dict]] = None
     model: str = GEMINI_MATERIAL_DEFAULT_MODEL
+    project_id: Optional[str] = None
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+    id: Optional[str] = None
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: str
+
+
+class ProjectCloneRequest(BaseModel):
+    name: Optional[str] = None
+    id: Optional[str] = None
+
+
+class ProjectSettingsUpdateRequest(BaseModel):
+    settings: dict[str, Any]
 
 
 class PonchiImagesResponse(BaseModel):
@@ -343,7 +459,99 @@ class JobStatusResponse(BaseModel):
 
 @app.get("/health")
 async def health() -> dict:
+    _ensure_default_project()
     return {"status": "ok"}
+
+
+@app.get("/projects")
+async def list_projects() -> dict:
+    _ensure_default_project()
+    projects: list[dict[str, Any]] = []
+    PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+    for child in sorted(PROJECTS_ROOT.iterdir(), key=lambda p: p.name):
+        if not child.is_dir():
+            continue
+        meta_path = child / "project.json"
+        if not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta.setdefault("id", child.name)
+            meta.setdefault("name", child.name)
+            projects.append(meta)
+        except Exception:
+            logger.warning("Skipping broken project metadata: %s", meta_path)
+    return {"projects": projects, "default_project_id": DEFAULT_PROJECT_ID}
+
+
+@app.post("/projects")
+async def create_project(payload: ProjectCreateRequest) -> dict:
+    project_id = _slugify_project_id(payload.id or payload.name)
+    project_dir = _project_dir(project_id)
+    if project_dir.exists():
+        raise HTTPException(status_code=409, detail="project already exists")
+    _ensure_project_structure(project_id, payload.name.strip())
+    return {"project": _read_project_meta(project_id)}
+
+
+@app.put("/projects/{project_id}")
+async def update_project(project_id: str, payload: ProjectUpdateRequest) -> dict:
+    project_id = _slugify_project_id(project_id)
+    meta = _read_project_meta(project_id)
+    meta["name"] = payload.name.strip() or meta.get("name") or project_id
+    _write_project_meta(project_id, meta)
+    return {"project": _read_project_meta(project_id)}
+
+
+@app.delete("/projects/{project_id}")
+async def delete_project(project_id: str) -> dict:
+    project_id = _slugify_project_id(project_id)
+    if project_id == DEFAULT_PROJECT_ID:
+        raise HTTPException(status_code=400, detail="default project cannot be deleted")
+    target = _project_dir(project_id)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="project not found")
+    shutil.rmtree(target)
+    return {"deleted": True, "project_id": project_id}
+
+
+@app.post("/projects/{project_id}/clone")
+async def clone_project(project_id: str, payload: ProjectCloneRequest) -> dict:
+    source_id = _resolve_project_id(project_id)
+    source_dir = _project_dir(source_id)
+    if not source_dir.exists():
+        raise HTTPException(status_code=404, detail="project not found")
+    clone_id = _slugify_project_id(payload.id or f"{source_id}-copy")
+    clone_dir = _project_dir(clone_id)
+    if clone_dir.exists():
+        raise HTTPException(status_code=409, detail="clone project already exists")
+    _ensure_project_structure(clone_id, payload.name or f"{source_id} copy")
+    shutil.copy2(_project_settings_path(source_id), _project_settings_path(clone_id))
+    for subdir in ["scripts", "materials"]:
+        src = source_dir / subdir
+        dst = clone_dir / subdir
+        if src.exists():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+    return {"project": _read_project_meta(clone_id)}
+
+
+@app.get("/projects/{project_id}/settings")
+async def get_project_settings(project_id: str) -> dict:
+    resolved = _resolve_project_id(project_id)
+    path = _project_settings_path(resolved)
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return {"project_id": resolved, "settings": data}
+
+
+@app.put("/projects/{project_id}/settings")
+async def put_project_settings(project_id: str, payload: ProjectSettingsUpdateRequest) -> dict:
+    resolved = _resolve_project_id(project_id)
+    path = _project_settings_path(resolved)
+    path.write_text(
+        json.dumps(payload.settings, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return {"project_id": resolved, "settings": payload.settings}
 
 
 @app.get("/settings/ai-models")
@@ -441,6 +649,7 @@ async def generate_title(payload: TitleGenerateRequest) -> TitleGenerateResponse
 @app.post("/materials/generate", response_model=MaterialsGenerateResponse)
 async def generate_materials(payload: MaterialsGenerateRequest) -> MaterialsGenerateResponse:
     try:
+        project_id = _resolve_project_id(payload.project_id)
         resolved_model, model_note = resolve_gemini_material_model(payload.model)
         image_bytes, mime_type = generate_materials_with_gemini(
             api_key=payload.api_key,
@@ -449,15 +658,14 @@ async def generate_materials(payload: MaterialsGenerateRequest) -> MaterialsGene
         )
         image_path: Optional[str] = None
         image_b64: Optional[str] = None
-        if payload.output_dir:
-            output_dir = pathlib.Path(payload.output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            ext = mimetypes.guess_extension(mime_type) or ".png"
-            filename = f"material_{int(time.time())}{ext}"
-            target = output_dir / filename
-            target.write_bytes(image_bytes)
-            image_path = str(target)
-        else:
+        output_dir = pathlib.Path(payload.output_dir) if payload.output_dir else (_project_dir(project_id) / "materials")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        ext = mimetypes.guess_extension(mime_type) or ".png"
+        filename = f"material_{int(time.time())}{ext}"
+        target = output_dir / filename
+        target.write_bytes(image_bytes)
+        image_path = str(target)
+        if not image_path:
             image_b64 = base64.b64encode(image_bytes).decode("utf-8")
         return MaterialsGenerateResponse(
             image_path=image_path,
@@ -474,6 +682,7 @@ async def generate_materials(payload: MaterialsGenerateRequest) -> MaterialsGene
 async def generate_ponchi_ideas(payload: PonchiIdeasRequest) -> PonchiIdeasResponse:
     engine = _normalize_engine(payload.engine)
     try:
+        project_id = _resolve_project_id(payload.project_id)
         items = parse_srt_file(payload.srt_path)
         if not items:
             raise RuntimeError("SRTから字幕が見つかりませんでした。")
@@ -489,7 +698,8 @@ async def generate_ponchi_ideas(payload: PonchiIdeasRequest) -> PonchiIdeasRespo
         )
         normalized = _normalize_ponchi_suggestions(suggestions, items)
         json_path: Optional[str] = None
-        ideas_path = _ponchi_ideas_path(payload.output_dir, payload.srt_path)
+        output_dir = payload.output_dir or str(_project_dir(project_id) / "materials")
+        ideas_path = _ponchi_ideas_path(output_dir, payload.srt_path)
         if ideas_path:
             ideas_path.parent.mkdir(parents=True, exist_ok=True)
             ideas_path.write_text(
@@ -508,18 +718,20 @@ async def generate_ponchi_ideas(payload: PonchiIdeasRequest) -> PonchiIdeasRespo
 @app.post("/ponchi/images", response_model=PonchiImagesResponse)
 async def generate_ponchi_images(payload: PonchiImagesRequest) -> PonchiImagesResponse:
     try:
+        project_id = _resolve_project_id(payload.project_id)
         items = parse_srt_file(payload.srt_path)
         if not items:
             raise RuntimeError("SRTから字幕が見つかりませんでした。")
         suggestions = payload.suggestions or []
+        target_output_dir = payload.output_dir or str(_project_dir(project_id) / "materials")
         if not suggestions:
-            ideas_path = _ponchi_ideas_path(payload.output_dir, payload.srt_path)
+            ideas_path = _ponchi_ideas_path(target_output_dir, payload.srt_path)
             if ideas_path and ideas_path.exists():
                 suggestions = json.loads(ideas_path.read_text(encoding="utf-8"))
         if not suggestions:
             raise RuntimeError("案が見つかりません。先に「案出し」を実行してください。")
         normalized = _normalize_ponchi_suggestions(suggestions, items)
-        output_dir_path = pathlib.Path(payload.output_dir) / pathlib.Path(payload.srt_path).stem
+        output_dir_path = pathlib.Path(target_output_dir) / pathlib.Path(payload.srt_path).stem
         output_dir_path.mkdir(parents=True, exist_ok=True)
         images: List[dict[str, Any]] = []
         for idx, item in enumerate(normalized, 1):
@@ -561,6 +773,9 @@ async def generate_ponchi_images(payload: PonchiImagesRequest) -> PonchiImagesRe
 
 @app.post("/video/generate", response_model=JobResponse)
 async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
+    project_id = _resolve_project_id(payload.project_id)
+    if not payload.output_dir.strip():
+        payload.output_dir = _project_output_dir(project_id)
     _validate_video_request(payload)
     try:
         job = manager.create_job()
