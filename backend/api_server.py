@@ -134,8 +134,13 @@ def _project_settings_path(project_id: str) -> Path:
     return _project_dir(project_id) / "settings.json"
 
 
-def _ensure_project_structure(project_id: str, display_name: Optional[str] = None) -> Path:
+def _ensure_project_structure(
+    project_id: str,
+    display_name: Optional[str] = None,
+    project_type: Optional[str] = None,
+) -> Path:
     project_id = _slugify_project_id(project_id)
+    normalized_type = _normalize_project_type(project_type)
     project_dir = _project_dir(project_id)
     project_dir.mkdir(parents=True, exist_ok=True)
     for name in ["scripts", "materials", "outputs", "logs"]:
@@ -145,10 +150,25 @@ def _ensure_project_structure(project_id: str, display_name: Optional[str] = Non
         meta = {
             "id": project_id,
             "name": display_name or ("Default" if project_id == DEFAULT_PROJECT_ID else project_id),
+            "project_type": normalized_type,
+            "flow_state": _default_flow_state() if normalized_type == "flow" else {},
             "created_at": int(time.time()),
             "updated_at": int(time.time()),
         }
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        meta = _read_project_meta(project_id)
+        should_write = False
+        if project_type is not None and meta.get("project_type") != normalized_type:
+            meta["project_type"] = normalized_type
+            should_write = True
+        if meta.get("project_type") == "flow":
+            normalized_flow_state = _normalize_flow_state(meta.get("flow_state"))
+            if meta.get("flow_state") != normalized_flow_state:
+                meta["flow_state"] = normalized_flow_state
+                should_write = True
+        if should_write:
+            _write_project_meta(project_id, meta)
     settings_path = _project_settings_path(project_id)
     if not settings_path.exists():
         settings_path.write_text("{}", encoding="utf-8")
@@ -162,12 +182,22 @@ def _read_project_meta(project_id: str) -> dict[str, Any]:
     data = json.loads(meta_path.read_text(encoding="utf-8"))
     data.setdefault("id", _slugify_project_id(project_id))
     data.setdefault("name", data["id"])
+    data["project_type"] = _normalize_project_type(data.get("project_type"))
+    if data["project_type"] == "flow":
+        data["flow_state"] = _normalize_flow_state(data.get("flow_state"))
+    else:
+        data["flow_state"] = {}
     return data
 
 
 def _write_project_meta(project_id: str, data: dict[str, Any]) -> None:
     data = copy.deepcopy(data)
     data["id"] = _slugify_project_id(project_id)
+    data["project_type"] = _normalize_project_type(data.get("project_type"))
+    if data["project_type"] == "flow":
+        data["flow_state"] = _normalize_flow_state(data.get("flow_state"))
+    else:
+        data["flow_state"] = {}
     data["updated_at"] = int(time.time())
     _project_meta_path(project_id).write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
@@ -233,6 +263,36 @@ def _load_model_config() -> dict[str, Any]:
 
 
 MODEL_CONFIG = _load_model_config()
+
+FLOW_STEPS = [
+    "script",
+    "base_video",
+    "title_description",
+    "thumbnail",
+    "ponchi",
+    "final_edit",
+]
+FLOW_STEP_STATUSES = {"未着手", "編集中", "完了"}
+
+
+def _default_flow_state() -> dict[str, str]:
+    return {step: "未着手" for step in FLOW_STEPS}
+
+
+def _normalize_project_type(value: Optional[str]) -> str:
+    normalized = (value or "").strip().lower()
+    return "flow" if normalized == "flow" else "standard"
+
+
+def _normalize_flow_state(value: Any) -> dict[str, str]:
+    default_state = _default_flow_state()
+    if not isinstance(value, dict):
+        return default_state
+    normalized: dict[str, str] = {}
+    for step in FLOW_STEPS:
+        status = value.get(step)
+        normalized[step] = status if status in FLOW_STEP_STATUSES else "未着手"
+    return normalized
 
 
 @app.middleware("http")
@@ -446,6 +506,7 @@ class PonchiImagesRequest(BaseModel):
 class ProjectCreateRequest(BaseModel):
     name: str
     id: Optional[str] = None
+    project_type: str = "standard"
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -455,6 +516,12 @@ class ProjectUpdateRequest(BaseModel):
 class ProjectCloneRequest(BaseModel):
     name: Optional[str] = None
     id: Optional[str] = None
+
+
+class ProjectFlowStateUpdateRequest(BaseModel):
+    flow_state: Optional[dict[str, str]] = None
+    step: Optional[str] = None
+    status: Optional[str] = None
 
 
 class ProjectSettingsUpdateRequest(BaseModel):
@@ -501,7 +568,7 @@ async def list_projects() -> dict:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             project_id = str(meta.get("id", child.name)).strip() or child.name
             project_name = str(meta.get("name", child.name)).strip() or project_id
-            projects.append({"id": project_id, "name": project_name})
+            projects.append({"id": project_id, "name": project_name, "project_type": _normalize_project_type(meta.get("project_type"))})
         except Exception:
             logger.warning("Skipping broken project metadata: %s", meta_path)
     return {"projects": projects, "default_project_id": DEFAULT_PROJECT_ID}
@@ -513,7 +580,7 @@ async def create_project(payload: ProjectCreateRequest) -> dict:
     project_dir = _project_dir(project_id)
     if project_dir.exists():
         raise HTTPException(status_code=409, detail="project already exists")
-    _ensure_project_structure(project_id, payload.name.strip())
+    _ensure_project_structure(project_id, payload.name.strip(), payload.project_type)
     return {"project_id": project_id, "project": _read_project_meta(project_id)}
 
 
@@ -524,6 +591,51 @@ async def update_project(project_id: str, payload: ProjectUpdateRequest) -> dict
     meta["name"] = payload.name.strip() or meta.get("name") or project_id
     _write_project_meta(project_id, meta)
     return {"project": _read_project_meta(project_id)}
+
+
+@app.get("/projects/{project_id}/flow")
+async def get_project_flow(project_id: str) -> dict:
+    resolved = _resolve_project_id(project_id)
+    meta = _read_project_meta(resolved)
+    if meta.get("project_type") != "flow":
+        raise HTTPException(status_code=400, detail="project is not flow type")
+    return {
+        "project_id": resolved,
+        "project_type": "flow",
+        "flow_state": _normalize_flow_state(meta.get("flow_state")),
+        "steps": FLOW_STEPS,
+        "statuses": sorted(FLOW_STEP_STATUSES),
+    }
+
+
+@app.put("/projects/{project_id}/flow")
+async def put_project_flow(project_id: str, payload: ProjectFlowStateUpdateRequest) -> dict:
+    resolved = _resolve_project_id(project_id)
+    meta = _read_project_meta(resolved)
+    if meta.get("project_type") != "flow":
+        raise HTTPException(status_code=400, detail="project is not flow type")
+    flow_state = _normalize_flow_state(meta.get("flow_state"))
+
+    if payload.flow_state is not None:
+        flow_state = _normalize_flow_state(payload.flow_state)
+    elif payload.step is not None:
+        step = (payload.step or "").strip()
+        status = (payload.status or "").strip()
+        if step not in FLOW_STEPS:
+            raise HTTPException(status_code=400, detail=f"unknown flow step: {step}")
+        if status not in FLOW_STEP_STATUSES:
+            raise HTTPException(status_code=400, detail=f"unknown flow status: {status}")
+        flow_state[step] = status
+    else:
+        raise HTTPException(status_code=400, detail="flow_state or step/status is required")
+
+    meta["flow_state"] = flow_state
+    _write_project_meta(resolved, meta)
+    return {
+        "project_id": resolved,
+        "project_type": "flow",
+        "flow_state": flow_state,
+    }
 
 
 @app.delete("/projects/{project_id}")
@@ -548,7 +660,11 @@ async def clone_project(project_id: str, payload: ProjectCloneRequest) -> dict:
     clone_dir = _project_dir(clone_id)
     if clone_dir.exists():
         raise HTTPException(status_code=409, detail="clone project already exists")
-    _ensure_project_structure(clone_id, payload.name or f"{source_id} copy")
+    _ensure_project_structure(
+        clone_id,
+        payload.name or f"{source_id} copy",
+        _read_project_meta(source_id).get("project_type"),
+    )
     shutil.copy2(_project_settings_path(source_id), _project_settings_path(clone_id))
     for subdir in ["scripts", "materials"]:
         src = source_dir / subdir

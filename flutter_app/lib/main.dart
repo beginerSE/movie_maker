@@ -236,19 +236,42 @@ class ProjectState {
 }
 
 class ProjectSummary {
-  ProjectSummary({required this.id, required this.name});
+  ProjectSummary({required this.id, required this.name, required this.projectType});
 
   final String id;
   final String name;
+  final String projectType;
+
+  bool get isFlowProject => projectType == 'flow';
 
   factory ProjectSummary.fromJson(Map<String, dynamic> json) {
     final id = (json['id'] as String? ?? '').trim();
+    final projectType = (json['project_type'] as String? ?? 'standard').trim().toLowerCase();
     return ProjectSummary(
       id: id,
       name: (json['name'] as String? ?? id).trim(),
+      projectType: projectType == 'flow' ? 'flow' : 'standard',
     );
   }
 }
+
+class ProjectFlowStep {
+  const ProjectFlowStep({required this.key, required this.label});
+
+  final String key;
+  final String label;
+}
+
+const List<ProjectFlowStep> kFlowSteps = [
+  ProjectFlowStep(key: 'script', label: '① 台本作成（AI + 人間修正）'),
+  ProjectFlowStep(key: 'base_video', label: '② 動画作成（ベース動画生成）'),
+  ProjectFlowStep(key: 'title_description', label: '③ 動画タイトル・説明文作成（AI）'),
+  ProjectFlowStep(key: 'thumbnail', label: '④ サムネイル作成（AI）'),
+  ProjectFlowStep(key: 'ponchi', label: '⑤ ポンチ絵（補足ビジュアル）案の作成'),
+  ProjectFlowStep(key: 'final_edit', label: '⑥ 動画編集（最終編集）'),
+];
+
+const List<String> kFlowStatuses = ['未着手', '編集中', '完了'];
 
 class ApiSettingsBootstrap {
   static Future<void> load() async {
@@ -374,6 +397,7 @@ class _StudioShellState extends State<StudioShell> {
     '詳細動画編集',
     '設定',
     'About',
+    'AIフロー',
   ];
   int _selectedIndex = 0;
   int? _hoveredIndex;
@@ -786,6 +810,22 @@ class _StudioShellState extends State<StudioShell> {
     await prefs.setString('project.current_id', normalized);
   }
 
+  ProjectSummary? _currentProjectSummary() {
+    final currentId = ProjectState.currentProjectId.value;
+    for (final project in _projects) {
+      if (project.id == currentId) {
+        return project;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _openFlowPage() async {
+    setState(() {
+      _selectedIndex = 10;
+    });
+  }
+
   Future<void> _openProjectManager() async {
     await showDialog<void>(
       context: context,
@@ -1177,9 +1217,11 @@ class _StudioShellState extends State<StudioShell> {
         return ProjectListPanel(
           projects: _projects,
           projectsLoading: _projectsLoading,
+          selectedProject: _currentProjectSummary(),
           onRefresh: _loadProjects,
           onManage: _openProjectManager,
           onSelectProject: _setCurrentProject,
+          onOpenFlow: _openFlowPage,
         );
       case 1:
         return ScriptGenerateForm(
@@ -1213,6 +1255,11 @@ class _StudioShellState extends State<StudioShell> {
         return const SettingsForm();
       case 9:
         return const AboutPanel();
+      case 10:
+        return FlowProjectPanel(
+          selectedProject: _currentProjectSummary(),
+          checkApiHealth: _checkApiHealthAndUpdate,
+        );
       default:
         return PlaceholderPanel(title: _pages[_selectedIndex]);
     }
@@ -1224,16 +1271,20 @@ class ProjectListPanel extends StatelessWidget {
     super.key,
     required this.projects,
     required this.projectsLoading,
+    required this.selectedProject,
     required this.onRefresh,
     required this.onManage,
     required this.onSelectProject,
+    required this.onOpenFlow,
   });
 
   final List<ProjectSummary> projects;
   final bool projectsLoading;
+  final ProjectSummary? selectedProject;
   final Future<void> Function() onRefresh;
   final Future<void> Function() onManage;
   final Future<void> Function(String projectId) onSelectProject;
+  final Future<void> Function() onOpenFlow;
 
   @override
   Widget build(BuildContext context) {
@@ -1258,6 +1309,15 @@ class ProjectListPanel extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
+        if (selectedProject?.isFlowProject ?? false)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: FilledButton.icon(
+              onPressed: onOpenFlow,
+              icon: const Icon(Icons.alt_route),
+              label: const Text('選択中のAIフローを開く'),
+            ),
+          ),
         Expanded(
           child: Card(
             child: projectsLoading
@@ -1320,7 +1380,7 @@ class ProjectListPanel extends StatelessWidget {
                                       ),
                                     ),
                                     Text(
-                                      project.id,
+                                      '${project.id} / ${project.projectType == 'flow' ? 'AIフロー' : '通常'}',
                                       style: const TextStyle(color: Colors.black45),
                                     ),
                                   ],
@@ -1338,6 +1398,182 @@ class ProjectListPanel extends StatelessWidget {
     );
   }
 }
+
+class FlowProjectPanel extends StatefulWidget {
+  const FlowProjectPanel({
+    super.key,
+    required this.selectedProject,
+    required this.checkApiHealth,
+  });
+
+  final ProjectSummary? selectedProject;
+  final ApiHealthCheck checkApiHealth;
+
+  @override
+  State<FlowProjectPanel> createState() => _FlowProjectPanelState();
+}
+
+class _FlowProjectPanelState extends State<FlowProjectPanel> {
+  Map<String, String> _flowState = {
+    for (final step in kFlowSteps) step.key: '未着手',
+  };
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFlowState();
+  }
+
+  @override
+  void didUpdateWidget(covariant FlowProjectPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedProject?.id != widget.selectedProject?.id) {
+      _loadFlowState();
+    }
+  }
+
+  Future<void> _loadFlowState() async {
+    final selected = widget.selectedProject;
+    if (selected == null || !selected.isFlowProject) {
+      setState(() {
+        _flowState = {for (final step in kFlowSteps) step.key: '未着手'};
+        _error = null;
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final healthy = await widget.checkApiHealth();
+      if (!healthy) {
+        throw Exception('API サーバーに接続できません。');
+      }
+      final uri = ApiConfig.httpUri('/projects/${selected.id}/flow');
+      final response = await http.get(uri).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(_formatApiFailureMessage(action: 'AIフロー状態の取得に失敗しました。', uri: uri, response: response));
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final map = (body['flow_state'] as Map<String, dynamic>? ?? {});
+      setState(() {
+        _flowState = {
+          for (final step in kFlowSteps)
+            step.key: (map[step.key] as String? ?? '未着手'),
+        };
+      });
+    } catch (error) {
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateStep(String step, String status) async {
+    final selected = widget.selectedProject;
+    if (selected == null || !selected.isFlowProject) {
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final uri = ApiConfig.httpUri('/projects/${selected.id}/flow');
+      final response = await http.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'step': step, 'status': status}),
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(_formatApiFailureMessage(action: 'AIフロー状態の更新に失敗しました。', uri: uri, response: response));
+      }
+      setState(() {
+        _flowState[step] = status;
+      });
+    } catch (error) {
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.selectedProject;
+    if (selected == null) {
+      return const Center(child: Text('プロジェクトを選択してください。'));
+    }
+    if (!selected.isFlowProject) {
+      return Center(
+        child: Text(
+          '選択中のプロジェクト（${selected.name}）は通常作成です。
+AI作成（フロー型）プロジェクトを選択してください。',
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    return ListView(
+      children: [
+        Text('AI動画フロー: ${selected.name}', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 12),
+        const Text('各工程は自動で進みません。内容を確認・編集し、手動で状態を更新してください。'),
+        const SizedBox(height: 12),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(_error!, style: const TextStyle(color: Colors.red)),
+          ),
+        if (_loading) const LinearProgressIndicator(),
+        const SizedBox(height: 8),
+        ...kFlowSteps.map((step) {
+          final current = _flowState[step.key] ?? '未着手';
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(step.label, style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: kFlowStatuses.contains(current) ? current : '未着手',
+                    decoration: const InputDecoration(labelText: '進捗状態'),
+                    items: kFlowStatuses
+                        .map((status) => DropdownMenuItem(value: status, child: Text(status)))
+                        .toList(),
+                    onChanged: _loading
+                        ? null
+                        : (value) {
+                            if (value == null || value == current) return;
+                            _updateStep(step.key, value);
+                          },
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+}
+
 
 class PlaceholderPanel extends StatelessWidget {
   const PlaceholderPanel({super.key, required this.title});
@@ -1377,25 +1613,56 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
 
   Future<void> _createProject() async {
     final controller = TextEditingController();
-    final name = await showDialog<String>(
+    String selectedType = 'standard';
+    final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('プロジェクト作成'),
-        content: TextField(controller: controller, decoration: const InputDecoration(labelText: '表示名')),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('作成')),
-        ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocalState) => AlertDialog(
+          title: const Text('プロジェクト作成'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: controller, decoration: const InputDecoration(labelText: '表示名')),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedType,
+                decoration: const InputDecoration(labelText: '作成方法'),
+                items: const [
+                  DropdownMenuItem(value: 'standard', child: Text('任意作成（従来通り）')),
+                  DropdownMenuItem(value: 'flow', child: Text('AI作成（フロー型）')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setLocalState(() {
+                    selectedType = value;
+                  });
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, {
+                'name': controller.text.trim(),
+                'project_type': selectedType,
+              }),
+              child: const Text('作成'),
+            ),
+          ],
+        ),
       ),
     );
-    if (name == null || name.isEmpty) return;
+    final name = result?['name'] ?? '';
+    final projectType = result?['project_type'] ?? 'standard';
+    if (name.isEmpty) return;
     setState(() => _busy = true);
     try {
       final uri = ApiConfig.httpUri('/projects');
       final response = await http.post(
         uri,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'name': name}),
+        body: jsonEncode({'name': name, 'project_type': projectType}),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception(
@@ -1541,7 +1808,7 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
                     .map(
                       (p) => ListTile(
                         title: Text(p.name),
-                        subtitle: Text(p.id),
+                        subtitle: Text('${p.id} / ${p.projectType == 'flow' ? 'AIフロー' : '通常'}'),
                         trailing: Wrap(
                           spacing: 4,
                           children: [
