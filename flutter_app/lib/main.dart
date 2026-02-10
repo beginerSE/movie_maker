@@ -4945,6 +4945,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   String? _generatedVideoPath;
   VideoPlayerController? _previewController;
   bool _previewInitializing = false;
+  String? _previewErrorMessage;
   String _lastJobLogsText = '';
   List<String> _voicevoxSpeakers = [];
   bool _voicevoxSpeakersLoading = false;
@@ -4979,31 +4980,61 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   Future<void> _initVideoPreview(String videoPath) async {
     final file = File(videoPath);
     if (!await file.exists()) {
+      if (!mounted) return;
+      setState(() {
+        _previewErrorMessage = '動画ファイルが見つかりません: $videoPath';
+        _previewController = null;
+      });
       return;
     }
     setState(() {
       _previewInitializing = true;
       _generatedVideoPath = videoPath;
+      _previewErrorMessage = null;
     });
+
+    final old = _previewController;
+    VideoPlayerController? controller;
+    final errors = <String>[];
+
     try {
-      final old = _previewController;
-      final controller = VideoPlayerController.file(file);
+      controller = VideoPlayerController.file(file);
       await controller.initialize();
-      await old?.dispose();
-      if (!mounted) {
-        await controller.dispose();
-        return;
+    } catch (error) {
+      errors.add('file-controller: $error');
+      await controller?.dispose();
+      controller = null;
+      try {
+        controller = VideoPlayerController.networkUrl(Uri.file(file.path));
+        await controller.initialize();
+      } catch (fallbackError) {
+        errors.add('uri-controller: $fallbackError');
+        await controller?.dispose();
+        controller = null;
       }
-      setState(() {
-        _previewController = controller;
-        _previewInitializing = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _previewInitializing = false;
-      });
     }
+
+    await old?.dispose();
+
+    if (!mounted) {
+      await controller?.dispose();
+      return;
+    }
+
+    if (controller == null) {
+      setState(() {
+        _previewInitializing = false;
+        _previewController = null;
+        _previewErrorMessage = 'プレビュー初期化に失敗しました。${errors.join(' / ')}';
+      });
+      return;
+    }
+
+    setState(() {
+      _previewController = controller;
+      _previewInitializing = false;
+      _previewErrorMessage = null;
+    });
   }
 
 
@@ -5025,6 +5056,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     setState(() {
       _lastJobLogsText = savedLogs;
       _generatedVideoPath = savedVideoPath.isEmpty ? null : savedVideoPath;
+      _previewErrorMessage = null;
     });
     if (savedVideoPath.isNotEmpty) {
       await _initVideoPreview(savedVideoPath);
@@ -5853,6 +5885,14 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(_generatedVideoPath!, style: Theme.of(context).textTheme.bodySmall),
             ),
+          if (_previewErrorMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _previewErrorMessage!,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
           if (_previewController != null && _previewController!.value.isInitialized)
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -5931,6 +5971,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _isSubmitting = true;
       _statusMessage = 'Checking API...';
       _generatedVideoPath = null;
+      _previewErrorMessage = null;
       _lastJobLogsText = '';
     });
     unawaited(_saveVideoArtifacts(videoPath: '', logsText: ''));
