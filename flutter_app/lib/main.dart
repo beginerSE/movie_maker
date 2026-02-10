@@ -1628,7 +1628,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   @override
   void initState() {
     super.initState();
-    _persistence = InputPersistence('script_generate.');
+    _persistence = InputPersistence('script_generate.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_promptController, 'prompt');
     _persistence.registerController(_outputController, 'output');
     _persistence.registerController(_maxTokensController, 'max_tokens');
@@ -2192,7 +2192,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   @override
   void initState() {
     super.initState();
-    _persistence = InputPersistence('title_generate.');
+    _persistence = InputPersistence('title_generate.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_scriptPathController, 'script_path');
     _persistence.registerController(_countController, 'count');
     _persistence.registerController(_instructionsController, 'instructions');
@@ -2503,7 +2503,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   @override
   void initState() {
     super.initState();
-    _persistence = InputPersistence('materials_generate.');
+    _persistence = InputPersistence('materials_generate.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_modelController, 'model');
     _persistence.registerController(_promptController, 'prompt');
     _persistence.registerController(_outputController, 'output_dir');
@@ -2825,7 +2825,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   @override
   void initState() {
     super.initState();
-    _persistence = InputPersistence('ponchi_generate.');
+    _persistence = InputPersistence('ponchi_generate.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_srtController, 'srt_path');
     _persistence.registerController(_outputController, 'output_dir');
     _persistence.registerController(_geminiModelController, 'gemini_model');
@@ -3265,7 +3265,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
   @override
   void initState() {
     super.initState();
-    _persistence = InputPersistence('video_edit.');
+    _persistence = InputPersistence('video_edit.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_inputVideoController, 'input_video');
     _persistence.registerController(_outputVideoController, 'output_video');
     _persistence.registerController(_overlayImageController, 'overlay_image');
@@ -3765,7 +3765,7 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
   @override
   void initState() {
     super.initState();
-    _persistence = InputPersistence('detailed_edit.');
+    _persistence = InputPersistence('detailed_edit.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_projectNameController, 'project_name');
     _persistence.registerController(_resolutionController, 'resolution');
     _persistence.registerController(_fpsController, 'fps');
@@ -4346,7 +4346,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   @override
   void initState() {
     super.initState();
-    _persistence = InputPersistence(_prefsPrefix);
+    _persistence = InputPersistence(_prefsPrefix, scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_scriptController, 'script');
     _persistence.registerController(_imageListController, 'images');
     _persistence.registerController(_outputController, 'output');
