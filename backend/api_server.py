@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import configparser
 import json
 import logging
 import mimetypes
@@ -38,7 +39,6 @@ from backend.video_core import (
     CAPTION_MARGIN_BOTTOM,
     DEFAULT_CLAUDE_MODEL,
     DEFAULT_PONCHI_GEMINI_MODEL,
-    DEFAULT_PONCHI_OPENAI_MODEL,
     DEFAULT_SCRIPT_GEMINI_MODEL,
     DEFAULT_SCRIPT_OPENAI_MODEL,
     DEFAULT_TITLE_MAX_TOKENS,
@@ -46,7 +46,6 @@ from backend.video_core import (
     extract_script_text,
     generate_materials_with_gemini,
     generate_ponchi_suggestions_with_gemini,
-    generate_ponchi_suggestions_with_openai,
     generate_script_with_claude,
     generate_script_with_gemini,
     generate_script_with_openai,
@@ -71,6 +70,52 @@ if not logger.handlers:
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
     logger.setLevel(logging.INFO)
+
+
+def _split_csv(value: str) -> List[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _load_model_config() -> dict[str, Any]:
+    default_thumbnail = [GEMINI_MATERIAL_DEFAULT_MODEL]
+    default_ponchi = [DEFAULT_PONCHI_GEMINI_MODEL]
+    config_paths = [
+        ROOT_DIR / "condig.ini",
+        ROOT_DIR / "config.ini",
+        APP_ROOT / "condig.ini",
+        APP_ROOT / "config.ini",
+    ]
+    parser = configparser.ConfigParser()
+    loaded = parser.read([str(path) for path in config_paths if path.exists()], encoding="utf-8")
+    if not loaded:
+        return {
+            "thumbnail_models": default_thumbnail,
+            "thumbnail_default": default_thumbnail[0],
+            "ponchi_models": default_ponchi,
+            "ponchi_default": default_ponchi[0],
+        }
+
+    thumb_models = _split_csv(parser.get("thumbnail", "models", fallback=""))
+    thumb_default = parser.get("thumbnail", "default_model", fallback="").strip()
+    ponchi_models = _split_csv(parser.get("ponchi", "models", fallback=""))
+    ponchi_default = parser.get("ponchi", "default_model", fallback="").strip()
+    if not thumb_models:
+        thumb_models = default_thumbnail
+    if not ponchi_models:
+        ponchi_models = default_ponchi
+    if thumb_default not in thumb_models:
+        thumb_default = thumb_models[0]
+    if ponchi_default not in ponchi_models:
+        ponchi_default = ponchi_models[0]
+    return {
+        "thumbnail_models": thumb_models,
+        "thumbnail_default": thumb_default,
+        "ponchi_models": ponchi_models,
+        "ponchi_default": ponchi_default,
+    }
+
+
+MODEL_CONFIG = _load_model_config()
 
 
 @app.middleware("http")
@@ -262,7 +307,6 @@ class PonchiIdeasRequest(BaseModel):
     srt_path: str
     output_dir: Optional[str] = None
     gemini_model: str = DEFAULT_PONCHI_GEMINI_MODEL
-    openai_model: str = DEFAULT_PONCHI_OPENAI_MODEL
 
 
 class PonchiIdeasResponse(BaseModel):
@@ -300,6 +344,22 @@ class JobStatusResponse(BaseModel):
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/settings/ai-models")
+async def get_ai_models() -> dict:
+    return {
+        "thumbnail": {
+            "provider": "Gemini",
+            "models": MODEL_CONFIG["thumbnail_models"],
+            "default_model": MODEL_CONFIG["thumbnail_default"],
+        },
+        "ponchi": {
+            "provider": "Gemini",
+            "models": MODEL_CONFIG["ponchi_models"],
+            "default_model": MODEL_CONFIG["ponchi_default"],
+        },
+    }
 
 
 @app.post("/script/generate", response_model=ScriptGenerateResponse)
@@ -417,20 +477,16 @@ async def generate_ponchi_ideas(payload: PonchiIdeasRequest) -> PonchiIdeasRespo
         items = parse_srt_file(payload.srt_path)
         if not items:
             raise RuntimeError("SRTから字幕が見つかりませんでした。")
-        if engine == "gemini":
-            suggestions = generate_ponchi_suggestions_with_gemini(
-                api_key=payload.api_key,
-                items=items,
-                model=payload.gemini_model,
-            )
-        elif engine == "chatgpt":
-            suggestions = generate_ponchi_suggestions_with_openai(
-                api_key=payload.api_key,
-                items=items,
-                model=payload.openai_model,
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown engine: {payload.engine}")
+        if engine and engine != "gemini":
+            raise HTTPException(status_code=400, detail="ポンチ絵の案出しは現在 Gemini のみ対応です。")
+        model = payload.gemini_model.strip() or MODEL_CONFIG["ponchi_default"]
+        if model not in MODEL_CONFIG["ponchi_models"]:
+            model = MODEL_CONFIG["ponchi_default"]
+        suggestions = generate_ponchi_suggestions_with_gemini(
+            api_key=payload.api_key,
+            items=items,
+            model=model,
+        )
         normalized = _normalize_ponchi_suggestions(suggestions, items)
         json_path: Optional[str] = None
         ideas_path = _ponchi_ideas_path(payload.output_dir, payload.srt_path)

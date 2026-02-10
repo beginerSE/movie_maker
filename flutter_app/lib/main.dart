@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'config/input_persistence.dart';
 
@@ -98,6 +99,19 @@ class ApiKeys {
   static final ValueNotifier<String> gemini = ValueNotifier<String>('');
   static final ValueNotifier<String> openAi = ValueNotifier<String>('');
   static final ValueNotifier<String> claude = ValueNotifier<String>('');
+}
+
+class ApiSettingsBootstrap {
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    ApiConfig.baseUrl.value =
+        (prefs.getString('settings.backend_url') ?? _defaultApiBaseUrl()).trim();
+    ApiKeys.gemini.value = (prefs.getString('settings.gemini_key') ?? '').trim();
+    ApiKeys.openAi.value = (prefs.getString('settings.openai_key') ?? '').trim();
+    ApiKeys.claude.value = (prefs.getString('settings.claude_key') ?? '').trim();
+    VoicevoxConfig.baseUrl.value =
+        (prefs.getString('video_generate.vv_url') ?? 'http://127.0.0.1:50021').trim();
+  }
 }
 
 class MovieMakerApp extends StatelessWidget {
@@ -222,6 +236,7 @@ class _StudioShellState extends State<StudioShell> {
   @override
   void initState() {
     super.initState();
+    ApiSettingsBootstrap.load();
     _ensureApiServerRunning();
   }
 
@@ -1876,7 +1891,8 @@ class MaterialsGenerateForm extends StatefulWidget {
 
 class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   final _formKey = GlobalKey<FormState>();
-  final _modelController = TextEditingController(text: 'gemini-2.0-flash');
+  final _modelController = TextEditingController(text: 'gemini-3-pro-image-preview');
+  List<String> _availableModels = const ['gemini-3-pro-image-preview'];
   final _promptController = TextEditingController();
   final _outputController = TextEditingController();
   final _previewController = TextEditingController();
@@ -1895,6 +1911,40 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
 
   Future<void> _initPersistence() async {
     await _persistence.init();
+    await _loadModelConfig();
+  }
+
+  Future<void> _loadModelConfig() async {
+    try {
+      final response = await http
+          .get(ApiConfig.httpUri('/settings/ai-models'))
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final section = data['thumbnail'] as Map<String, dynamic>?;
+      if (section == null) return;
+      final models = (section['models'] as List<dynamic>? ?? [])
+          .whereType<String>()
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (models.isEmpty || !mounted) {
+        return;
+      }
+      final defaultModel = (section['default_model'] as String? ?? '').trim();
+      setState(() {
+        _availableModels = models;
+        if (!_availableModels.contains(_modelController.text.trim())) {
+          _modelController.text = _availableModels.contains(defaultModel)
+              ? defaultModel
+              : _availableModels.first;
+        }
+      });
+    } catch (_) {
+      // ignore
+    }
   }
 
   @override
@@ -1918,9 +1968,21 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _modelController,
-            decoration: const InputDecoration(labelText: 'モデル名'),
+          DropdownButtonFormField<String>(
+            value: _availableModels.contains(_modelController.text)
+                ? _modelController.text
+                : _availableModels.first,
+            decoration: const InputDecoration(labelText: 'モデル（Gemini）'),
+            items: _availableModels
+                .map((model) => DropdownMenuItem(value: model, child: Text(model)))
+                .toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _modelController.text = value;
+              });
+              _persistence.setString('model', value);
+            },
           ),
           const SizedBox(height: 12),
           TextFormField(
@@ -2108,10 +2170,10 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _srtController = TextEditingController();
   final _outputController = TextEditingController(text: 'ponchi_images');
   final _geminiModelController = TextEditingController(text: 'gemini-2.0-flash');
-  final _chatGptModelController = TextEditingController(text: 'gpt-4.1-mini');
   final _outputTextController = TextEditingController();
   late final InputPersistence _persistence;
   String _engine = 'Gemini';
+  List<String> _ponchiModels = const ['gemini-2.0-flash'];
   bool _isSubmittingIdeas = false;
   bool _isSubmittingImages = false;
 
@@ -2122,17 +2184,45 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _persistence.registerController(_srtController, 'srt_path');
     _persistence.registerController(_outputController, 'output_dir');
     _persistence.registerController(_geminiModelController, 'gemini_model');
-    _persistence.registerController(_chatGptModelController, 'chatgpt_model');
     _initPersistence();
   }
 
   Future<void> _initPersistence() async {
     await _persistence.init();
-    final engine = await _persistence.readString('engine');
-    if (!mounted) return;
-    setState(() {
-      _engine = engine ?? _engine;
-    });
+    await _loadPonchiModelConfig();
+  }
+
+  Future<void> _loadPonchiModelConfig() async {
+    try {
+      final response = await http
+          .get(ApiConfig.httpUri('/settings/ai-models'))
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final section = data['ponchi'] as Map<String, dynamic>?;
+      if (section == null) return;
+      final models = (section['models'] as List<dynamic>? ?? [])
+          .whereType<String>()
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (models.isEmpty || !mounted) {
+        return;
+      }
+      final defaultModel = (section['default_model'] as String? ?? '').trim();
+      setState(() {
+        _ponchiModels = models;
+        if (!_ponchiModels.contains(_geminiModelController.text.trim())) {
+          _geminiModelController.text = _ponchiModels.contains(defaultModel)
+              ? defaultModel
+              : _ponchiModels.first;
+        }
+      });
+    } catch (_) {
+      // ignore
+    }
   }
 
   @override
@@ -2140,7 +2230,6 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _srtController.dispose();
     _outputController.dispose();
     _geminiModelController.dispose();
-    _chatGptModelController.dispose();
     _outputTextController.dispose();
     _persistence.dispose();
     super.dispose();
@@ -2179,30 +2268,27 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             ),
           ),
           const SizedBox(height: 12),
+          TextFormField(
+            initialValue: 'Gemini',
+            readOnly: true,
+            decoration: const InputDecoration(labelText: '提案生成AI'),
+          ),
+          const SizedBox(height: 12),
           DropdownButtonFormField<String>(
-            value: _engine,
-            decoration: const InputDecoration(labelText: '提案生成エンジン'),
-            items: const [
-              DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
-              DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
-            ],
+            value: _ponchiModels.contains(_geminiModelController.text)
+                ? _geminiModelController.text
+                : _ponchiModels.first,
+            decoration: const InputDecoration(labelText: 'Gemini 提案モデル'),
+            items: _ponchiModels
+                .map((model) => DropdownMenuItem(value: model, child: Text(model)))
+                .toList(),
             onChanged: (value) {
               if (value == null) return;
               setState(() {
-                _engine = value;
+                _geminiModelController.text = value;
               });
-              _persistence.setString('engine', value);
+              _persistence.setString('gemini_model', value);
             },
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _geminiModelController,
-            decoration: const InputDecoration(labelText: 'Gemini 提案モデル'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _chatGptModelController,
-            decoration: const InputDecoration(labelText: 'ChatGPT モデル'),
           ),
           const SizedBox(height: 16),
           Wrap(
@@ -2251,9 +2337,6 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   }
 
   String _resolvePonchiApiKey() {
-    if (_engine == 'ChatGPT') {
-      return ApiKeys.openAi.value;
-    }
     return ApiKeys.gemini.value;
   }
 
@@ -2288,7 +2371,6 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             ? null
             : _outputController.text.trim(),
         'gemini_model': _geminiModelController.text,
-        'openai_model': _chatGptModelController.text,
       };
       final response = await http
           .post(
