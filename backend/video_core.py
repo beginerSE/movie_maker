@@ -1034,6 +1034,41 @@ def _format_openai_error(response: requests.Response) -> str:
     return f"ChatGPT APIエラー: {status}"
 
 
+def _extract_openai_error_message(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text or ""
+    return str(payload.get("error", {}).get("message") or response.text or "")
+
+
+def _clamp_openai_max_tokens(model: str, requested: int) -> int:
+    """モデルごとの差異を吸収しつつ、過大な max_tokens を抑制する。"""
+    cleaned = (model or "").strip().lower()
+    # 既知の上限。未知モデルは安全側で既定値をそのまま使う。
+    known_limits = {
+        "gpt-4.1": 32768,
+        "gpt-4.1-mini": 16384,
+        "gpt-4.1-nano": 16384,
+        "gpt-4o": 16384,
+        "gpt-4o-mini": 16384,
+        "o1": 65536,
+        "o1-mini": 65536,
+    }
+    for prefix, limit in known_limits.items():
+        if cleaned.startswith(prefix):
+            return max(1, min(int(requested), limit))
+    return max(1, int(requested))
+
+
+def _openai_max_token_keys_for_model(model: str) -> List[str]:
+    """モデルによって max_tokens / max_completion_tokens の受け口が違うため順に試す。"""
+    cleaned = (model or "").strip().lower()
+    if cleaned.startswith(("gpt-4.1", "gpt-4o", "o1", "o3", "gpt-5")):
+        return ["max_completion_tokens", "max_tokens"]
+    return ["max_tokens", "max_completion_tokens"]
+
+
 def generate_script_with_openai(
     api_key: str,
     prompt: str,
@@ -1053,17 +1088,56 @@ def generate_script_with_openai(
             {"role": "user", "content": prompt},
         ],
     }
-    if max_tokens is not None:
-        payload["max_completion_tokens"] = max_tokens
+    token_keys = _openai_max_token_keys_for_model(model)
+    bounded_tokens = _clamp_openai_max_tokens(model, max_tokens) if max_tokens is not None else None
+    if bounded_tokens is not None:
+        payload[token_keys[0]] = bounded_tokens
 
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
     resp = _post_openai_with_retry(
         "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         payload=payload,
     )
+
+    # モデル差異による引数エラーや上限超過を吸収して1回だけ再試行する。
+    if not resp.ok and resp.status_code == 400 and bounded_tokens is not None:
+        err_msg = _extract_openai_error_message(resp)
+        lowered = err_msg.lower()
+        retry_payload = dict(payload)
+
+        unsupported_key = None
+        for key in token_keys:
+            if f"'{key}'" in lowered and "unsupported" in lowered:
+                unsupported_key = key
+                break
+
+        if unsupported_key:
+            retry_payload.pop(unsupported_key, None)
+            for candidate in token_keys:
+                if candidate != unsupported_key:
+                    retry_payload[candidate] = bounded_tokens
+                    break
+            resp = _post_openai_with_retry(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                payload=retry_payload,
+            )
+        else:
+            limit_match = re.search(r"at most\s+(\d+)\s+completion tokens", lowered)
+            if limit_match:
+                detected_limit = int(limit_match.group(1))
+                for key in token_keys:
+                    retry_payload[key] = max(1, min(bounded_tokens, detected_limit))
+                resp = _post_openai_with_retry(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    payload=retry_payload,
+                )
+
     if not resp.ok:
         raise RuntimeError(_format_openai_error(resp))
     data = resp.json()
@@ -1103,16 +1177,29 @@ def generate_materials_with_gemini(
     if not prompt.strip():
         raise RuntimeError("プロンプトが空です。")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    resolved_model, _ = resolve_gemini_material_model(model)
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{resolved_model}:generateContent"
     headers = {
         "x-goog-api-key": api_key,
         "Content-Type": "application/json",
     }
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseModalities": ["Image"]},
+        "generationConfig": {"responseModalities": ["IMAGE"]},
     }
     response = requests.post(url, headers=headers, json=payload, timeout=60)
+    if (
+        not response.ok
+        and response.status_code == 400
+        and resolved_model != GEMINI_MATERIAL_DEFAULT_MODEL
+        and "response modalities" in response.text.lower()
+    ):
+        fallback_url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{GEMINI_MATERIAL_DEFAULT_MODEL}:generateContent"
+        )
+        response = requests.post(fallback_url, headers=headers, json=payload, timeout=60)
     if not response.ok:
         raise RuntimeError(f"Gemini APIエラー: {response.status_code} {response.text}")
     data = response.json()
