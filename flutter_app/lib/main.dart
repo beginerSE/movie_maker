@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:video_player/video_player.dart';
 import 'config/input_persistence.dart';
 
 Future<void> main() async {
@@ -232,23 +233,47 @@ class ProjectState {
   static const String defaultProjectId = 'default';
   static final ValueNotifier<String> currentProjectId =
       ValueNotifier<String>(defaultProjectId);
+  static final ValueNotifier<String> currentProjectType = ValueNotifier<String>('standard');
   static const String undeletableProjectId = defaultProjectId;
 }
 
 class ProjectSummary {
-  ProjectSummary({required this.id, required this.name});
+  ProjectSummary({required this.id, required this.name, required this.projectType});
 
   final String id;
   final String name;
+  final String projectType;
+
+  bool get isFlowProject => projectType == 'flow';
 
   factory ProjectSummary.fromJson(Map<String, dynamic> json) {
     final id = (json['id'] as String? ?? '').trim();
+    final projectType = (json['project_type'] as String? ?? 'standard').trim().toLowerCase();
     return ProjectSummary(
       id: id,
       name: (json['name'] as String? ?? id).trim(),
+      projectType: projectType == 'flow' ? 'flow' : 'standard',
     );
   }
 }
+
+class ProjectFlowStep {
+  const ProjectFlowStep({required this.key, required this.label});
+
+  final String key;
+  final String label;
+}
+
+const List<ProjectFlowStep> kFlowSteps = [
+  ProjectFlowStep(key: 'script', label: '① 台本作成（AI + 人間修正）'),
+  ProjectFlowStep(key: 'base_video', label: '② 動画作成（ベース動画生成）'),
+  ProjectFlowStep(key: 'title_description', label: '③ 動画タイトル・説明文作成（AI）'),
+  ProjectFlowStep(key: 'thumbnail', label: '④ サムネイル作成（AI）'),
+  ProjectFlowStep(key: 'ponchi', label: '⑤ ポンチ絵（補足ビジュアル）案の作成'),
+  ProjectFlowStep(key: 'final_edit', label: '⑥ 動画編集（最終編集）'),
+];
+
+const List<String> kFlowStatuses = ['未着手', '編集中', '完了'];
 
 class ApiSettingsBootstrap {
   static Future<void> load() async {
@@ -374,6 +399,7 @@ class _StudioShellState extends State<StudioShell> {
     '詳細動画編集',
     '設定',
     'About',
+    'AIフロー',
   ];
   int _selectedIndex = 0;
   int? _hoveredIndex;
@@ -390,6 +416,8 @@ class _StudioShellState extends State<StudioShell> {
   static const double _navDotSize = 10;
   List<ProjectSummary> _projects = const [];
   bool _projectsLoading = false;
+  Map<String, String> _currentFlowState = {for (final step in kFlowSteps) step.key: '未着手'};
+  bool _flowStateLoading = false;
 
   @override
   void initState() {
@@ -767,6 +795,8 @@ class _StudioShellState extends State<StudioShell> {
       setState(() {
         _projects = projects;
       });
+      _syncCurrentProjectType();
+      await _loadCurrentProjectFlowState();
     } catch (_) {
       return;
     } finally {
@@ -782,8 +812,190 @@ class _StudioShellState extends State<StudioShell> {
         ? ProjectState.defaultProjectId
         : projectId.trim();
     ProjectState.currentProjectId.value = normalized;
+    _syncCurrentProjectType();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('project.current_id', normalized);
+    await _loadCurrentProjectFlowState();
+  }
+
+  ProjectSummary? _currentProjectSummary() {
+    final currentId = ProjectState.currentProjectId.value;
+    for (final project in _projects) {
+      if (project.id == currentId) {
+        return project;
+      }
+    }
+    return null;
+  }
+
+  void _syncCurrentProjectType() {
+    final current = _currentProjectSummary();
+    final nextType = current?.projectType == 'flow' ? 'flow' : 'standard';
+    if (ProjectState.currentProjectType.value != nextType) {
+      ProjectState.currentProjectType.value = nextType;
+    }
+  }
+
+  bool get _isFlowProjectSelected => _currentProjectSummary()?.isFlowProject ?? false;
+
+  String _pageLabel(int index) {
+    if (!_isFlowProjectSelected) {
+      return _pages[index];
+    }
+    switch (index) {
+      case 1:
+        return '① 台本作成';
+      case 2:
+        return '② ベース動画作成';
+      case 3:
+        return '③ タイトル・説明';
+      case 4:
+        return '④ サムネイル';
+      case 5:
+        return '⑤ ポンチ絵案';
+      case 6:
+        return '⑥ 最終編集';
+      case 10:
+        return 'AIフロー進捗';
+      default:
+        return _pages[index];
+    }
+  }
+
+  Future<void> _loadCurrentProjectFlowState() async {
+    if (!_isFlowProjectSelected) {
+      if (mounted) {
+        setState(() {
+          _currentFlowState = {for (final step in kFlowSteps) step.key: '未着手'};
+          _flowStateLoading = false;
+        });
+      }
+      return;
+    }
+    final project = _currentProjectSummary();
+    if (project == null) {
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _flowStateLoading = true;
+      });
+    }
+    try {
+      final uri = ApiConfig.httpUri('/projects/${project.id}/flow');
+      final response = await http.get(uri).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final flow = body['flow_state'] as Map<String, dynamic>? ?? {};
+      if (!mounted) return;
+      setState(() {
+        _currentFlowState = {
+          for (final step in kFlowSteps)
+            step.key: (flow[step.key] as String? ?? '未着手'),
+        };
+      });
+    } catch (_) {
+      // ignore flow-state fetch errors to avoid blocking legacy pages.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _flowStateLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateCurrentProjectFlowStep(String step, String status) async {
+    final project = _currentProjectSummary();
+    if (project == null || !project.isFlowProject) {
+      return;
+    }
+    setState(() {
+      _flowStateLoading = true;
+    });
+    try {
+      final uri = ApiConfig.httpUri('/projects/${project.id}/flow');
+      final response = await http.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'step': step, 'status': status}),
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _currentFlowState[step] = status;
+      });
+    } catch (_) {
+      // ignore flow-state update errors in shell-level UI.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _flowStateLoading = false;
+        });
+      }
+    }
+  }
+
+  Widget _wrapFlowStep({
+    required String stepKey,
+    required String stepTitle,
+    required String description,
+    required Widget child,
+  }) {
+    if (!_isFlowProjectSelected) {
+      return child;
+    }
+    final currentStatus = _currentFlowState[stepKey] ?? '未着手';
+    return ListView(
+      children: [
+        Text(stepTitle, style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 8),
+        Text(description),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: kFlowStatuses.contains(currentStatus) ? currentStatus : '未着手',
+                decoration: const InputDecoration(labelText: 'この工程の状態'),
+                items: kFlowStatuses
+                    .map((status) => DropdownMenuItem(value: status, child: Text(status)))
+                    .toList(),
+                onChanged: _flowStateLoading
+                    ? null
+                    : (value) {
+                        if (value == null || value == currentStatus) return;
+                        _updateCurrentProjectFlowStep(stepKey, value);
+                      },
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: _flowStateLoading ? null : _loadCurrentProjectFlowState,
+              icon: const Icon(Icons.refresh),
+              label: const Text('再読込'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_flowStateLoading) const LinearProgressIndicator(),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 560,
+          child: child,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openFlowPage() async {
+    setState(() {
+      _selectedIndex = 10;
+    });
   }
 
   Future<void> _openProjectManager() async {
@@ -1083,7 +1295,7 @@ class _StudioShellState extends State<StudioShell> {
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             itemCount: _pages.length,
                             itemBuilder: (context, index) {
-                              return _buildMenuItem(index: index, label: _pages[index]);
+                              return _buildMenuItem(index: index, label: _pageLabel(index));
                             },
                           ),
                         ),
@@ -1107,7 +1319,7 @@ class _StudioShellState extends State<StudioShell> {
                     child: Card(
                       margin: const EdgeInsets.all(20),
                       child: LogPanel(
-                        pageName: _pages[_selectedIndex],
+                        pageName: _pageLabel(_selectedIndex),
                         latestJobId: _latestJobId,
                         jobInProgress: _videoJobInProgress,
                       ),
@@ -1177,44 +1389,81 @@ class _StudioShellState extends State<StudioShell> {
         return ProjectListPanel(
           projects: _projects,
           projectsLoading: _projectsLoading,
+          selectedProject: _currentProjectSummary(),
           onRefresh: _loadProjects,
           onManage: _openProjectManager,
           onSelectProject: _setCurrentProject,
+          onOpenFlow: _openFlowPage,
         );
       case 1:
-        return ScriptGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
+        return _wrapFlowStep(
+          stepKey: 'script',
+          stepTitle: '① 台本作成（AI + 人間修正）',
+          description: 'AI生成した台本は必ず人が確認・編集してから確定してください。自動で次工程には進みません。',
+          child: ScriptGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+          ),
         );
       case 2:
-        return VideoGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
-          jobInProgress: _videoJobInProgress,
-          onJobSubmitted: (jobId) {
-            _latestJobId.value = jobId;
-          },
+        return _wrapFlowStep(
+          stepKey: 'base_video',
+          stepTitle: '② 動画作成（ベース動画生成）',
+          description: '既存の動画設定をそのまま使ってベース動画を生成します。ここでは最終編集を行いません。',
+          child: VideoGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+            jobInProgress: _videoJobInProgress,
+            onJobSubmitted: (jobId) {
+              _latestJobId.value = jobId;
+            },
+          ),
         );
       case 3:
-        return TitleGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
+        return _wrapFlowStep(
+          stepKey: 'title_description',
+          stepTitle: '③ 動画タイトル・説明文作成（AI）',
+          description: '台本に基づいて候補を作成し、ユーザーが確認・選択して採用します。',
+          child: TitleGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+          ),
         );
       case 4:
-        return MaterialsGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
+        return _wrapFlowStep(
+          stepKey: 'thumbnail',
+          stepTitle: '④ サムネイル作成（AI）',
+          description: 'タイトルを踏まえてサムネイル候補を生成し、プレビュー確認後に採用してください。',
+          child: MaterialsGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+          ),
         );
       case 5:
-        return PonchiGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
+        return _wrapFlowStep(
+          stepKey: 'ponchi',
+          stepTitle: '⑤ ポンチ絵（補足ビジュアル）案の作成',
+          description: 'SRTをもとに提案を作成し、開始/終了時間や画像・サイズ・位置は必ず手動で調整します。',
+          child: PonchiGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+          ),
         );
       case 6:
-        return const VideoEditForm();
+        return _wrapFlowStep(
+          stepKey: 'final_edit',
+          stepTitle: '⑥ 動画編集（最終編集）',
+          description: 'ポンチ絵設定を反映して最終動画を出力します。必要に応じて再編集してください。',
+          child: const VideoEditForm(),
+        );
       case 7:
         return const DetailedEditForm();
       case 8:
         return const SettingsForm();
       case 9:
         return const AboutPanel();
+      case 10:
+        return FlowProjectPanel(
+          selectedProject: _currentProjectSummary(),
+          checkApiHealth: _checkApiHealthAndUpdate,
+        );
       default:
-        return PlaceholderPanel(title: _pages[_selectedIndex]);
+        return PlaceholderPanel(title: _pageLabel(_selectedIndex));
     }
   }
 }
@@ -1224,16 +1473,20 @@ class ProjectListPanel extends StatelessWidget {
     super.key,
     required this.projects,
     required this.projectsLoading,
+    required this.selectedProject,
     required this.onRefresh,
     required this.onManage,
     required this.onSelectProject,
+    required this.onOpenFlow,
   });
 
   final List<ProjectSummary> projects;
   final bool projectsLoading;
+  final ProjectSummary? selectedProject;
   final Future<void> Function() onRefresh;
   final Future<void> Function() onManage;
   final Future<void> Function(String projectId) onSelectProject;
+  final Future<void> Function() onOpenFlow;
 
   @override
   Widget build(BuildContext context) {
@@ -1258,6 +1511,15 @@ class ProjectListPanel extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
+        if (selectedProject?.isFlowProject ?? false)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: FilledButton.icon(
+              onPressed: onOpenFlow,
+              icon: const Icon(Icons.alt_route),
+              label: const Text('選択中のAIフローを開く'),
+            ),
+          ),
         Expanded(
           child: Card(
             child: projectsLoading
@@ -1320,7 +1582,7 @@ class ProjectListPanel extends StatelessWidget {
                                       ),
                                     ),
                                     Text(
-                                      project.id,
+                                      '${project.id} / ${project.projectType == 'flow' ? 'AIフロー' : '通常'}',
                                       style: const TextStyle(color: Colors.black45),
                                     ),
                                   ],
@@ -1338,6 +1600,181 @@ class ProjectListPanel extends StatelessWidget {
     );
   }
 }
+
+class FlowProjectPanel extends StatefulWidget {
+  const FlowProjectPanel({
+    super.key,
+    required this.selectedProject,
+    required this.checkApiHealth,
+  });
+
+  final ProjectSummary? selectedProject;
+  final ApiHealthCheck checkApiHealth;
+
+  @override
+  State<FlowProjectPanel> createState() => _FlowProjectPanelState();
+}
+
+class _FlowProjectPanelState extends State<FlowProjectPanel> {
+  Map<String, String> _flowState = {
+    for (final step in kFlowSteps) step.key: '未着手',
+  };
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFlowState();
+  }
+
+  @override
+  void didUpdateWidget(covariant FlowProjectPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedProject?.id != widget.selectedProject?.id) {
+      _loadFlowState();
+    }
+  }
+
+  Future<void> _loadFlowState() async {
+    final selected = widget.selectedProject;
+    if (selected == null || !selected.isFlowProject) {
+      setState(() {
+        _flowState = {for (final step in kFlowSteps) step.key: '未着手'};
+        _error = null;
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final healthy = await widget.checkApiHealth();
+      if (!healthy) {
+        throw Exception('API サーバーに接続できません。');
+      }
+      final uri = ApiConfig.httpUri('/projects/${selected.id}/flow');
+      final response = await http.get(uri).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(_formatApiFailureMessage(action: 'AIフロー状態の取得に失敗しました。', uri: uri, response: response));
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final map = (body['flow_state'] as Map<String, dynamic>? ?? {});
+      setState(() {
+        _flowState = {
+          for (final step in kFlowSteps)
+            step.key: (map[step.key] as String? ?? '未着手'),
+        };
+      });
+    } catch (error) {
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateStep(String step, String status) async {
+    final selected = widget.selectedProject;
+    if (selected == null || !selected.isFlowProject) {
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final uri = ApiConfig.httpUri('/projects/${selected.id}/flow');
+      final response = await http.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'step': step, 'status': status}),
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(_formatApiFailureMessage(action: 'AIフロー状態の更新に失敗しました。', uri: uri, response: response));
+      }
+      setState(() {
+        _flowState[step] = status;
+      });
+    } catch (error) {
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.selectedProject;
+    if (selected == null) {
+      return const Center(child: Text('プロジェクトを選択してください。'));
+    }
+    if (!selected.isFlowProject) {
+      return Center(
+        child: Text(
+          '選択中のプロジェクト（${selected.name}）は通常作成です。\nAI作成（フロー型）プロジェクトを選択してください。',
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    return ListView(
+      children: [
+        Text('AI動画フロー: ${selected.name}', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 12),
+        const Text('各工程は自動で進みません。内容を確認・編集し、手動で状態を更新してください。'),
+        const SizedBox(height: 12),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(_error!, style: const TextStyle(color: Colors.red)),
+          ),
+        if (_loading) const LinearProgressIndicator(),
+        const SizedBox(height: 8),
+        ...kFlowSteps.map((step) {
+          final current = _flowState[step.key] ?? '未着手';
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(step.label, style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: kFlowStatuses.contains(current) ? current : '未着手',
+                    decoration: const InputDecoration(labelText: '進捗状態'),
+                    items: kFlowStatuses
+                        .map((status) => DropdownMenuItem(value: status, child: Text(status)))
+                        .toList(),
+                    onChanged: _loading
+                        ? null
+                        : (value) {
+                            if (value == null || value == current) return;
+                            _updateStep(step.key, value);
+                          },
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+}
+
 
 class PlaceholderPanel extends StatelessWidget {
   const PlaceholderPanel({super.key, required this.title});
@@ -1377,25 +1814,56 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
 
   Future<void> _createProject() async {
     final controller = TextEditingController();
-    final name = await showDialog<String>(
+    String selectedType = 'standard';
+    final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('プロジェクト作成'),
-        content: TextField(controller: controller, decoration: const InputDecoration(labelText: '表示名')),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('作成')),
-        ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocalState) => AlertDialog(
+          title: const Text('プロジェクト作成'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: controller, decoration: const InputDecoration(labelText: '表示名')),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedType,
+                decoration: const InputDecoration(labelText: '作成方法'),
+                items: const [
+                  DropdownMenuItem(value: 'standard', child: Text('任意作成（従来通り）')),
+                  DropdownMenuItem(value: 'flow', child: Text('AI作成（フロー型）')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setLocalState(() {
+                    selectedType = value;
+                  });
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, {
+                'name': controller.text.trim(),
+                'project_type': selectedType,
+              }),
+              child: const Text('作成'),
+            ),
+          ],
+        ),
       ),
     );
-    if (name == null || name.isEmpty) return;
+    final name = result?['name'] ?? '';
+    final projectType = result?['project_type'] ?? 'standard';
+    if (name.isEmpty) return;
     setState(() => _busy = true);
     try {
       final uri = ApiConfig.httpUri('/projects');
       final response = await http.post(
         uri,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'name': name}),
+        body: jsonEncode({'name': name, 'project_type': projectType}),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception(
@@ -1541,7 +2009,7 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
                     .map(
                       (p) => ListTile(
                         title: Text(p.name),
-                        subtitle: Text(p.id),
+                        subtitle: Text('${p.id} / ${p.projectType == 'flow' ? 'AIフロー' : '通常'}'),
                         trailing: Wrap(
                           spacing: 4,
                           children: [
@@ -1788,6 +2256,11 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                 onPressed: _saveOutputToFile,
                 icon: const Icon(Icons.save),
                 label: const Text('保存'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _openLargeEditorDialog,
+                icon: const Icon(Icons.open_in_full),
+                label: const Text('大画面で編集'),
               ),
             ],
           ),
@@ -2143,6 +2616,97 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     _showSnackBar('生成結果をコピーしました。');
   }
 
+
+  bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
+
+  String _flowScriptPrefsKey() => 'flow.script_path.${ProjectState.currentProjectId.value}';
+
+  Future<void> _persistFlowScript(String text) async {
+    final outputPath = _outputController.text.trim().isEmpty
+        ? 'flow_confirmed_script.txt'
+        : _outputController.text.trim();
+    final file = File(outputPath);
+    await file.writeAsString(text);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_flowScriptPrefsKey(), file.path);
+  }
+
+  Future<void> _openLargeEditorDialog() async {
+    final initial = _outputTextController.text;
+    final controller = TextEditingController(text: initial);
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          child: SizedBox(
+            width: 980,
+            height: 760,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('台本エディタ（大画面）', style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      maxLines: null,
+                      expands: true,
+                      decoration: const InputDecoration(
+                        hintText: 'ここで台本を自由に編集してください。',
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, 'cancel'),
+                        child: const Text('キャンセル'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => Navigator.pop(context, 'apply'),
+                        child: const Text('反映'),
+                      ),
+                      if (_isFlowProject)
+                        FilledButton(
+                          onPressed: () => Navigator.pop(context, 'save_flow'),
+                          child: const Text('AIフロー台本として保存'),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    final edited = controller.text;
+    controller.dispose();
+    if (action == null || action == 'cancel') {
+      return;
+    }
+    setState(() {
+      _outputTextController.text = edited;
+    });
+    if (action == 'save_flow') {
+      try {
+        await _persistFlowScript(edited);
+        _showSnackBar('AIフロー用の確定台本として保存しました。');
+      } catch (error) {
+        _showSnackBar('台本保存に失敗しました: $error');
+      }
+      return;
+    }
+    _showSnackBar('編集内容を反映しました。');
+  }
+
   Future<void> _saveOutputToFile() async {
     final outputPath = _outputController.text.trim();
     if (outputPath.isEmpty) {
@@ -2157,6 +2721,10 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     try {
       final file = File(outputPath);
       await file.writeAsString(text);
+      if (_isFlowProject) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_flowScriptPrefsKey(), file.path);
+      }
       _showSnackBar('保存しました！');
     } catch (error) {
       _showSnackBar('保存に失敗しました: $error');
@@ -2188,6 +2756,18 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   String _chatGptModel = 'gpt-4.1-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   bool _isSubmitting = false;
+
+  bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
+
+  String _flowScriptPrefsKey() => 'flow.script_path.${ProjectState.currentProjectId.value}';
+
+  Future<String?> _resolveScriptPathForTitle() async {
+    if (!_isFlowProject) {
+      return _scriptPathController.text.trim();
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getString(_flowScriptPrefsKey()) ?? '').trim();
+  }
 
   @override
   void initState() {
@@ -2236,21 +2816,39 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _scriptPathController,
-            decoration: InputDecoration(
-              labelText: '台本ファイル（SRT/TXT）',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.folder_open),
-                onPressed: () => _selectFile(
-                  _scriptPathController,
-                  const XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
-                ),
-              ),
-            ),
-            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+          ValueListenableBuilder<String>(
+            valueListenable: ProjectState.currentProjectType,
+            builder: (context, projectType, _) {
+              if (projectType == 'flow') {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text('AIフローでは①で確定した台本を自動利用します。'),
+                    SizedBox(height: 12),
+                  ],
+                );
+              }
+              return Column(
+                children: [
+                  TextFormField(
+                    controller: _scriptPathController,
+                    decoration: InputDecoration(
+                      labelText: '台本ファイル（SRT/TXT）',
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.folder_open),
+                        onPressed: () => _selectFile(
+                          _scriptPathController,
+                          const XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
+                        ),
+                      ),
+                    ),
+                    validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -2413,6 +3011,13 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
       return;
     }
     final count = int.tryParse(_countController.text) ?? 5;
+    final scriptPath = await _resolveScriptPathForTitle();
+    if (scriptPath == null || scriptPath.isEmpty) {
+      _showSnackBar(_isFlowProject
+          ? 'AIフローの台本が未保存です。①台本作成で「AIフロー台本として保存」を実行してください。'
+          : '台本ファイルを指定してください。');
+      return;
+    }
     setState(() {
       _isSubmitting = true;
     });
@@ -2430,7 +3035,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
       final payload = {
         'api_key': apiKey,
         'provider': _provider,
-        'script_path': _scriptPathController.text,
+        'script_path': scriptPath,
         'count': count,
         'extra': _instructionsController.text,
         'model': _resolveModel(),
@@ -2816,11 +3421,61 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _geminiModelController = TextEditingController(text: 'gemini-2.0-flash');
   final _outputTextController = TextEditingController();
   final List<_PonchiPreviewItem> _previewItems = [];
+  final List<_PonchiIdeaRow> _ideaRows = [];
   late final InputPersistence _persistence;
   String _engine = 'Gemini';
   List<String> _ponchiModels = const ['gemini-2.0-flash'];
   bool _isSubmittingIdeas = false;
   bool _isSubmittingImages = false;
+  late final VoidCallback _projectListener;
+
+  bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
+
+  String _lastSrtPathPrefsKey() => 'video_generate.last_srt_path.${ProjectState.currentProjectId.value}';
+
+  String _lastVideoPathPrefsKey() => 'video_generate.last_video_path.${ProjectState.currentProjectId.value}';
+
+  Future<void> _loadFlowDefaultSrtPath() async {
+    if (!_isFlowProject) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    var srtPath = (prefs.getString(_lastSrtPathPrefsKey()) ?? '').trim();
+    if (srtPath.isEmpty) {
+      final videoPath = (prefs.getString(_lastVideoPathPrefsKey()) ?? '').trim();
+      if (videoPath.isNotEmpty) {
+        final videoFile = File(videoPath);
+        final stem = videoFile.uri.pathSegments.isEmpty
+            ? ''
+            : videoFile.uri.pathSegments.last.split('.').first;
+        if (stem.isNotEmpty) {
+          srtPath = '${videoFile.parent.path}${Platform.pathSeparator}$stem.srt';
+        }
+      }
+    }
+    if (srtPath.isEmpty) {
+      return;
+    }
+    if (!await File(srtPath).exists()) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _srtController.text = srtPath;
+    });
+  }
+
+  void _syncMarkdownTableFromRows() {
+    final buffer = StringBuffer();
+    buffer.writeln('| 開始 | 終了 | ポンチ絵内容 | 画像生成プロンプト |');
+    buffer.writeln('|---|---|---|---|');
+    for (final row in _ideaRows) {
+      final visual = row.visualSuggestion.replaceAll('|', r'\|');
+      final prompt = row.imagePrompt.replaceAll('|', r'\|');
+      buffer.writeln('| ${row.start} | ${row.end} | $visual | $prompt |');
+    }
+    _outputTextController.text = buffer.toString();
+  }
 
   @override
   void initState() {
@@ -2829,12 +3484,17 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _persistence.registerController(_srtController, 'srt_path');
     _persistence.registerController(_outputController, 'output_dir');
     _persistence.registerController(_geminiModelController, 'gemini_model');
+    _projectListener = () {
+      _loadFlowDefaultSrtPath();
+    };
+    ProjectState.currentProjectId.addListener(_projectListener);
     _initPersistence();
   }
 
   Future<void> _initPersistence() async {
     await _persistence.init();
     await _loadPonchiModelConfig();
+    await _loadFlowDefaultSrtPath();
   }
 
   Future<void> _loadPonchiModelConfig() async {
@@ -2872,6 +3532,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
 
   @override
   void dispose() {
+    ProjectState.currentProjectId.removeListener(_projectListener);
     _srtController.dispose();
     _outputController.dispose();
     _geminiModelController.dispose();
@@ -2888,20 +3549,36 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         children: [
           Text('ポンチ絵作成', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _srtController,
-            decoration: InputDecoration(
-              labelText: 'SRTファイル',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.subtitles),
-                onPressed: () => _selectFile(
-                  _srtController,
-                  const XTypeGroup(label: 'SRT', extensions: ['srt']),
-                ),
-              ),
-            ),
+          ValueListenableBuilder<String>(
+            valueListenable: ProjectState.currentProjectType,
+            builder: (context, projectType, _) {
+              final isFlow = projectType == 'flow';
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (isFlow)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text('AIフローでは②動画作成で出力されたSRTをデフォルト読み込みします。'),
+                    ),
+                  TextFormField(
+                    controller: _srtController,
+                    decoration: InputDecoration(
+                      labelText: 'SRTファイル',
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.subtitles),
+                        onPressed: () => _selectFile(
+                          _srtController,
+                          const XTypeGroup(label: 'SRT', extensions: ['srt']),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 12),
           TextFormField(
             controller: _outputController,
             decoration: InputDecoration(
@@ -2955,6 +3632,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                   _outputTextController.clear();
                   setState(() {
                     _previewItems.clear();
+                    _ideaRows.clear();
                   });
                 },
                 icon: const Icon(Icons.clear),
@@ -2971,9 +3649,85 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             controller: _outputTextController,
             maxLines: 8,
             decoration: const InputDecoration(
-              hintText: '生成結果のテキストがここに表示されます。',
+              hintText: '生成結果（Markdown表）がここに表示されます。',
             ),
           ),
+          const SizedBox(height: 12),
+          Text('提案テーブル（編集可）', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (_ideaRows.isEmpty)
+            const Text('案出しを実行すると編集可能な表が表示されます。')
+          else
+            ..._ideaRows.asMap().entries.map(
+              (entry) {
+                final index = entry.key;
+                final row = entry.value;
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: row.start,
+                                decoration: const InputDecoration(labelText: '開始'),
+                                onChanged: (v) {
+                                  row.start = v;
+                                  _syncMarkdownTableFromRows();
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: row.end,
+                                decoration: const InputDecoration(labelText: '終了'),
+                                onChanged: (v) {
+                                  row.end = v;
+                                  _syncMarkdownTableFromRows();
+                                },
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () {
+                                setState(() {
+                                  _ideaRows.removeAt(index);
+                                });
+                                _syncMarkdownTableFromRows();
+                              },
+                              icon: const Icon(Icons.delete_outline),
+                              tooltip: '行削除',
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          initialValue: row.visualSuggestion,
+                          maxLines: 2,
+                          decoration: const InputDecoration(labelText: 'ポンチ絵内容'),
+                          onChanged: (v) {
+                            row.visualSuggestion = v;
+                            _syncMarkdownTableFromRows();
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          initialValue: row.imagePrompt,
+                          maxLines: 2,
+                          decoration: const InputDecoration(labelText: '画像生成プロンプト'),
+                          onChanged: (v) {
+                            row.imagePrompt = v;
+                            _syncMarkdownTableFromRows();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
         ],
       ),
     );
@@ -3034,20 +3788,28 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final items = data['items'] as List<dynamic>? ?? [];
         final jsonPath = data['json_path'] as String?;
-        final buffer = StringBuffer();
-        buffer.writeln('✅ ${items.length} 件の案を生成しました。');
-        if (jsonPath != null) {
-          buffer.writeln('JSON: $jsonPath');
-        }
+        final rows = <_PonchiIdeaRow>[];
         for (final item in items) {
           final map = item as Map<String, dynamic>;
-          buffer.writeln(
-            '${map['start']}〜${map['end']} | ${map['visual_suggestion']} | ${map['image_prompt']}',
+          rows.add(
+            _PonchiIdeaRow(
+              start: (map['start'] as String? ?? '').trim(),
+              end: (map['end'] as String? ?? '').trim(),
+              visualSuggestion: (map['visual_suggestion'] as String? ?? '').trim(),
+              imagePrompt: (map['image_prompt'] as String? ?? '').trim(),
+            ),
           );
         }
         setState(() {
-          _outputTextController.text = buffer.toString();
+          _ideaRows
+            ..clear()
+            ..addAll(rows);
         });
+        _syncMarkdownTableFromRows();
+        if (jsonPath != null && jsonPath.trim().isNotEmpty) {
+          _outputTextController.text =
+              '${_outputTextController.text}\n\n<!-- source_json: ${jsonPath.trim()} -->';
+        }
         _showSnackBar('ポンチ絵の案出しが完了しました。');
       } else {
         _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
@@ -3210,6 +3972,21 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
       }
     }
   }
+}
+
+
+class _PonchiIdeaRow {
+  _PonchiIdeaRow({
+    required this.start,
+    required this.end,
+    required this.visualSuggestion,
+    required this.imagePrompt,
+  });
+
+  String start;
+  String end;
+  String visualSuggestion;
+  String imagePrompt;
 }
 
 class _PonchiPreviewItem {
@@ -4337,11 +5114,204 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   bool _isSubmitting = false;
   String? _jobId;
   String _statusMessage = 'Ready';
+  String? _generatedVideoPath;
+  VideoPlayerController? _previewController;
+  bool _previewInitializing = false;
+  String? _previewErrorMessage;
+  String _lastJobLogsText = '';
   List<String> _voicevoxSpeakers = [];
   bool _voicevoxSpeakersLoading = false;
   String? _voicevoxSpeakersError;
   late final VoidCallback _voicevoxUrlListener;
   late final VoidCallback _projectListener;
+
+  bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
+
+  String _flowScriptPrefsKey() => 'flow.script_path.${ProjectState.currentProjectId.value}';
+
+  String _lastVideoPathPrefsKey() => 'video_generate.last_video_path.${ProjectState.currentProjectId.value}';
+
+  String _lastSrtPathPrefsKey() => 'video_generate.last_srt_path.${ProjectState.currentProjectId.value}';
+
+  String _lastJobLogsPrefsKey() => 'video_generate.last_job_logs.${ProjectState.currentProjectId.value}';
+
+  Future<String?> _resolveScriptPathForVideo() async {
+    if (!_isFlowProject) {
+      return _scriptController.text.trim();
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getString(_flowScriptPrefsKey()) ?? '').trim();
+  }
+
+  String _expectedVideoPath(String scriptPath, String outputDir) {
+    final stem = File(scriptPath).uri.pathSegments.isEmpty
+        ? 'output'
+        : File(scriptPath).uri.pathSegments.last.split('.').first;
+    final baseDir = outputDir.trim().isEmpty ? Directory.current.path : outputDir.trim();
+    return '$baseDir${Platform.pathSeparator}$stem.mp4';
+  }
+
+  Future<void> _initVideoPreview(String videoPath) async {
+    final file = File(videoPath);
+    if (!await file.exists()) {
+      if (!mounted) return;
+      setState(() {
+        _previewErrorMessage = '動画ファイルが見つかりません: $videoPath';
+        _previewController = null;
+      });
+      return;
+    }
+    setState(() {
+      _previewInitializing = true;
+      _generatedVideoPath = videoPath;
+      _previewErrorMessage = null;
+    });
+
+    final old = _previewController;
+    VideoPlayerController? controller;
+    final errors = <String>[];
+
+    try {
+      controller = VideoPlayerController.file(file);
+      await controller.initialize();
+    } catch (error) {
+      errors.add('file-controller: $error');
+      await controller?.dispose();
+      controller = null;
+      try {
+        controller = VideoPlayerController.networkUrl(Uri.file(file.path));
+        await controller.initialize();
+      } catch (fallbackError) {
+        errors.add('uri-controller: $fallbackError');
+        await controller?.dispose();
+        controller = null;
+      }
+    }
+
+    await old?.dispose();
+
+    if (!mounted) {
+      await controller?.dispose();
+      return;
+    }
+
+    if (controller == null) {
+      setState(() {
+        _previewInitializing = false;
+        _previewController = null;
+        _previewErrorMessage = 'プレビュー初期化に失敗しました。${errors.join(' / ')}';
+      });
+      return;
+    }
+
+    setState(() {
+      _previewController = controller;
+      _previewInitializing = false;
+      _previewErrorMessage = null;
+    });
+  }
+
+
+  Future<void> _saveVideoArtifacts({String? videoPath, String? srtPath, String? logsText}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (videoPath != null) {
+      await prefs.setString(_lastVideoPathPrefsKey(), videoPath);
+    }
+    if (srtPath != null) {
+      await prefs.setString(_lastSrtPathPrefsKey(), srtPath);
+    }
+    if (logsText != null) {
+      await prefs.setString(_lastJobLogsPrefsKey(), logsText);
+    }
+  }
+
+  Future<void> _loadPersistedVideoArtifacts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedVideoPath = (prefs.getString(_lastVideoPathPrefsKey()) ?? '').trim();
+    final savedLogs = prefs.getString(_lastJobLogsPrefsKey()) ?? '';
+    if (!mounted) return;
+    setState(() {
+      _lastJobLogsText = savedLogs;
+      _generatedVideoPath = savedVideoPath.isEmpty ? null : savedVideoPath;
+      _previewErrorMessage = null;
+    });
+    if (savedVideoPath.isNotEmpty) {
+      await _initVideoPreview(savedVideoPath);
+    }
+  }
+
+  Future<void> _fetchAndPersistJobLogs(String jobId) async {
+    try {
+      final response = await http
+          .get(ApiConfig.httpUri('/jobs/$jobId/logs'))
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final logs = (data['logs'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toList();
+      final combined = logs.join('\n');
+      if (!mounted) return;
+      setState(() {
+        _lastJobLogsText = combined;
+      });
+      await _saveVideoArtifacts(logsText: combined);
+    } catch (_) {
+      // ignore transient log fetch errors
+    }
+  }
+
+  Future<void> _watchJobUntilFinished({
+    required String jobId,
+    required String scriptPath,
+    required String outputDir,
+  }) async {
+    final fallbackVideoPath = _expectedVideoPath(scriptPath, outputDir);
+    for (var i = 0; i < 180; i += 1) {
+      if (!mounted || _jobId != jobId) {
+        return;
+      }
+      try {
+        await _fetchAndPersistJobLogs(jobId);
+        final response = await http
+            .get(ApiConfig.httpUri('/jobs/$jobId'))
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          continue;
+        }
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final status = (data['status'] as String? ?? '').trim().toLowerCase();
+        if (status == 'completed') {
+          final result = data['result'] as Map<String, dynamic>? ?? {};
+          final videoPath = (result['video_path'] as String? ?? '').trim();
+          final srtPath = (result['srt_path'] as String? ?? '').trim();
+          final resolvedPath = videoPath.isEmpty ? fallbackVideoPath : videoPath;
+          await _initVideoPreview(resolvedPath);
+          await _saveVideoArtifacts(videoPath: resolvedPath, srtPath: srtPath);
+          if (!mounted) return;
+          setState(() {
+            _statusMessage = 'Completed';
+          });
+          widget.jobInProgress.value = false;
+          return;
+        }
+        if (status == 'error') {
+          if (!mounted) return;
+          setState(() {
+            _statusMessage = 'Error: ジョブ失敗';
+          });
+          widget.jobInProgress.value = false;
+          return;
+        }
+      } catch (_) {
+        // ignore transient polling errors
+      }
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
+  }
 
   @override
   void initState() {
@@ -4395,6 +5365,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     VoicevoxConfig.baseUrl.addListener(_voicevoxUrlListener);
     _projectListener = () {
       _loadProjectSettings();
+      _loadPersistedVideoArtifacts();
     };
     ProjectState.currentProjectId.addListener(_projectListener);
     _loadSavedValues();
@@ -4420,6 +5391,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     _captionMaxCharsController.dispose();
     _captionBoxHeightController.dispose();
     _bgmController.dispose();
+    _previewController?.dispose();
     VoicevoxConfig.baseUrl.removeListener(_voicevoxUrlListener);
     ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
@@ -4448,6 +5420,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     });
     VoicevoxConfig.baseUrl.value = _voicevoxUrlController.text.trim();
     await _loadProjectSettings();
+    await _loadPersistedVideoArtifacts();
     if (_ttsEngine == 'VOICEVOX') {
       await _fetchVoicevoxSpeakers();
     }
@@ -4649,22 +5622,37 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
-          TextFormField(
-            controller: _scriptController,
-            decoration: InputDecoration(
-              labelText: '原稿ファイルパス',
-              hintText: 'dialogue_input.txt',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.folder_open),
-                onPressed: () => _selectFile(
-                  _scriptController,
-                  const XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
-                ),
-              ),
-            ),
-            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+          ValueListenableBuilder<String>(
+            valueListenable: ProjectState.currentProjectType,
+            builder: (context, projectType, _) {
+              if (projectType == 'flow') {
+                return const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text('AIフローでは①で確定した台本を自動利用します（原稿ファイル指定は不要）。'),
+                );
+              }
+              return Column(
+                children: [
+                  TextFormField(
+                    controller: _scriptController,
+                    decoration: InputDecoration(
+                      labelText: '原稿ファイルパス',
+                      hintText: 'dialogue_input.txt',
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.folder_open),
+                        onPressed: () => _selectFile(
+                          _scriptController,
+                          const XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
+                        ),
+                      ),
+                    ),
+                    validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 12),
           TextFormField(
             controller: _imageListController,
             decoration: InputDecoration(
@@ -5066,6 +6054,87 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             const SizedBox(height: 12),
             SelectableText('Job ID: $_jobId'),
           ],
+          const SizedBox(height: 16),
+          Text('生成動画プレビュー', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (_previewInitializing) const LinearProgressIndicator(),
+          if (_generatedVideoPath != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(_generatedVideoPath!, style: Theme.of(context).textTheme.bodySmall),
+            ),
+          if (_previewErrorMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _previewErrorMessage!,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
+          if (_previewController != null && _previewController!.value.isInitialized)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AspectRatio(
+                  aspectRatio: _previewController!.value.aspectRatio,
+                  child: VideoPlayer(_previewController!),
+                ),
+                const SizedBox(height: 8),
+                VideoProgressIndicator(
+                  _previewController!,
+                  allowScrubbing: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    FilledButton.icon(
+                      onPressed: () {
+                        final c = _previewController!;
+                        if (c.value.isPlaying) {
+                          c.pause();
+                        } else {
+                          c.play();
+                        }
+                        setState(() {});
+                      },
+                      icon: Icon(_previewController!.value.isPlaying ? Icons.pause : Icons.play_arrow),
+                      label: Text(_previewController!.value.isPlaying ? '一時停止' : '再生'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final path = _generatedVideoPath;
+                        if (path == null || path.isEmpty) return;
+                        await _initVideoPreview(path);
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('再読込'),
+                    ),
+                  ],
+                ),
+              ],
+            )
+          else
+            const Text('動画生成完了後にここでプレビュー再生できます。'),
+          const SizedBox(height: 16),
+          Text('前回を含む動画作成ログ', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 120, maxHeight: 240),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                _lastJobLogsText.isEmpty ? 'ログはまだありません。' : _lastJobLogsText,
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -5079,7 +6148,11 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     setState(() {
       _isSubmitting = true;
       _statusMessage = 'Checking API...';
+      _generatedVideoPath = null;
+      _previewErrorMessage = null;
+      _lastJobLogsText = '';
     });
+    unawaited(_saveVideoArtifacts(videoPath: '', srtPath: '', logsText: ''));
     widget.jobInProgress.value = true;
 
     final isHealthy = await widget.checkApiHealth();
@@ -5113,9 +6186,20 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _ => 'none',
     };
 
+    final scriptPath = await _resolveScriptPathForVideo();
+    if (scriptPath == null || scriptPath.isEmpty) {
+      setState(() {
+        _statusMessage = _isFlowProject
+            ? 'Error: AIフロー台本が未保存です。①台本作成で保存してください。'
+            : 'Error: 原稿ファイルを指定してください。';
+      });
+      widget.jobInProgress.value = false;
+      return;
+    }
+
     final payload = {
       'api_key': ApiKeys.gemini.value,
-      'script_path': _scriptController.text,
+      'script_path': scriptPath,
       'image_paths': imagePaths,
       'use_bgm': _useBgm,
       'bgm_path': _bgmController.text,
@@ -5170,6 +6254,13 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             _statusMessage = 'Submitted';
           });
           widget.onJobSubmitted?.call(jobId);
+          unawaited(
+            _watchJobUntilFinished(
+              jobId: jobId,
+              scriptPath: scriptPath,
+              outputDir: _outputController.text,
+            ),
+          );
         }
       } else {
         final responseBody = response.body.isEmpty ? '' : ' ${response.body}';
