@@ -101,6 +101,26 @@ class ApiKeys {
   static final ValueNotifier<String> claude = ValueNotifier<String>('');
 }
 
+class ProjectState {
+  static const String defaultProjectId = 'default';
+  static final ValueNotifier<String> currentProjectId =
+      ValueNotifier<String>(defaultProjectId);
+}
+
+class ProjectSummary {
+  ProjectSummary({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  factory ProjectSummary.fromJson(Map<String, dynamic> json) {
+    return ProjectSummary(
+      id: (json['id'] as String? ?? ProjectState.defaultProjectId).trim(),
+      name: (json['name'] as String? ?? ProjectState.defaultProjectId).trim(),
+    );
+  }
+}
+
 class ApiSettingsBootstrap {
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -111,6 +131,8 @@ class ApiSettingsBootstrap {
     ApiKeys.claude.value = (prefs.getString('settings.claude_key') ?? '').trim();
     VoicevoxConfig.baseUrl.value =
         (prefs.getString('video_generate.vv_url') ?? 'http://127.0.0.1:50021').trim();
+    ProjectState.currentProjectId.value =
+        (prefs.getString('project.current_id') ?? ProjectState.defaultProjectId).trim();
   }
 }
 
@@ -232,12 +254,15 @@ class _StudioShellState extends State<StudioShell> {
   final ValueNotifier<String?> _latestJobId = ValueNotifier<String?>(null);
   final ValueNotifier<bool> _videoJobInProgress = ValueNotifier<bool>(false);
   static const double _navDotSize = 10;
+  List<ProjectSummary> _projects = const [];
+  bool _projectsLoading = false;
 
   @override
   void initState() {
     super.initState();
     ApiSettingsBootstrap.load();
     _ensureApiServerRunning();
+    _loadProjects();
   }
 
   @override
@@ -584,6 +609,59 @@ class _StudioShellState extends State<StudioShell> {
     return healthy;
   }
 
+  Future<void> _loadProjects() async {
+    setState(() {
+      _projectsLoading = true;
+    });
+    try {
+      final response = await http.get(ApiConfig.httpUri('/projects'));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final projectsRaw = (body['projects'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      final projects = projectsRaw.map(ProjectSummary.fromJson).toList();
+      final current = ProjectState.currentProjectId.value;
+      if (projects.where((p) => p.id == current).isEmpty) {
+        final fallback = (body['default_project_id'] as String? ?? ProjectState.defaultProjectId).trim();
+        await _setCurrentProject(fallback);
+      }
+      if (!mounted) return;
+      setState(() {
+        _projects = projects;
+      });
+    } catch (_) {
+      return;
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _projectsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _setCurrentProject(String projectId) async {
+    final normalized = projectId.trim().isEmpty
+        ? ProjectState.defaultProjectId
+        : projectId.trim();
+    ProjectState.currentProjectId.value = normalized;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('project.current_id', normalized);
+  }
+
+  Future<void> _openProjectManager() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _ProjectManagerDialog(
+        projects: _projects,
+        onChanged: _loadProjects,
+      ),
+    );
+    await _loadProjects();
+  }
+
   void _setApiServerStatus({required bool ready, required String message}) {
     if (!mounted) {
       return;
@@ -818,6 +896,50 @@ class _StudioShellState extends State<StudioShell> {
                                   ],
                                 ),
                               ),
+                              const SizedBox(height: 12),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                child: Column(
+                                  children: [
+                                    ValueListenableBuilder<String>(
+                                      valueListenable: ProjectState.currentProjectId,
+                                      builder: (context, currentProjectId, _) {
+                                        final hasCurrent = _projects.any((p) => p.id == currentProjectId);
+                                        return DropdownButtonFormField<String>(
+                                          value: hasCurrent ? currentProjectId : null,
+                                          isExpanded: true,
+                                          hint: Text(_projectsLoading ? 'プロジェクト読込中...' : 'プロジェクト選択'),
+                                          items: _projects
+                                              .map(
+                                                (p) => DropdownMenuItem<String>(
+                                                  value: p.id,
+                                                  child: Text(
+                                                    p.name,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: const TextStyle(fontSize: 12),
+                                                  ),
+                                                ),
+                                              )
+                                              .toList(),
+                                          onChanged: (value) {
+                                            if (value != null) {
+                                              _setCurrentProject(value);
+                                            }
+                                          },
+                                        );
+                                      },
+                                    ),
+                                    const SizedBox(height: 8),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton(
+                                        onPressed: _openProjectManager,
+                                        child: const Text('管理', style: TextStyle(fontSize: 12)),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -966,6 +1088,162 @@ class PlaceholderPanel extends StatelessWidget {
         '$title ページは準備中です。',
         style: Theme.of(context).textTheme.titleMedium,
       ),
+    );
+  }
+}
+
+class _ProjectManagerDialog extends StatefulWidget {
+  const _ProjectManagerDialog({
+    required this.projects,
+    required this.onChanged,
+  });
+
+  final List<ProjectSummary> projects;
+  final Future<void> Function() onChanged;
+
+  @override
+  State<_ProjectManagerDialog> createState() => _ProjectManagerDialogState();
+}
+
+class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
+  bool _busy = false;
+
+  Future<void> _createProject() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('プロジェクト作成'),
+        content: TextField(controller: controller, decoration: const InputDecoration(labelText: '表示名')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('作成')),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await http.post(ApiConfig.httpUri('/projects'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'name': name}));
+      await widget.onChanged();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _renameProject(ProjectSummary project) async {
+    final controller = TextEditingController(text: project.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('プロジェクト名変更'),
+        content: TextField(controller: controller, decoration: const InputDecoration(labelText: '表示名')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await http.put(
+        ApiConfig.httpUri('/projects/${project.id}'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'name': name}),
+      );
+      await widget.onChanged();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _cloneProject(ProjectSummary project) async {
+    setState(() => _busy = true);
+    try {
+      await http.post(
+        ApiConfig.httpUri('/projects/${project.id}/clone'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'name': '${project.name} copy'}),
+      );
+      await widget.onChanged();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _deleteProject(ProjectSummary project) async {
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('削除確認'),
+            content: Text('「${project.name}」を削除します。フォルダごと消去されます。よろしいですか？'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
+              ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('削除')),
+            ],
+          ),
+        ) ??
+        false;
+    if (!ok) return;
+    setState(() => _busy = true);
+    try {
+      await http.delete(ApiConfig.httpUri('/projects/${project.id}'));
+      if (ProjectState.currentProjectId.value == project.id) {
+        ProjectState.currentProjectId.value = ProjectState.defaultProjectId;
+      }
+      await widget.onChanged();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('プロジェクト管理'),
+      content: SizedBox(
+        width: 520,
+        height: 360,
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: ElevatedButton.icon(
+                onPressed: _busy ? null : _createProject,
+                icon: const Icon(Icons.add),
+                label: const Text('新規作成'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView(
+                children: widget.projects
+                    .map(
+                      (p) => ListTile(
+                        title: Text(p.name),
+                        subtitle: Text(p.id),
+                        trailing: Wrap(
+                          spacing: 4,
+                          children: [
+                            IconButton(onPressed: _busy ? null : () => _renameProject(p), icon: const Icon(Icons.edit), tooltip: 'リネーム'),
+                            IconButton(onPressed: _busy ? null : () => _cloneProject(p), icon: const Icon(Icons.copy), tooltip: '複製'),
+                            IconButton(
+                              onPressed: (_busy || p.id == ProjectState.defaultProjectId) ? null : () => _deleteProject(p),
+                              icon: const Icon(Icons.delete_outline),
+                              tooltip: '削除',
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('閉じる'))],
     );
   }
 }
@@ -1504,6 +1782,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
         'prompt': _promptController.text,
         'model': _resolveModel(),
         'max_tokens': maxTokens,
+        'project_id': ProjectState.currentProjectId.value,
       };
       final response = await http
           .post(
@@ -1836,6 +2115,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
         'count': count,
         'extra': _instructionsController.text,
         'model': _resolveModel(),
+        'project_id': ProjectState.currentProjectId.value,
       };
       final response = await http
           .post(
@@ -2105,6 +2385,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
         'output_dir': _outputController.text.trim().isEmpty
             ? null
             : _outputController.text.trim(),
+        'project_id': ProjectState.currentProjectId.value,
       };
       final response = await http
           .post(
@@ -2371,6 +2652,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             ? null
             : _outputController.text.trim(),
         'gemini_model': _geminiModelController.text,
+        'project_id': ProjectState.currentProjectId.value,
       };
       final response = await http
           .post(
@@ -2446,6 +2728,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         'srt_path': _srtController.text,
         'output_dir': _outputController.text.trim(),
         'model': _geminiModelController.text.trim(),
+        'project_id': ProjectState.currentProjectId.value,
       };
       final response = await http
           .post(
@@ -3608,6 +3891,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   bool _voicevoxSpeakersLoading = false;
   String? _voicevoxSpeakersError;
   late final VoidCallback _voicevoxUrlListener;
+  late final VoidCallback _projectListener;
 
   @override
   void initState() {
@@ -3659,6 +3943,10 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       });
     };
     VoicevoxConfig.baseUrl.addListener(_voicevoxUrlListener);
+    _projectListener = () {
+      _loadProjectSettings();
+    };
+    ProjectState.currentProjectId.addListener(_projectListener);
     _loadSavedValues();
   }
 
@@ -3683,6 +3971,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     _captionBoxHeightController.dispose();
     _bgmController.dispose();
     VoicevoxConfig.baseUrl.removeListener(_voicevoxUrlListener);
+    ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
     super.dispose();
   }
@@ -3708,9 +3997,53 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _bgOffStyle = bgOffStyle ?? _bgOffStyle;
     });
     VoicevoxConfig.baseUrl.value = _voicevoxUrlController.text.trim();
+    await _loadProjectSettings();
     if (_ttsEngine == 'VOICEVOX') {
       await _fetchVoicevoxSpeakers();
     }
+  }
+
+  Future<void> _loadProjectSettings() async {
+    try {
+      final projectId = ProjectState.currentProjectId.value;
+      final response = await http.get(ApiConfig.httpUri('/projects/$projectId/settings'));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final settings = data['settings'] as Map<String, dynamic>? ?? {};
+      final video = settings['video_generate'] as Map<String, dynamic>? ?? {};
+      if (!mounted) return;
+      setState(() {
+        _captionFontSizeController.text = '${video['caption_font_size'] ?? _captionFontSizeController.text}';
+        _speakerFontSizeController.text = '${video['speaker_font_size'] ?? _speakerFontSizeController.text}';
+        _captionMaxCharsController.text = '${video['caption_max_chars'] ?? _captionMaxCharsController.text}';
+        _captionBoxHeightController.text = '${video['caption_box_height'] ?? _captionBoxHeightController.text}';
+        _captionAlphaController.text = '${video['caption_box_alpha'] ?? _captionAlphaController.text}';
+        _captionTextColorController.text = '${video['caption_text_color'] ?? _captionTextColorController.text}';
+      });
+    } catch (_) {
+      return;
+    }
+  }
+
+  Future<void> _saveProjectSettings() async {
+    final projectId = ProjectState.currentProjectId.value;
+    final settings = {
+      'video_generate': {
+        'caption_font_size': int.tryParse(_captionFontSizeController.text) ?? 36,
+        'speaker_font_size': int.tryParse(_speakerFontSizeController.text) ?? 30,
+        'caption_max_chars': int.tryParse(_captionMaxCharsController.text) ?? 22,
+        'caption_box_height': int.tryParse(_captionBoxHeightController.text) ?? 420,
+        'caption_box_alpha': int.tryParse(_captionAlphaController.text) ?? 170,
+        'caption_text_color': _captionTextColorController.text,
+      },
+    };
+    await http.put(
+      ApiConfig.httpUri('/projects/$projectId/settings'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'settings': settings}),
+    );
   }
 
   List<String> _voicevoxSpeakerOptions(String current) {
@@ -4357,9 +4690,11 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       'caption_box_height': int.tryParse(_captionBoxHeightController.text) ?? 420,
       'bg_off_style': bgOffStyle,
       'caption_text_color': _captionTextColorController.text,
+      'project_id': ProjectState.currentProjectId.value,
     };
 
     try {
+      await _saveProjectSettings();
       setState(() {
         _statusMessage = 'Submitting...';
       });
