@@ -414,6 +414,8 @@ class _StudioShellState extends State<StudioShell> {
   static const double _navDotSize = 10;
   List<ProjectSummary> _projects = const [];
   bool _projectsLoading = false;
+  Map<String, String> _currentFlowState = {for (final step in kFlowSteps) step.key: '未着手'};
+  bool _flowStateLoading = false;
 
   @override
   void initState() {
@@ -791,6 +793,7 @@ class _StudioShellState extends State<StudioShell> {
       setState(() {
         _projects = projects;
       });
+      await _loadCurrentProjectFlowState();
     } catch (_) {
       return;
     } finally {
@@ -808,6 +811,7 @@ class _StudioShellState extends State<StudioShell> {
     ProjectState.currentProjectId.value = normalized;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('project.current_id', normalized);
+    await _loadCurrentProjectFlowState();
   }
 
   ProjectSummary? _currentProjectSummary() {
@@ -818,6 +822,162 @@ class _StudioShellState extends State<StudioShell> {
       }
     }
     return null;
+  }
+
+  bool get _isFlowProjectSelected => _currentProjectSummary()?.isFlowProject ?? false;
+
+  String _pageLabel(int index) {
+    if (!_isFlowProjectSelected) {
+      return _pages[index];
+    }
+    switch (index) {
+      case 1:
+        return '① 台本作成';
+      case 2:
+        return '② ベース動画作成';
+      case 3:
+        return '③ タイトル・説明';
+      case 4:
+        return '④ サムネイル';
+      case 5:
+        return '⑤ ポンチ絵案';
+      case 6:
+        return '⑥ 最終編集';
+      case 10:
+        return 'AIフロー進捗';
+      default:
+        return _pages[index];
+    }
+  }
+
+  Future<void> _loadCurrentProjectFlowState() async {
+    if (!_isFlowProjectSelected) {
+      if (mounted) {
+        setState(() {
+          _currentFlowState = {for (final step in kFlowSteps) step.key: '未着手'};
+          _flowStateLoading = false;
+        });
+      }
+      return;
+    }
+    final project = _currentProjectSummary();
+    if (project == null) {
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _flowStateLoading = true;
+      });
+    }
+    try {
+      final uri = ApiConfig.httpUri('/projects/${project.id}/flow');
+      final response = await http.get(uri).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final flow = body['flow_state'] as Map<String, dynamic>? ?? {};
+      if (!mounted) return;
+      setState(() {
+        _currentFlowState = {
+          for (final step in kFlowSteps)
+            step.key: (flow[step.key] as String? ?? '未着手'),
+        };
+      });
+    } catch (_) {
+      // ignore flow-state fetch errors to avoid blocking legacy pages.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _flowStateLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateCurrentProjectFlowStep(String step, String status) async {
+    final project = _currentProjectSummary();
+    if (project == null || !project.isFlowProject) {
+      return;
+    }
+    setState(() {
+      _flowStateLoading = true;
+    });
+    try {
+      final uri = ApiConfig.httpUri('/projects/${project.id}/flow');
+      final response = await http.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'step': step, 'status': status}),
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _currentFlowState[step] = status;
+      });
+    } catch (_) {
+      // ignore flow-state update errors in shell-level UI.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _flowStateLoading = false;
+        });
+      }
+    }
+  }
+
+  Widget _wrapFlowStep({
+    required String stepKey,
+    required String stepTitle,
+    required String description,
+    required Widget child,
+  }) {
+    if (!_isFlowProjectSelected) {
+      return child;
+    }
+    final currentStatus = _currentFlowState[stepKey] ?? '未着手';
+    return ListView(
+      children: [
+        Text(stepTitle, style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 8),
+        Text(description),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: kFlowStatuses.contains(currentStatus) ? currentStatus : '未着手',
+                decoration: const InputDecoration(labelText: 'この工程の状態'),
+                items: kFlowStatuses
+                    .map((status) => DropdownMenuItem(value: status, child: Text(status)))
+                    .toList(),
+                onChanged: _flowStateLoading
+                    ? null
+                    : (value) {
+                        if (value == null || value == currentStatus) return;
+                        _updateCurrentProjectFlowStep(stepKey, value);
+                      },
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: _flowStateLoading ? null : _loadCurrentProjectFlowState,
+              icon: const Icon(Icons.refresh),
+              label: const Text('再読込'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_flowStateLoading) const LinearProgressIndicator(),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 560,
+          child: child,
+        ),
+      ],
+    );
   }
 
   Future<void> _openFlowPage() async {
@@ -1123,7 +1283,7 @@ class _StudioShellState extends State<StudioShell> {
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             itemCount: _pages.length,
                             itemBuilder: (context, index) {
-                              return _buildMenuItem(index: index, label: _pages[index]);
+                              return _buildMenuItem(index: index, label: _pageLabel(index));
                             },
                           ),
                         ),
@@ -1147,7 +1307,7 @@ class _StudioShellState extends State<StudioShell> {
                     child: Card(
                       margin: const EdgeInsets.all(20),
                       child: LogPanel(
-                        pageName: _pages[_selectedIndex],
+                        pageName: _pageLabel(_selectedIndex),
                         latestJobId: _latestJobId,
                         jobInProgress: _videoJobInProgress,
                       ),
@@ -1224,31 +1384,61 @@ class _StudioShellState extends State<StudioShell> {
           onOpenFlow: _openFlowPage,
         );
       case 1:
-        return ScriptGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
+        return _wrapFlowStep(
+          stepKey: 'script',
+          stepTitle: '① 台本作成（AI + 人間修正）',
+          description: 'AI生成した台本は必ず人が確認・編集してから確定してください。自動で次工程には進みません。',
+          child: ScriptGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+          ),
         );
       case 2:
-        return VideoGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
-          jobInProgress: _videoJobInProgress,
-          onJobSubmitted: (jobId) {
-            _latestJobId.value = jobId;
-          },
+        return _wrapFlowStep(
+          stepKey: 'base_video',
+          stepTitle: '② 動画作成（ベース動画生成）',
+          description: '既存の動画設定をそのまま使ってベース動画を生成します。ここでは最終編集を行いません。',
+          child: VideoGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+            jobInProgress: _videoJobInProgress,
+            onJobSubmitted: (jobId) {
+              _latestJobId.value = jobId;
+            },
+          ),
         );
       case 3:
-        return TitleGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
+        return _wrapFlowStep(
+          stepKey: 'title_description',
+          stepTitle: '③ 動画タイトル・説明文作成（AI）',
+          description: '台本に基づいて候補を作成し、ユーザーが確認・選択して採用します。',
+          child: TitleGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+          ),
         );
       case 4:
-        return MaterialsGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
+        return _wrapFlowStep(
+          stepKey: 'thumbnail',
+          stepTitle: '④ サムネイル作成（AI）',
+          description: 'タイトルを踏まえてサムネイル候補を生成し、プレビュー確認後に採用してください。',
+          child: MaterialsGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+          ),
         );
       case 5:
-        return PonchiGenerateForm(
-          checkApiHealth: _checkApiHealthAndUpdate,
+        return _wrapFlowStep(
+          stepKey: 'ponchi',
+          stepTitle: '⑤ ポンチ絵（補足ビジュアル）案の作成',
+          description: 'SRTをもとに提案を作成し、開始/終了時間や画像・サイズ・位置は必ず手動で調整します。',
+          child: PonchiGenerateForm(
+            checkApiHealth: _checkApiHealthAndUpdate,
+          ),
         );
       case 6:
-        return const VideoEditForm();
+        return _wrapFlowStep(
+          stepKey: 'final_edit',
+          stepTitle: '⑥ 動画編集（最終編集）',
+          description: 'ポンチ絵設定を反映して最終動画を出力します。必要に応じて再編集してください。',
+          child: const VideoEditForm(),
+        );
       case 7:
         return const DetailedEditForm();
       case 8:
@@ -1261,7 +1451,7 @@ class _StudioShellState extends State<StudioShell> {
           checkApiHealth: _checkApiHealthAndUpdate,
         );
       default:
-        return PlaceholderPanel(title: _pages[_selectedIndex]);
+        return PlaceholderPanel(title: _pageLabel(_selectedIndex));
     }
   }
 }
