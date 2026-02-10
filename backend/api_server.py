@@ -476,9 +476,9 @@ async def list_projects() -> dict:
             continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            meta.setdefault("id", child.name)
-            meta.setdefault("name", child.name)
-            projects.append(meta)
+            project_id = str(meta.get("id", child.name)).strip() or child.name
+            project_name = str(meta.get("name", child.name)).strip() or project_id
+            projects.append({"id": project_id, "name": project_name})
         except Exception:
             logger.warning("Skipping broken project metadata: %s", meta_path)
     return {"projects": projects, "default_project_id": DEFAULT_PROJECT_ID}
@@ -491,7 +491,7 @@ async def create_project(payload: ProjectCreateRequest) -> dict:
     if project_dir.exists():
         raise HTTPException(status_code=409, detail="project already exists")
     _ensure_project_structure(project_id, payload.name.strip())
-    return {"project": _read_project_meta(project_id)}
+    return {"project_id": project_id, "project": _read_project_meta(project_id)}
 
 
 @app.put("/projects/{project_id}")

@@ -11,7 +11,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'config/input_persistence.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ApiSettingsBootstrap.load();
   runApp(const MovieMakerApp());
 }
 
@@ -102,9 +104,10 @@ class ApiKeys {
 }
 
 class ProjectState {
-  static const String defaultProjectId = 'default';
-  static final ValueNotifier<String> currentProjectId =
-      ValueNotifier<String>(defaultProjectId);
+  static const String undeletableProjectId = 'default';
+  static final ValueNotifier<String?> currentProjectId = ValueNotifier<String?>(
+    null,
+  );
 }
 
 class ProjectSummary {
@@ -114,9 +117,10 @@ class ProjectSummary {
   final String name;
 
   factory ProjectSummary.fromJson(Map<String, dynamic> json) {
+    final id = (json['id'] as String? ?? '').trim();
     return ProjectSummary(
-      id: (json['id'] as String? ?? ProjectState.defaultProjectId).trim(),
-      name: (json['name'] as String? ?? ProjectState.defaultProjectId).trim(),
+      id: id,
+      name: (json['name'] as String? ?? id).trim(),
     );
   }
 }
@@ -131,8 +135,10 @@ class ApiSettingsBootstrap {
     ApiKeys.claude.value = (prefs.getString('settings.claude_key') ?? '').trim();
     VoicevoxConfig.baseUrl.value =
         (prefs.getString('video_generate.vv_url') ?? 'http://127.0.0.1:50021').trim();
-    ProjectState.currentProjectId.value =
-        (prefs.getString('project.current_id') ?? ProjectState.defaultProjectId).trim();
+    final savedProjectId = (prefs.getString('project.current_id') ?? '').trim();
+    ProjectState.currentProjectId.value = savedProjectId.isEmpty
+        ? null
+        : savedProjectId;
   }
 }
 
@@ -217,7 +223,195 @@ class MovieMakerApp extends StatelessWidget {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
       ),
-      home: const StudioShell(),
+      initialRoute: '/',
+      routes: {
+        '/': (context) => const ProjectListPage(),
+        '/home': (context) => const StudioShell(),
+      },
+    );
+  }
+}
+
+class ProjectListPage extends StatefulWidget {
+  const ProjectListPage({super.key});
+
+  @override
+  State<ProjectListPage> createState() => _ProjectListPageState();
+}
+
+class _ProjectListPageState extends State<ProjectListPage> {
+  List<ProjectSummary> _projects = const [];
+  bool _loading = false;
+  bool _creating = false;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProjects();
+  }
+
+  Future<void> _loadProjects() async {
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+    try {
+      final response = await http.get(ApiConfig.httpUri('/projects'));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final projectsRaw = (body['projects'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _projects = projectsRaw.map(ProjectSummary.fromJson).toList();
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'プロジェクト一覧の取得に失敗しました。';
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _setCurrentProject(String projectId) async {
+    final normalized = projectId.trim();
+    if (normalized.isEmpty) return;
+    ProjectState.currentProjectId.value = normalized;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('project.current_id', normalized);
+  }
+
+  Future<void> _selectProject(ProjectSummary project) async {
+    await _setCurrentProject(project.id);
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/home');
+  }
+
+  Future<void> _createProject() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('プロジェクト作成'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(labelText: '表示名'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('作成'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+
+    setState(() {
+      _creating = true;
+    });
+    try {
+      final response = await http.post(
+        ApiConfig.httpUri('/projects'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'name': name}),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final createdId = (body['project_id'] as String? ?? '').trim();
+      if (createdId.isEmpty) {
+        throw Exception('project_id is missing');
+      }
+      await _setCurrentProject(createdId);
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/home');
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('プロジェクト作成に失敗しました。')),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _creating = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('プロジェクト一覧')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: ElevatedButton.icon(
+                onPressed: _creating ? null : _createProject,
+                icon: const Icon(Icons.add),
+                label: const Text('新規作成'),
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (_loading)
+              const Expanded(child: Center(child: CircularProgressIndicator()))
+            else if (_errorMessage != null)
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_errorMessage!),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: _loadProjects,
+                        child: const Text('再試行'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: ListView.separated(
+                  itemCount: _projects.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final project = _projects[index];
+                    return ListTile(
+                      tileColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      title: Text(project.name),
+                      subtitle: Text(project.id),
+                      trailing: const Icon(Icons.arrow_forward),
+                      onTap: () => _selectProject(project),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -260,7 +454,12 @@ class _StudioShellState extends State<StudioShell> {
   @override
   void initState() {
     super.initState();
-    ApiSettingsBootstrap.load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (ProjectState.currentProjectId.value == null) {
+        Navigator.pushReplacementNamed(context, '/');
+      }
+    });
     _ensureApiServerRunning();
     _loadProjects();
   }
@@ -624,9 +823,8 @@ class _StudioShellState extends State<StudioShell> {
           .toList();
       final projects = projectsRaw.map(ProjectSummary.fromJson).toList();
       final current = ProjectState.currentProjectId.value;
-      if (projects.where((p) => p.id == current).isEmpty) {
-        final fallback = (body['default_project_id'] as String? ?? ProjectState.defaultProjectId).trim();
-        await _setCurrentProject(fallback);
+      if (current != null && projects.where((p) => p.id == current).isEmpty) {
+        await _setCurrentProject(null);
       }
       if (!mounted) return;
       setState(() {
@@ -642,13 +840,16 @@ class _StudioShellState extends State<StudioShell> {
     }
   }
 
-  Future<void> _setCurrentProject(String projectId) async {
-    final normalized = projectId.trim().isEmpty
-        ? ProjectState.defaultProjectId
-        : projectId.trim();
-    ProjectState.currentProjectId.value = normalized;
+  Future<void> _setCurrentProject(String? projectId) async {
+    final normalized = projectId?.trim();
+    final value = (normalized == null || normalized.isEmpty) ? null : normalized;
+    ProjectState.currentProjectId.value = value;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('project.current_id', normalized);
+    if (value == null) {
+      await prefs.remove('project.current_id');
+      return;
+    }
+    await prefs.setString('project.current_id', value);
   }
 
   Future<void> _openProjectManager() async {
@@ -901,7 +1102,7 @@ class _StudioShellState extends State<StudioShell> {
                                 padding: const EdgeInsets.symmetric(horizontal: 12),
                                 child: Column(
                                   children: [
-                                    ValueListenableBuilder<String>(
+                                    ValueListenableBuilder<String?>(
                                       valueListenable: ProjectState.currentProjectId,
                                       builder: (context, currentProjectId, _) {
                                         final hasCurrent = _projects.any((p) => p.id == currentProjectId);
@@ -933,8 +1134,8 @@ class _StudioShellState extends State<StudioShell> {
                                     SizedBox(
                                       width: double.infinity,
                                       child: OutlinedButton(
-                                        onPressed: _openProjectManager,
-                                        child: const Text('管理', style: TextStyle(fontSize: 12)),
+                                        onPressed: () => Navigator.pushReplacementNamed(context, '/'),
+                                        child: const Text('プロジェクト切替', style: TextStyle(fontSize: 12)),
                                       ),
                                     ),
                                   ],
@@ -1190,7 +1391,7 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
     try {
       await http.delete(ApiConfig.httpUri('/projects/${project.id}'));
       if (ProjectState.currentProjectId.value == project.id) {
-        ProjectState.currentProjectId.value = ProjectState.defaultProjectId;
+        ProjectState.currentProjectId.value = null;
       }
       await widget.onChanged();
     } finally {
@@ -1229,7 +1430,7 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
                             IconButton(onPressed: _busy ? null : () => _renameProject(p), icon: const Icon(Icons.edit), tooltip: 'リネーム'),
                             IconButton(onPressed: _busy ? null : () => _cloneProject(p), icon: const Icon(Icons.copy), tooltip: '複製'),
                             IconButton(
-                              onPressed: (_busy || p.id == ProjectState.defaultProjectId) ? null : () => _deleteProject(p),
+                              onPressed: (_busy || p.id == ProjectState.undeletableProjectId) ? null : () => _deleteProject(p),
                               icon: const Icon(Icons.delete_outline),
                               tooltip: '削除',
                             ),
@@ -4006,6 +4207,9 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   Future<void> _loadProjectSettings() async {
     try {
       final projectId = ProjectState.currentProjectId.value;
+      if (projectId == null) {
+        return;
+      }
       final response = await http.get(ApiConfig.httpUri('/projects/$projectId/settings'));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return;
@@ -4029,6 +4233,9 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
 
   Future<void> _saveProjectSettings() async {
     final projectId = ProjectState.currentProjectId.value;
+    if (projectId == null) {
+      return;
+    }
     final settings = {
       'video_generate': {
         'caption_font_size': int.tryParse(_captionFontSizeController.text) ?? 36,
