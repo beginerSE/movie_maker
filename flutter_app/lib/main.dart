@@ -232,6 +232,7 @@ class ProjectState {
   static const String defaultProjectId = 'default';
   static final ValueNotifier<String> currentProjectId =
       ValueNotifier<String>(defaultProjectId);
+  static final ValueNotifier<String> currentProjectType = ValueNotifier<String>('standard');
   static const String undeletableProjectId = defaultProjectId;
 }
 
@@ -793,6 +794,7 @@ class _StudioShellState extends State<StudioShell> {
       setState(() {
         _projects = projects;
       });
+      _syncCurrentProjectType();
       await _loadCurrentProjectFlowState();
     } catch (_) {
       return;
@@ -809,6 +811,7 @@ class _StudioShellState extends State<StudioShell> {
         ? ProjectState.defaultProjectId
         : projectId.trim();
     ProjectState.currentProjectId.value = normalized;
+    _syncCurrentProjectType();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('project.current_id', normalized);
     await _loadCurrentProjectFlowState();
@@ -822,6 +825,14 @@ class _StudioShellState extends State<StudioShell> {
       }
     }
     return null;
+  }
+
+  void _syncCurrentProjectType() {
+    final current = _currentProjectSummary();
+    final nextType = current?.projectType == 'flow' ? 'flow' : 'standard';
+    if (ProjectState.currentProjectType.value != nextType) {
+      ProjectState.currentProjectType.value = nextType;
+    }
   }
 
   bool get _isFlowProjectSelected => _currentProjectSummary()?.isFlowProject ?? false;
@@ -2245,6 +2256,11 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                 icon: const Icon(Icons.save),
                 label: const Text('保存'),
               ),
+              OutlinedButton.icon(
+                onPressed: _openLargeEditorDialog,
+                icon: const Icon(Icons.open_in_full),
+                label: const Text('大画面で編集'),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -2599,6 +2615,97 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     _showSnackBar('生成結果をコピーしました。');
   }
 
+
+  bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
+
+  String _flowScriptPrefsKey() => 'flow.script_path.${ProjectState.currentProjectId.value}';
+
+  Future<void> _persistFlowScript(String text) async {
+    final outputPath = _outputController.text.trim().isEmpty
+        ? 'flow_confirmed_script.txt'
+        : _outputController.text.trim();
+    final file = File(outputPath);
+    await file.writeAsString(text);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_flowScriptPrefsKey(), file.path);
+  }
+
+  Future<void> _openLargeEditorDialog() async {
+    final initial = _outputTextController.text;
+    final controller = TextEditingController(text: initial);
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          child: SizedBox(
+            width: 980,
+            height: 760,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('台本エディタ（大画面）', style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      maxLines: null,
+                      expands: true,
+                      decoration: const InputDecoration(
+                        hintText: 'ここで台本を自由に編集してください。',
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, 'cancel'),
+                        child: const Text('キャンセル'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => Navigator.pop(context, 'apply'),
+                        child: const Text('反映'),
+                      ),
+                      if (_isFlowProject)
+                        FilledButton(
+                          onPressed: () => Navigator.pop(context, 'save_flow'),
+                          child: const Text('AIフロー台本として保存'),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    final edited = controller.text;
+    controller.dispose();
+    if (action == null || action == 'cancel') {
+      return;
+    }
+    setState(() {
+      _outputTextController.text = edited;
+    });
+    if (action == 'save_flow') {
+      try {
+        await _persistFlowScript(edited);
+        _showSnackBar('AIフロー用の確定台本として保存しました。');
+      } catch (error) {
+        _showSnackBar('台本保存に失敗しました: $error');
+      }
+      return;
+    }
+    _showSnackBar('編集内容を反映しました。');
+  }
+
   Future<void> _saveOutputToFile() async {
     final outputPath = _outputController.text.trim();
     if (outputPath.isEmpty) {
@@ -2613,6 +2720,10 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     try {
       final file = File(outputPath);
       await file.writeAsString(text);
+      if (_isFlowProject) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_flowScriptPrefsKey(), file.path);
+      }
       _showSnackBar('保存しました！');
     } catch (error) {
       _showSnackBar('保存に失敗しました: $error');
@@ -2644,6 +2755,18 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   String _chatGptModel = 'gpt-4.1-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   bool _isSubmitting = false;
+
+  bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
+
+  String _flowScriptPrefsKey() => 'flow.script_path.${ProjectState.currentProjectId.value}';
+
+  Future<String?> _resolveScriptPathForTitle() async {
+    if (!_isFlowProject) {
+      return _scriptPathController.text.trim();
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getString(_flowScriptPrefsKey()) ?? '').trim();
+  }
 
   @override
   void initState() {
@@ -2692,21 +2815,39 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _scriptPathController,
-            decoration: InputDecoration(
-              labelText: '台本ファイル（SRT/TXT）',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.folder_open),
-                onPressed: () => _selectFile(
-                  _scriptPathController,
-                  const XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
-                ),
-              ),
-            ),
-            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+          ValueListenableBuilder<String>(
+            valueListenable: ProjectState.currentProjectType,
+            builder: (context, projectType, _) {
+              if (projectType == 'flow') {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text('AIフローでは①で確定した台本を自動利用します。'),
+                    SizedBox(height: 12),
+                  ],
+                );
+              }
+              return Column(
+                children: [
+                  TextFormField(
+                    controller: _scriptPathController,
+                    decoration: InputDecoration(
+                      labelText: '台本ファイル（SRT/TXT）',
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.folder_open),
+                        onPressed: () => _selectFile(
+                          _scriptPathController,
+                          const XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
+                        ),
+                      ),
+                    ),
+                    validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -2869,6 +3010,13 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
       return;
     }
     final count = int.tryParse(_countController.text) ?? 5;
+    final scriptPath = await _resolveScriptPathForTitle();
+    if (scriptPath == null || scriptPath.isEmpty) {
+      _showSnackBar(_isFlowProject
+          ? 'AIフローの台本が未保存です。①台本作成で「AIフロー台本として保存」を実行してください。'
+          : '台本ファイルを指定してください。');
+      return;
+    }
     setState(() {
       _isSubmitting = true;
     });
@@ -2886,7 +3034,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
       final payload = {
         'api_key': apiKey,
         'provider': _provider,
-        'script_path': _scriptPathController.text,
+        'script_path': scriptPath,
         'count': count,
         'extra': _instructionsController.text,
         'model': _resolveModel(),
@@ -4799,6 +4947,18 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   late final VoidCallback _voicevoxUrlListener;
   late final VoidCallback _projectListener;
 
+  bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
+
+  String _flowScriptPrefsKey() => 'flow.script_path.${ProjectState.currentProjectId.value}';
+
+  Future<String?> _resolveScriptPathForVideo() async {
+    if (!_isFlowProject) {
+      return _scriptController.text.trim();
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getString(_flowScriptPrefsKey()) ?? '').trim();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -5105,22 +5265,37 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
-          TextFormField(
-            controller: _scriptController,
-            decoration: InputDecoration(
-              labelText: '原稿ファイルパス',
-              hintText: 'dialogue_input.txt',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.folder_open),
-                onPressed: () => _selectFile(
-                  _scriptController,
-                  const XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
-                ),
-              ),
-            ),
-            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+          ValueListenableBuilder<String>(
+            valueListenable: ProjectState.currentProjectType,
+            builder: (context, projectType, _) {
+              if (projectType == 'flow') {
+                return const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text('AIフローでは①で確定した台本を自動利用します（原稿ファイル指定は不要）。'),
+                );
+              }
+              return Column(
+                children: [
+                  TextFormField(
+                    controller: _scriptController,
+                    decoration: InputDecoration(
+                      labelText: '原稿ファイルパス',
+                      hintText: 'dialogue_input.txt',
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.folder_open),
+                        onPressed: () => _selectFile(
+                          _scriptController,
+                          const XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
+                        ),
+                      ),
+                    ),
+                    validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 12),
           TextFormField(
             controller: _imageListController,
             decoration: InputDecoration(
@@ -5569,9 +5744,20 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _ => 'none',
     };
 
+    final scriptPath = await _resolveScriptPathForVideo();
+    if (scriptPath == null || scriptPath.isEmpty) {
+      setState(() {
+        _statusMessage = _isFlowProject
+            ? 'Error: AIフロー台本が未保存です。①台本作成で保存してください。'
+            : 'Error: 原稿ファイルを指定してください。';
+      });
+      widget.jobInProgress.value = false;
+      return;
+    }
+
     final payload = {
       'api_key': ApiKeys.gemini.value,
-      'script_path': _scriptController.text,
+      'script_path': scriptPath,
       'image_paths': imagePaths,
       'use_bgm': _useBgm,
       'bgm_path': _bgmController.text,
