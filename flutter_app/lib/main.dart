@@ -364,6 +364,7 @@ class StudioShell extends StatefulWidget {
 
 class _StudioShellState extends State<StudioShell> {
   final List<String> _pages = const [
+    'プロジェクト一覧',
     '台本生成',
     '動画作成',
     '動画タイトル・説明',
@@ -1173,10 +1174,18 @@ class _StudioShellState extends State<StudioShell> {
   Widget _buildCenterPanel() {
     switch (_selectedIndex) {
       case 0:
+        return ProjectListPanel(
+          projects: _projects,
+          projectsLoading: _projectsLoading,
+          onRefresh: _loadProjects,
+          onManage: _openProjectManager,
+          onSelectProject: _setCurrentProject,
+        );
+      case 1:
         return ScriptGenerateForm(
           checkApiHealth: _checkApiHealthAndUpdate,
         );
-      case 1:
+      case 2:
         return VideoGenerateForm(
           checkApiHealth: _checkApiHealthAndUpdate,
           jobInProgress: _videoJobInProgress,
@@ -1184,29 +1193,149 @@ class _StudioShellState extends State<StudioShell> {
             _latestJobId.value = jobId;
           },
         );
-      case 2:
+      case 3:
         return TitleGenerateForm(
           checkApiHealth: _checkApiHealthAndUpdate,
         );
-      case 3:
+      case 4:
         return MaterialsGenerateForm(
           checkApiHealth: _checkApiHealthAndUpdate,
         );
-      case 4:
+      case 5:
         return PonchiGenerateForm(
           checkApiHealth: _checkApiHealthAndUpdate,
         );
-      case 5:
-        return const VideoEditForm();
       case 6:
-        return const DetailedEditForm();
+        return const VideoEditForm();
       case 7:
-        return const SettingsForm();
+        return const DetailedEditForm();
       case 8:
+        return const SettingsForm();
+      case 9:
         return const AboutPanel();
       default:
         return PlaceholderPanel(title: _pages[_selectedIndex]);
     }
+  }
+}
+
+class ProjectListPanel extends StatelessWidget {
+  const ProjectListPanel({
+    super.key,
+    required this.projects,
+    required this.projectsLoading,
+    required this.onRefresh,
+    required this.onManage,
+    required this.onSelectProject,
+  });
+
+  final List<ProjectSummary> projects;
+  final bool projectsLoading;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onManage;
+  final Future<void> Function(String projectId) onSelectProject;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('プロジェクト一覧', style: Theme.of(context).textTheme.headlineSmall),
+            const Spacer(),
+            OutlinedButton.icon(
+              onPressed: projectsLoading ? null : onRefresh,
+              icon: const Icon(Icons.refresh),
+              label: const Text('更新'),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              onPressed: onManage,
+              icon: const Icon(Icons.settings),
+              label: const Text('管理'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: Card(
+            child: projectsLoading
+                ? const Center(child: CircularProgressIndicator())
+                : ValueListenableBuilder<String>(
+                    valueListenable: ProjectState.currentProjectId,
+                    builder: (context, currentProjectId, _) {
+                      if (projects.isEmpty) {
+                        return const Center(child: Text('プロジェクトがありません。'));
+                      }
+                      return ListView.separated(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: projects.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final project = projects[index];
+                          final isCurrent = project.id == currentProjectId;
+                          return Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () => onSelectProject(project.id),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: isCurrent
+                                      ? Theme.of(context)
+                                          .colorScheme
+                                          .primary
+                                          .withOpacity(0.08)
+                                      : Colors.grey.withOpacity(0.06),
+                                  border: Border.all(
+                                    color: isCurrent
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Colors.grey.withOpacity(0.25),
+                                  ),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      isCurrent
+                                          ? Icons.radio_button_checked
+                                          : Icons.radio_button_unchecked,
+                                      color: isCurrent
+                                          ? Theme.of(context).colorScheme.primary
+                                          : Colors.black45,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        project.name,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 15,
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      project.id,
+                                      style: const TextStyle(color: Colors.black45),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
