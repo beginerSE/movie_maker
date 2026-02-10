@@ -25,6 +25,26 @@ String _defaultApiBaseUrl() {
   return 'http://127.0.0.1:8000';
 }
 
+String _normalizeBackendUrlForCurrentPlatform(String rawUrl) {
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) {
+    return _defaultApiBaseUrl();
+  }
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+    return trimmed;
+  }
+  if (Platform.isAndroid) {
+    final normalizedHost = uri.host.toLowerCase();
+    if (normalizedHost == 'localhost' ||
+        normalizedHost == '127.0.0.1' ||
+        normalizedHost == '::1') {
+      return uri.replace(host: '10.0.2.2').toString();
+    }
+  }
+  return trimmed;
+}
+
 String _joinPaths(String basePath, String relativePath) {
   if (basePath.isEmpty || basePath == '/') {
     return relativePath;
@@ -233,8 +253,10 @@ class ProjectSummary {
 class ApiSettingsBootstrap {
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
+    final savedBackendUrl =
+        prefs.getString('settings.backend_url') ?? _defaultApiBaseUrl();
     ApiConfig.baseUrl.value =
-        (prefs.getString('settings.backend_url') ?? _defaultApiBaseUrl()).trim();
+        _normalizeBackendUrlForCurrentPlatform(savedBackendUrl);
     ApiKeys.gemini.value = (prefs.getString('settings.gemini_key') ?? '').trim();
     ApiKeys.openAi.value = (prefs.getString('settings.openai_key') ?? '').trim();
     ApiKeys.claude.value = (prefs.getString('settings.claude_key') ?? '').trim();
