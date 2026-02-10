@@ -760,43 +760,15 @@ class _StudioShellState extends State<StudioShell> {
     return current;
   }
 
-  List<List<String>> _candidatePythonCommands() {
-    final candidates = <List<String>>[];
-    final seen = <String>{};
-
-    void addExecutable(String executable, {List<String> prefixArgs = const []}) {
-      final normalizedExecutable = executable.trim();
-      if (normalizedExecutable.isEmpty) {
-        return;
-      }
-      final key = '$normalizedExecutable|${prefixArgs.join(' ')}';
-      if (!seen.add(key)) {
-        return;
-      }
-      candidates.add([normalizedExecutable, ...prefixArgs]);
-    }
-
+  List<String> _candidatePythonExecutables() {
+    final candidates = <String>[];
     final pythonNames = Platform.isWindows
-        ? ['python.exe', 'python', 'py']
+        ? ['python.exe', 'python']
         : ['python3', 'python'];
     final envRoots = <String?>[
       Platform.environment['VIRTUAL_ENV'],
       Platform.environment['CONDA_PREFIX'],
     ];
-
-    final searchRoots = <String>{
-      if (_apiServerRoot != null) _apiServerRoot!.path,
-      Directory.current.path,
-    };
-    final flutterAppSuffix = '${Platform.pathSeparator}flutter_app';
-    for (final path in List<String>.from(searchRoots)) {
-      if (!path.endsWith(flutterAppSuffix)) {
-        continue;
-      }
-      final parent = Directory(path).parent.path;
-      searchRoots.add(parent);
-    }
-
     for (final root in envRoots) {
       if (root == null || root.trim().isEmpty) {
         continue;
@@ -805,34 +777,24 @@ class _StudioShellState extends State<StudioShell> {
           ? _joinFilePath([root, 'Scripts', 'python.exe'])
           : _joinFilePath([root, 'bin', 'python']);
       if (File(executable).existsSync()) {
-        addExecutable(executable);
+        candidates.add(executable);
       }
     }
-
     final localEnvRoots = [
       '.venv',
       'venv',
       'env',
     ];
-    for (final searchRoot in searchRoots) {
-      for (final localRoot in localEnvRoots) {
-        final root = _joinFilePath([searchRoot, localRoot]);
-        final executable = Platform.isWindows
-            ? _joinFilePath([root, 'Scripts', 'python.exe'])
-            : _joinFilePath([root, 'bin', 'python']);
-        if (File(executable).existsSync()) {
-          addExecutable(executable);
-        }
+    for (final localRoot in localEnvRoots) {
+      final root = _joinFilePath([_apiServerRoot!.path, localRoot]);
+      final executable = Platform.isWindows
+          ? _joinFilePath([root, 'Scripts', 'python.exe'])
+          : _joinFilePath([root, 'bin', 'python']);
+      if (File(executable).existsSync()) {
+        candidates.add(executable);
       }
     }
-
-    for (final name in pythonNames) {
-      if (Platform.isWindows && name == 'py') {
-        addExecutable(name, prefixArgs: ['-3']);
-      }
-      addExecutable(name);
-    }
-
+    candidates.addAll(pythonNames);
     return candidates;
   }
 
@@ -854,28 +816,15 @@ class _StudioShellState extends State<StudioShell> {
     _apiServerPort = await _selectApiServerPort();
     _updateApiBaseUrlForPort(_apiServerPort);
 
-    final pythonCommands = _candidatePythonCommands();
+    final pythonExecutables = _candidatePythonExecutables();
 
-    for (final command in pythonCommands) {
-      final executable = command.first;
-      final prefixArgs = command.length > 1 ? command.sublist(1) : const <String>[];
+    for (final pythonExecutable in pythonExecutables) {
       try {
-        final launchParts = <String>[
-          executable,
-          ...prefixArgs,
-          '-m',
-          'uvicorn',
-          'backend.api_server:app',
-          '--host',
-          '127.0.0.1',
-          '--port',
-          '$_apiServerPort',
-        ];
-        _apiServerLaunchCommand = launchParts.join(' ');
+        _apiServerLaunchCommand =
+            '$pythonExecutable -m uvicorn backend.api_server:app --host 127.0.0.1 --port $_apiServerPort';
         final process = await Process.start(
-          executable,
+          pythonExecutable,
           [
-            ...prefixArgs,
             '-m',
             'uvicorn',
             'backend.api_server:app',
