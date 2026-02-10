@@ -777,6 +777,7 @@ async def generate_ponchi_images(payload: PonchiImagesRequest) -> PonchiImagesRe
                     "visual_suggestion": item["visual_suggestion"],
                     "image_prompt": prompt,
                     "image": image_path.name,
+                    "image_base64": base64.b64encode(image_bytes).decode("utf-8"),
                 }
             )
         json_path = output_dir_path / f"{pathlib.Path(payload.srt_path).stem}_ponchi.json"
