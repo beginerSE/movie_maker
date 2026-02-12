@@ -392,6 +392,20 @@ def _ponchi_ideas_path(output_dir: Optional[str], srt_path: str) -> Optional[pat
     return pathlib.Path(output_dir) / srt_stem / f"{srt_stem}_ponchi_ideas.json"
 
 
+def _ponchi_flow_dir(project_id: str) -> pathlib.Path:
+    path = _project_dir(project_id) / "materials" / "ponchi_flow"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _ponchi_flow_draft_path(project_id: str) -> pathlib.Path:
+    return _ponchi_flow_dir(project_id) / "draft_rows.json"
+
+
+def _ponchi_flow_final_path(project_id: str) -> pathlib.Path:
+    return _ponchi_flow_dir(project_id) / "final_rows.json"
+
+
 def _validate_video_request(payload: "VideoGenerateRequest") -> None:
     if not payload.script_path:
         raise HTTPException(status_code=400, detail="script_path が空です。")
@@ -500,6 +514,33 @@ class PonchiImagesRequest(BaseModel):
     output_dir: str
     suggestions: Optional[List[dict]] = None
     model: str = GEMINI_MATERIAL_DEFAULT_MODEL
+    project_id: Optional[str] = None
+
+
+class PonchiFlowRowUpsertRequest(BaseModel):
+    start_time: str
+    end_time: str
+    illustration_prompt: str
+    note: str = ""
+
+
+class PonchiFlowDraftSaveRequest(BaseModel):
+    rows: List[PonchiFlowRowUpsertRequest]
+    project_id: Optional[str] = None
+
+
+class PonchiFlowRowGenerateRequest(BaseModel):
+    api_key: str
+    row_id: Optional[str] = None
+    start_time: str
+    end_time: str
+    illustration_prompt: str
+    note: str = ""
+    model: str = GEMINI_MATERIAL_DEFAULT_MODEL
+    project_id: Optional[str] = None
+
+
+class PonchiFlowFinalizeRequest(BaseModel):
     project_id: Optional[str] = None
 
 
@@ -909,6 +950,111 @@ async def generate_ponchi_images(payload: PonchiImagesRequest) -> PonchiImagesRe
         output_dir=str(output_dir_path),
         json_path=str(json_path),
     )
+
+
+@app.get("/ponchi/flow/draft")
+async def get_ponchi_flow_draft(project_id: Optional[str] = Query(default=None)) -> dict:
+    resolved = _resolve_project_id(project_id)
+    path = _ponchi_flow_draft_path(resolved)
+    if not path.exists():
+        return {"project_id": resolved, "rows": []}
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    return {"project_id": resolved, "rows": rows}
+
+
+@app.put("/ponchi/flow/draft")
+async def put_ponchi_flow_draft(payload: PonchiFlowDraftSaveRequest) -> dict:
+    resolved = _resolve_project_id(payload.project_id)
+    path = _ponchi_flow_draft_path(resolved)
+    rows = []
+    for idx, row in enumerate(payload.rows, 1):
+        rows.append(
+            {
+                "id": f"row_{idx:03d}",
+                "start_time": row.start_time.strip(),
+                "end_time": row.end_time.strip(),
+                "illustration_prompt": row.illustration_prompt.strip(),
+                "note": row.note.strip(),
+                "image_path": "",
+            }
+        )
+    path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"project_id": resolved, "rows": rows, "saved_path": str(path)}
+
+
+@app.post("/ponchi/flow/generate-row")
+async def post_ponchi_flow_generate_row(payload: PonchiFlowRowGenerateRequest) -> dict:
+    resolved = _resolve_project_id(payload.project_id)
+    flow_dir = _ponchi_flow_dir(resolved)
+    draft_path = _ponchi_flow_draft_path(resolved)
+    row_id = (payload.row_id or "").strip() or f"row_{int(time.time() * 1000)}"
+    image_bytes, mime_type = generate_materials_with_gemini(
+        api_key=payload.api_key,
+        prompt=payload.illustration_prompt.strip(),
+        model=payload.model,
+    )
+    ext = mimetypes.guess_extension(mime_type) or ".png"
+    image_path = flow_dir / f"{row_id}{ext}"
+    image_path.write_bytes(image_bytes)
+
+    rows: list[dict[str, Any]] = []
+    if draft_path.exists():
+        rows = json.loads(draft_path.read_text(encoding="utf-8"))
+    matched = False
+    for row in rows:
+        if str(row.get("id", "")).strip() == row_id:
+            row["start_time"] = payload.start_time.strip()
+            row["end_time"] = payload.end_time.strip()
+            row["illustration_prompt"] = payload.illustration_prompt.strip()
+            row["note"] = payload.note.strip()
+            row["image_path"] = str(image_path)
+            matched = True
+            break
+    if not matched:
+        rows.append(
+            {
+                "id": row_id,
+                "start_time": payload.start_time.strip(),
+                "end_time": payload.end_time.strip(),
+                "illustration_prompt": payload.illustration_prompt.strip(),
+                "note": payload.note.strip(),
+                "image_path": str(image_path),
+            }
+        )
+    draft_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "project_id": resolved,
+        "row": {
+            "id": row_id,
+            "start_time": payload.start_time.strip(),
+            "end_time": payload.end_time.strip(),
+            "illustration_prompt": payload.illustration_prompt.strip(),
+            "note": payload.note.strip(),
+            "image_path": str(image_path),
+            "image_base64": base64.b64encode(image_bytes).decode("utf-8"),
+        },
+    }
+
+
+@app.post("/ponchi/flow/finalize")
+async def post_ponchi_flow_finalize(payload: PonchiFlowFinalizeRequest) -> dict:
+    resolved = _resolve_project_id(payload.project_id)
+    draft_path = _ponchi_flow_draft_path(resolved)
+    final_path = _ponchi_flow_final_path(resolved)
+    if not draft_path.exists():
+        return {"project_id": resolved, "items": [], "saved_path": str(final_path)}
+    rows = json.loads(draft_path.read_text(encoding="utf-8"))
+    finalized = [
+        {
+            "start": str(row.get("start_time", "")).strip(),
+            "end": str(row.get("end_time", "")).strip(),
+            "image_path": str(row.get("image_path", "")).strip(),
+        }
+        for row in rows
+        if str(row.get("image_path", "")).strip()
+    ]
+    final_path.write_text(json.dumps(finalized, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"project_id": resolved, "items": finalized, "saved_path": str(final_path)}
 
 
 @app.post("/video/generate", response_model=JobResponse)

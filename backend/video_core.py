@@ -1238,12 +1238,17 @@ def generate_ponchi_suggestions_with_gemini(
 
     client = genai.Client(api_key=api_key)
     prompt_lines = [
-        "あなたは動画用の資料（ポンチ絵）を企画する担当者です。",
-        "次の字幕ごとに、表示すると良い資料の内容を提案してください。",
-        "各項目で「visual_suggestion（表示内容の説明）」と「image_prompt（画像生成用の日本語プロンプト）」を作ってください。",
-        "ユーザーが後でMarkdown表（開始/終了/内容/プロンプト）として編集できるよう、各値は簡潔かつ列に入る長さで作ってください。",
-        "出力は JSON 配列のみで、各要素は次のキーを含めてください:",
-        "start, end, text, visual_suggestion, image_prompt",
+        "あなたは動画用の補足イラスト（ポンチ絵）を設計する担当者です。",
+        "次の字幕情報をもとに、時間帯ごとのポンチ絵案を作成してください。",
+        "出力は必ずMarkdownの表のみで、表の前後に文章を一切つけないでください。",
+        "列名は必ず次の4つだけをこの順で使用してください:",
+        "start_time, end_time, illustration_prompt, note",
+        "時刻は hh:mm:ss 形式で、字幕の範囲に合わせてください。",
+        "",
+        "出力例:",
+        "| start_time | end_time | illustration_prompt | note |",
+        "|------------|----------|---------------------|------|",
+        "| 00:00:05 | 00:00:12 | 金価格上昇を示す上向き矢印と金塊のイラスト | 導入部 |",
         "",
         "字幕一覧:",
     ]
@@ -1252,27 +1257,49 @@ def generate_ponchi_suggestions_with_gemini(
         end = format_seconds_to_timecode(item.get("end", 0))
         prompt_lines.append(f"{idx}. {start}〜{end} {item.get('text', '')}")
 
-    resp = client.models.generate_content(
-        model=model,
-        contents="\n".join(prompt_lines),
-        config=types.GenerateContentConfig(
-            temperature=0.4,
-            response_mime_type="application/json",
-        ),
-    )
-    text = getattr(resp, "text", "") or ""
-    if not text:
-        raise RuntimeError("Geminiから提案の取得に失敗しました。")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\[[\s\S]*\]", text)
-        if not match:
-            raise RuntimeError("提案JSONの解析に失敗しました。")
-        data = json.loads(match.group(0))
-    if not isinstance(data, list):
-        raise RuntimeError("提案は配列形式で返してください。")
-    return data
+    table_text = ""
+    for _ in range(2):
+        resp = client.models.generate_content(
+            model=model,
+            contents="\n".join(prompt_lines),
+            config=types.GenerateContentConfig(
+                temperature=0.4,
+            ),
+        )
+        text = (getattr(resp, "text", "") or "").strip()
+        if not text:
+            continue
+        lines = [line for line in text.splitlines() if line.strip()]
+        if len(lines) < 2:
+            continue
+        if all(line.strip().startswith("|") and line.strip().endswith("|") for line in lines):
+            table_text = "\n".join(lines)
+            break
+    if not table_text:
+        raise RuntimeError("Markdown表の提案取得に失敗しました。")
+
+    lines = [line.strip() for line in table_text.splitlines() if line.strip()]
+    header = [cell.strip().lower() for cell in lines[0].strip("|").split("|")]
+    expected = ["start_time", "end_time", "illustration_prompt", "note"]
+    if header != expected:
+        raise RuntimeError("提案表ヘッダーが不正です。")
+    rows: List[Dict[str, Any]] = []
+    for raw_line in lines[2:]:
+        cells = [cell.strip() for cell in raw_line.strip("|").split("|")]
+        if len(cells) != 4:
+            continue
+        rows.append(
+            {
+                "start": cells[0],
+                "end": cells[1],
+                "visual_suggestion": cells[2],
+                "image_prompt": cells[2],
+                "note": cells[3],
+            }
+        )
+    if not rows:
+        raise RuntimeError("提案表の行を解析できませんでした。")
+    return rows
 
 
 def generate_ponchi_suggestions_with_openai(
