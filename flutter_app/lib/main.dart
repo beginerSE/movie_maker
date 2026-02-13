@@ -570,6 +570,63 @@ class _StudioShellState extends State<StudioShell> {
     if (_apiServerProcess != null) {
       return;
     }
+
+    _apiServerPort = await _selectApiServerPort();
+    _updateApiBaseUrlForPort(_apiServerPort);
+
+    final bundledExecutable = _findBundledApiServerExecutable();
+    if (bundledExecutable != null) {
+      try {
+        _apiServerLaunchCommand =
+            '$bundledExecutable --host 127.0.0.1 --port $_apiServerPort';
+        final process = await Process.start(
+          bundledExecutable,
+          [
+            '--host',
+            '127.0.0.1',
+            '--port',
+            '$_apiServerPort',
+          ],
+          workingDirectory: File(bundledExecutable).parent.path,
+          runInShell: true,
+        );
+        _apiServerProcess = process;
+        _clearApiServerError();
+        process.stderr
+            .transform(const Utf8Decoder(allowMalformed: true))
+            .transform(const LineSplitter())
+            .listen(_appendApiServerError);
+        process.stdout
+            .transform(const Utf8Decoder(allowMalformed: true))
+            .transform(const LineSplitter())
+            .listen((line) {
+          if (line.contains('ERROR') || line.contains('Error')) {
+            _appendApiServerError(line);
+          }
+        });
+        process.exitCode.then((code) {
+          if (!mounted) {
+            return;
+          }
+          if (code != 0) {
+            _setApiServerStatus(
+              ready: false,
+              message: 'API サーバーが終了しました (exit code: $code)。',
+            );
+            if (_apiServerErrorDetails == null) {
+              _setApiServerError('プロセスが終了しました (exit code: $code)。');
+            }
+            _showApiServerSnackBar('API サーバーが停止しました。');
+          }
+          _apiServerProcess = null;
+        });
+        return;
+      } catch (error) {
+        _apiServerProcess = null;
+        _setApiServerError('起動コマンドの実行に失敗しました: $error');
+      }
+    }
+
     _apiServerRoot ??= _findApiServerRoot();
     if (_apiServerRoot == null) {
       _setApiServerStatus(
@@ -580,9 +637,6 @@ class _StudioShellState extends State<StudioShell> {
       _showApiServerSnackBar('API サーバーの配置場所を確認してください。');
       return;
     }
-
-    _apiServerPort = await _selectApiServerPort();
-    _updateApiBaseUrlForPort(_apiServerPort);
 
     final pythonExecutables = _candidatePythonExecutables();
 
@@ -644,6 +698,22 @@ class _StudioShellState extends State<StudioShell> {
         _setApiServerError('起動コマンドの実行に失敗しました: $error');
       }
     }
+  }
+
+  String? _findBundledApiServerExecutable() {
+    final executableName =
+        Platform.isWindows ? 'movie_maker_api.exe' : 'movie_maker_api';
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final candidates = [
+      _joinFilePath([exeDir, 'api', executableName]),
+      _joinFilePath([exeDir, executableName]),
+    ];
+    for (final candidate in candidates) {
+      if (File(candidate).existsSync()) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   Future<bool> _isApiHealthy() async {
