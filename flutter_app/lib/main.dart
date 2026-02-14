@@ -695,7 +695,13 @@ class _StudioShellState extends State<StudioShell> {
         process.stderr
             .transform(const Utf8Decoder(allowMalformed: true))
             .transform(const LineSplitter())
-            .listen(_appendApiServerError);
+            .listen((line) {
+          if (_looksLikeApiErrorLine(line)) {
+            _appendApiServerError(line);
+            return;
+          }
+          AppLogger.info('APIログ: $line');
+        });
         process.stdout
             .transform(const Utf8Decoder(allowMalformed: true))
             .transform(const LineSplitter())
@@ -1206,6 +1212,22 @@ class _StudioShellState extends State<StudioShell> {
             : combined;
       }
     });
+  }
+
+  bool _looksLikeApiErrorLine(String line) {
+    final normalized = line.trim();
+    if (normalized.isEmpty) {
+      return false;
+    }
+    if (normalized.contains('Traceback')) {
+      return true;
+    }
+    final upper = normalized.toUpperCase();
+    return upper.contains(' ERROR ') ||
+        upper.contains('CRITICAL') ||
+        upper.contains('EXCEPTION') ||
+        upper.startsWith('ERROR') ||
+        upper.contains('[ERROR]');
   }
 
   void _setApiServerError(String message) {
