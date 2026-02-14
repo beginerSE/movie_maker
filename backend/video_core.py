@@ -137,6 +137,17 @@ def parse_hex_color(hex_str: str, default: Tuple[int, int, int, int] = (255, 255
         return default
 
 
+def next_available_path(base_path: Path) -> Path:
+    """既存ファイルと衝突しない次の出力パスを返す。"""
+    if not base_path.exists():
+        return base_path
+    for i in range(1, 1000):
+        candidate = base_path.with_name(f"{base_path.stem}_{i}{base_path.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"出力ファイル名を決定できませんでした: {base_path}")
+
+
 def detect_speaker(line: str) -> Tuple[str, str]:
     line = line.strip()
     for spk in SPEAKER_KEYS:
@@ -673,7 +684,9 @@ def generate_video(
     bg_off_style: str = DEFAULT_BG_OFF_STYLE,
     caption_text_color: str = DEFAULT_CAPTION_TEXT_COLOR,
     output_stem: Optional[str] = None,
-) -> None:
+) -> Tuple[str, str]:
+    clips: List[Any] = []
+    final: Optional[Any] = None
     last_progress: Optional[float] = None
     last_emit_time = 0.0
     min_step = 0.005
@@ -817,7 +830,6 @@ def generate_video(
 
         # ===== クリップ生成 ===== (60%〜80%)
         target_resolution = (width, height)
-        clips = []
         per_line_secs = []
 
         for i, ((speaker, text), ap) in enumerate(zip(lines, audio_paths), 1):
@@ -880,8 +892,11 @@ def generate_video(
 
         # ===== 動画書き出し ===== (80%〜100%)
         resolved_stem = (output_stem or "").strip() or Path(script_path).stem
-        final_out = output_dir_path / f"{resolved_stem}.mp4"
-        srt_path = output_dir_path / f"{resolved_stem}.srt"
+        requested_out = output_dir_path / f"{resolved_stem}.mp4"
+        final_out = next_available_path(requested_out)
+        if final_out != requested_out:
+            log_fn(f"出力先ファイルが既に存在するため、別名で保存します: {final_out.name}")
+        srt_path = final_out.with_suffix(".srt")
         log_fn(f"動画を書き出し中: {final_out}")
 
         mp_logger = TkMoviePyLogger(progress_fn=progress_fn, base=0.8, span=0.2)
@@ -899,16 +914,24 @@ def generate_video(
         log_fn(f"SRT を出力中: {srt_path}")
         write_srt(lines, srt_path, per_line_secs)
 
-        for c in clips:
-            c.close()
-        final.close()
-
         log_fn("✅ 全処理が完了しました。")
+        return str(final_out), str(srt_path)
 
     except Exception:
         tb = traceback.format_exc()
         log_fn("❌ エラーが発生しました:\n" + tb)
         raise
+    finally:
+        for c in clips:
+            try:
+                c.close()
+            except Exception:
+                pass
+        if final is not None:
+            try:
+                final.close()
+            except Exception:
+                pass
 
 
 def generate_script_with_claude(

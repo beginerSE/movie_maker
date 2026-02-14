@@ -940,7 +940,7 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
 
     def worker() -> None:
         try:
-            generate_video(
+            video_path, srt_path = generate_video(
                 api_key=payload.api_key,
                 script_path=payload.script_path,
                 image_paths=payload.image_paths,
@@ -972,9 +972,6 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
                 caption_text_color=payload.caption_text_color,
                 output_stem=output_stem,
             )
-            output_dir = pathlib.Path(payload.output_dir)
-            video_path = str(output_dir / f"{output_stem}.mp4")
-            srt_path = str(output_dir / f"{output_stem}.srt")
             manager.set_result(
                 job.job_id,
                 {
