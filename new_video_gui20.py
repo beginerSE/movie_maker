@@ -1948,15 +1948,15 @@ class NewsShortGeneratorStudio(ctk.CTk):
             fieldbackground=self.COL_PANEL2,
             foreground=self.COL_TEXT,
             bordercolor=self.COL_BORDER,
-            rowheight=30,
-            font=(self.FONT_FAMILY, 11),
+            rowheight=26,
+            font=(self.FONT_FAMILY, 10),
         )
         style.configure(
             "Overlay.Treeview.Heading",
             background=self.COL_CARD,
             foreground=self.COL_TEXT,
             relief="flat",
-            font=(self.FONT_FAMILY, 11, "bold"),
+            font=(self.FONT_FAMILY, 10, "bold"),
         )
         style.map(
             "Overlay.Treeview",
@@ -3925,8 +3925,38 @@ class NewsShortGeneratorStudio(ctk.CTk):
         # ==========================
         self._v_label(form, "オーバーレイ一覧（表）").grid(row=r, column=0, sticky="w", pady=(4, 6)); r += 1
 
-        table_wrap = ctk.CTkFrame(form, fg_color="transparent")
-        table_wrap.grid(row=r, column=0, sticky="nsew", pady=(0, 12)); r += 1
+        table_wrap_host = ctk.CTkFrame(form, fg_color="transparent")
+        table_wrap_host.grid(row=r, column=0, sticky="nsew", pady=(0, 12)); r += 1
+        table_wrap_host.grid_columnconfigure(0, weight=1)
+        table_wrap_host.grid_rowconfigure(0, weight=1)
+
+        table_canvas = tk.Canvas(
+            table_wrap_host,
+            highlightthickness=0,
+            borderwidth=0,
+            background=self.COL_PANEL,
+        )
+        table_canvas.grid(row=0, column=0, sticky="nsew")
+
+        table_hsb = ttk.Scrollbar(table_wrap_host, orient="horizontal", command=table_canvas.xview)
+        table_hsb.grid(row=1, column=0, sticky="ew")
+        table_canvas.configure(xscrollcommand=table_hsb.set)
+
+        table_wrap = ctk.CTkFrame(table_canvas, fg_color="transparent")
+        table_window = table_canvas.create_window((0, 0), window=table_wrap, anchor="nw")
+
+        self._edit_table_min_width = 1080
+
+        def _update_table_scrollregion(_event=None):
+            table_canvas.configure(scrollregion=table_canvas.bbox("all"))
+
+        def _sync_table_width(event):
+            table_canvas.itemconfigure(table_window, width=max(event.width, self._edit_table_min_width))
+            _update_table_scrollregion()
+
+        table_wrap.bind("<Configure>", _update_table_scrollregion)
+        table_canvas.bind("<Configure>", _sync_table_width)
+
         table_wrap.grid_columnconfigure(0, weight=3)  # table
         table_wrap.grid_columnconfigure(1, weight=2)  # preview
         table_wrap.grid_rowconfigure(0, weight=1)
@@ -3959,14 +3989,14 @@ class NewsShortGeneratorStudio(ctk.CTk):
         self.edit_tree.heading("opacity", text="opacity")
 
         # 列幅（好みで調整OK）
-        self.edit_tree.column("image", width=220, anchor="w")
-        self.edit_tree.column("start", width=80, anchor="e")
-        self.edit_tree.column("end", width=80, anchor="e")
-        self.edit_tree.column("x", width=60, anchor="e")
-        self.edit_tree.column("y", width=60, anchor="e")
-        self.edit_tree.column("w", width=60, anchor="e")
-        self.edit_tree.column("h", width=60, anchor="e")
-        self.edit_tree.column("opacity", width=80, anchor="e")
+        self.edit_tree.column("image", width=170, anchor="w")
+        self.edit_tree.column("start", width=68, anchor="e")
+        self.edit_tree.column("end", width=68, anchor="e")
+        self.edit_tree.column("x", width=52, anchor="e")
+        self.edit_tree.column("y", width=52, anchor="e")
+        self.edit_tree.column("w", width=52, anchor="e")
+        self.edit_tree.column("h", width=52, anchor="e")
+        self.edit_tree.column("opacity", width=70, anchor="e")
 
         # スクロール
         vsb = ttk.Scrollbar(tv_frame, orient="vertical", command=self.edit_tree.yview)
