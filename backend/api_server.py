@@ -589,10 +589,11 @@ def _build_final_export_ffmpeg_args(
     input_path: str,
     output_path: str,
     overlays: List[FinalOverlayItem],
+    duration_seconds: Optional[float] = None,
 ) -> List[str]:
     args: List[str] = ["-y", "-i", input_path]
     if not overlays:
-        return [
+        args_out = [
             *args,
             "-c:v",
             "libx264",
@@ -604,9 +605,11 @@ def _build_final_export_ffmpeg_args(
             "copy",
             "-movflags",
             "+faststart",
-            "-shortest",
-            output_path,
         ]
+        if duration_seconds is not None and duration_seconds > 0:
+            args_out.extend(["-t", f"{duration_seconds:.3f}"])
+        args_out.append(output_path)
+        return args_out
 
     for ov in overlays:
         args.extend(["-loop", "1", "-i", ov.image])
@@ -631,8 +634,8 @@ def _build_final_export_ffmpeg_args(
         )
         prev_label = out_label
 
-    args.extend(
-        [
+    args_out = [
+        *args,
             "-filter_complex",
             ";".join(filters),
             "-map",
@@ -649,11 +652,50 @@ def _build_final_export_ffmpeg_args(
             "copy",
             "-movflags",
             "+faststart",
-            "-shortest",
-            output_path,
-        ]
-    )
-    return args
+    ]
+    if duration_seconds is not None and duration_seconds > 0:
+        args_out.extend(["-t", f"{duration_seconds:.3f}"])
+    args_out.append(output_path)
+    return args_out
+
+
+def _probe_media_duration_seconds(path: Path) -> Optional[float]:
+    ffprobe_cmds = ["ffprobe"]
+    if imageio_ffmpeg is not None:
+        try:
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if ffmpeg_exe:
+                ffprobe_cmds.insert(0, str(Path(ffmpeg_exe).with_name("ffprobe" + Path(ffmpeg_exe).suffix)))
+        except Exception:
+            pass
+    for ffprobe in ffprobe_cmds:
+        try:
+            completed = subprocess.run(
+                [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                continue
+            raw = (completed.stdout or "").strip()
+            if not raw:
+                continue
+            value = float(raw)
+            if value > 0:
+                return value
+        except Exception:
+            continue
+    return None
 
 
 @app.get("/health")
@@ -1147,6 +1189,11 @@ def _run_final_video_export(
     _log("最終編集: 書き出し準備完了")
 
     ffmpeg = _resolve_ffmpeg_executable_for_backend()
+    source_duration_seconds = _probe_media_duration_seconds(input_path)
+    if source_duration_seconds is not None:
+        _log(f"最終編集: 入力動画長を検出 duration={source_duration_seconds:.3f}s")
+    else:
+        _log("最終編集: 入力動画長を検出できませんでした（ffprobe未検出または解析失敗）")
     ffmpeg_output_path = output_path
     output_text = str(output_path)
     if any(ord(ch) > 127 for ch in output_text):
@@ -1157,6 +1204,7 @@ def _run_final_video_export(
         input_path=str(input_path),
         output_path=str(ffmpeg_output_path),
         overlays=payload.overlays,
+        duration_seconds=source_duration_seconds,
     )
     logger.info(
         "final export start ffmpeg=%s output=%s actual_output=%s overlays=%s",
@@ -1181,7 +1229,6 @@ def _run_final_video_export(
             encoding="utf-8",
             errors="replace",
         )
-        max_ffmpeg_seconds = 60 * 60
         if process.stderr is not None:
             for raw_line in process.stderr:
                 line = raw_line.strip()
@@ -1213,20 +1260,12 @@ def _run_final_video_export(
                     _progress(progress_value)
                 if len(stderr_lines) % 15 == 0:
                     _log(f"最終編集: ffmpeg進行中 {line}")
-                if (time.time() - ffmpeg_start_at) > max_ffmpeg_seconds:
-                    process.kill()
-                    _log("最終編集: ffmpegをタイムアウト停止しました(60分超)")
-                    raise HTTPException(status_code=500, detail="ffmpeg 実行が60分を超えたため中断しました。")
         # stderr の読み取りが終わってから待機し、長時間化した場合は明示ログを出す
         while True:
             return_code = process.poll()
             if return_code is not None:
                 break
             elapsed = time.time() - ffmpeg_start_at
-            if elapsed > max_ffmpeg_seconds:
-                process.kill()
-                _log("最終編集: ffmpeg終了待機をタイムアウト停止しました(60分超)")
-                raise HTTPException(status_code=500, detail="ffmpeg 終了待機が60分を超えたため中断しました。")
             if elapsed > 600 and int(elapsed) % 20 == 0:
                 _log(f"最終編集: ffmpeg終了待機中 elapsed={int(elapsed)}s")
             time.sleep(0.2)
