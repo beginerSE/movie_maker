@@ -1225,18 +1225,36 @@ def _run_final_video_export(
         raise HTTPException(status_code=500, detail=f"ffmpeg失敗(exit={return_code}): {detail}")
 
     _progress(0.9)
+    _log("最終編集: ffmpeg完了、後処理を開始")
 
     if ffmpeg_output_path != output_path:
-        try:
-            if output_path.exists():
-                output_path.unlink()
-            ffmpeg_output_path.replace(output_path)
-        except Exception as exc:
+        _progress(0.92)
+        _log(f"最終編集: 出力名調整中 temp={str(ffmpeg_output_path)}")
+        deadline = time.time() + 60.0
+        last_exc: Optional[Exception] = None
+        while time.time() < deadline:
+            try:
+                if output_path.exists():
+                    output_path.unlink()
+                ffmpeg_output_path.replace(output_path)
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(0.5)
+
+        if last_exc is not None:
             logger.exception("final export rename failed temp=%s target=%s", str(ffmpeg_output_path), str(output_path))
             raise HTTPException(
                 status_code=500,
-                detail=f"書き出し後のファイル名変更に失敗しました: {exc}",
-            ) from exc
+                detail=(
+                    "書き出し後のファイル名変更に失敗しました。"
+                    "出力ファイルを他アプリで開いていないか確認してください: "
+                    f"{last_exc}"
+                ),
+            ) from last_exc
+        _progress(0.96)
+        _log("最終編集: 出力名調整完了")
 
     _progress(1.0)
     _log(f"最終編集: 書き出し完了 output={str(output_path)}")
