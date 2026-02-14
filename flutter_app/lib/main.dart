@@ -7190,24 +7190,6 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             )
           else
             const Text('動画生成完了後にここでプレビュー再生できます。'),
-          const SizedBox(height: 16),
-          Text('前回を含む動画作成ログ', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            constraints: const BoxConstraints(minHeight: 120, maxHeight: 240),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.04),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: SingleChildScrollView(
-              child: SelectableText(
-                _lastJobLogsText.isEmpty ? 'ログはまだありません。' : _lastJobLogsText,
-                style: const TextStyle(fontFamily: 'monospace'),
-              ),
-            ),
-          ),
         ],
       ),
     );
