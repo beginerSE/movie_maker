@@ -11,14 +11,10 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:video_player/video_player.dart';
-import 'package:video_player_win/video_player_win.dart';
 import 'config/input_persistence.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (!kIsWeb && Platform.isWindows) {
-    WindowsVideoPlayer.registerWith();
-  }
   await ApiSettingsBootstrap.load();
   runApp(const MovieMakerApp());
 }
