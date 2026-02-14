@@ -1442,6 +1442,11 @@ class _StudioShellState extends State<StudioShell> {
           description: 'SRTをもとに提案を作成し、開始/終了時間や画像・サイズ・位置は必ず手動で調整します。',
           child: PonchiGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
+            onNext: () {
+              setState(() {
+                _selectedIndex = 6;
+              });
+            },
           ),
         );
       case 6:
@@ -3406,9 +3411,11 @@ class PonchiGenerateForm extends StatefulWidget {
   const PonchiGenerateForm({
     super.key,
     required this.checkApiHealth,
+    required this.onNext,
   });
 
   final ApiHealthCheck checkApiHealth;
+  final VoidCallback onNext;
 
   @override
   State<PonchiGenerateForm> createState() => _PonchiGenerateFormState();
@@ -3435,6 +3442,10 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   String _lastSrtPathPrefsKey() => 'video_generate.last_srt_path.${ProjectState.currentProjectId.value}';
 
   String _lastVideoPathPrefsKey() => 'video_generate.last_video_path.${ProjectState.currentProjectId.value}';
+
+  String _ideaRowsPrefsKey() => 'ponchi.idea_rows.${ProjectState.currentProjectId.value}';
+
+  String _ponchiOutputPrefsKey() => 'ponchi.output_text.${ProjectState.currentProjectId.value}';
 
   Future<void> _loadFlowDefaultSrtPath() async {
     if (!_isFlowProject) {
@@ -3476,6 +3487,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
       buffer.writeln('| ${row.start} | ${row.end} | $visual | $prompt |');
     }
     _outputTextController.text = buffer.toString();
+    _persistPonchiState();
   }
 
   @override
@@ -3487,6 +3499,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _persistence.registerController(_geminiModelController, 'gemini_model');
     _projectListener = () {
       _loadFlowDefaultSrtPath();
+      _loadPersistedPonchiState();
     };
     ProjectState.currentProjectId.addListener(_projectListener);
     _initPersistence();
@@ -3496,6 +3509,61 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     await _persistence.init();
     await _loadPonchiModelConfig();
     await _loadFlowDefaultSrtPath();
+    await _loadPersistedPonchiState();
+  }
+
+
+  Future<void> _persistPonchiState() async {
+    final rowsPayload = _ideaRows
+        .map(
+          (row) => {
+            'start': row.start,
+            'end': row.end,
+            'visual_suggestion': row.visualSuggestion,
+            'image_prompt': row.imagePrompt,
+          },
+        )
+        .toList();
+    await _persistence.setString(_ideaRowsPrefsKey(), jsonEncode(rowsPayload));
+    await _persistence.setString(_ponchiOutputPrefsKey(), _outputTextController.text);
+  }
+
+  Future<void> _loadPersistedPonchiState() async {
+    final rawRows = (await _persistence.readString(_ideaRowsPrefsKey()) ?? '').trim();
+    final rawOutput = await _persistence.readString(_ponchiOutputPrefsKey());
+    final rows = <_PonchiIdeaRow>[];
+    if (rawRows.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawRows);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is! Map<String, dynamic>) {
+              continue;
+            }
+            rows.add(
+              _PonchiIdeaRow(
+                start: (item['start'] as String? ?? '').trim(),
+                end: (item['end'] as String? ?? '').trim(),
+                visualSuggestion: (item['visual_suggestion'] as String? ?? '').trim(),
+                imagePrompt: (item['image_prompt'] as String? ?? '').trim(),
+              ),
+            );
+          }
+        }
+      } catch (_) {
+        // ignore persisted parse errors.
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _ideaRows
+        ..clear()
+        ..addAll(rows);
+      _outputTextController.text = rawOutput ?? '';
+    });
+    if (_ideaRows.isNotEmpty && _outputTextController.text.trim().isEmpty) {
+      _syncMarkdownTableFromRows();
+    }
   }
 
   Future<void> _loadPonchiModelConfig() async {
@@ -3635,6 +3703,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                     _previewItems.clear();
                     _ideaRows.clear();
                   });
+                  _persistPonchiState();
                 },
                 icon: const Icon(Icons.clear),
                 label: const Text('クリア'),
@@ -3689,6 +3758,15 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                 ],
               ),
             ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerRight,
+            child: ElevatedButton.icon(
+              onPressed: widget.onNext,
+              icon: const Icon(Icons.arrow_forward),
+              label: const Text('次へ（最終編集へ）'),
+            ),
+          ),
         ],
       ),
     );
@@ -3919,6 +3997,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         if (jsonPath != null && jsonPath.trim().isNotEmpty) {
           _outputTextController.text =
               '${_outputTextController.text}\n\n<!-- source_json: ${jsonPath.trim()} -->';
+          _persistPonchiState();
         }
         _showSnackBar('ポンチ絵の案出しが完了しました。');
       } else {
