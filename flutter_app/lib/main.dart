@@ -3419,63 +3419,19 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _srtController = TextEditingController();
   final _outputController = TextEditingController(text: 'ponchi_images');
   final _geminiModelController = TextEditingController(text: 'gemini-2.0-flash');
-  final _outputTextController = TextEditingController();
-  final List<_PonchiPreviewItem> _previewItems = [];
+  final _markdownController = TextEditingController();
   final List<_PonchiIdeaRow> _ideaRows = [];
   late final InputPersistence _persistence;
-  String _engine = 'Gemini';
   List<String> _ponchiModels = const ['gemini-2.0-flash'];
   bool _isSubmittingIdeas = false;
-  bool _isSubmittingImages = false;
+  bool _isGeneratingRow = false;
+  bool _isSavingDraft = false;
   late final VoidCallback _projectListener;
 
   bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
 
   String _lastSrtPathPrefsKey() => 'video_generate.last_srt_path.${ProjectState.currentProjectId.value}';
-
   String _lastVideoPathPrefsKey() => 'video_generate.last_video_path.${ProjectState.currentProjectId.value}';
-
-  Future<void> _loadFlowDefaultSrtPath() async {
-    if (!_isFlowProject) {
-      return;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    var srtPath = (prefs.getString(_lastSrtPathPrefsKey()) ?? '').trim();
-    if (srtPath.isEmpty) {
-      final videoPath = (prefs.getString(_lastVideoPathPrefsKey()) ?? '').trim();
-      if (videoPath.isNotEmpty) {
-        final videoFile = File(videoPath);
-        final stem = videoFile.uri.pathSegments.isEmpty
-            ? ''
-            : videoFile.uri.pathSegments.last.split('.').first;
-        if (stem.isNotEmpty) {
-          srtPath = '${videoFile.parent.path}${Platform.pathSeparator}$stem.srt';
-        }
-      }
-    }
-    if (srtPath.isEmpty) {
-      return;
-    }
-    if (!await File(srtPath).exists()) {
-      return;
-    }
-    if (!mounted) return;
-    setState(() {
-      _srtController.text = srtPath;
-    });
-  }
-
-  void _syncMarkdownTableFromRows() {
-    final buffer = StringBuffer();
-    buffer.writeln('| 開始 | 終了 | ポンチ絵内容 | 画像生成プロンプト |');
-    buffer.writeln('|---|---|---|---|');
-    for (final row in _ideaRows) {
-      final visual = row.visualSuggestion.replaceAll('|', r'\|');
-      final prompt = row.imagePrompt.replaceAll('|', r'\|');
-      buffer.writeln('| ${row.start} | ${row.end} | $visual | $prompt |');
-    }
-    _outputTextController.text = buffer.toString();
-  }
 
   @override
   void initState() {
@@ -3486,6 +3442,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _persistence.registerController(_geminiModelController, 'gemini_model');
     _projectListener = () {
       _loadFlowDefaultSrtPath();
+      _loadDraftRows();
     };
     ProjectState.currentProjectId.addListener(_projectListener);
     _initPersistence();
@@ -3495,16 +3452,13 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     await _persistence.init();
     await _loadPonchiModelConfig();
     await _loadFlowDefaultSrtPath();
+    await _loadDraftRows();
   }
 
   Future<void> _loadPonchiModelConfig() async {
     try {
-      final response = await http
-          .get(ApiConfig.httpUri('/settings/ai-models'))
-          .timeout(const Duration(seconds: 10));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return;
-      }
+      final response = await http.get(ApiConfig.httpUri('/settings/ai-models')).timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) return;
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final section = data['ponchi'] as Map<String, dynamic>?;
       if (section == null) return;
@@ -3513,21 +3467,59 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           .map((e) => e.trim())
           .where((e) => e.isNotEmpty)
           .toList();
-      if (models.isEmpty || !mounted) {
-        return;
-      }
+      if (models.isEmpty || !mounted) return;
       final defaultModel = (section['default_model'] as String? ?? '').trim();
       setState(() {
         _ponchiModels = models;
         if (!_ponchiModels.contains(_geminiModelController.text.trim())) {
-          _geminiModelController.text = _ponchiModels.contains(defaultModel)
-              ? defaultModel
-              : _ponchiModels.first;
+          _geminiModelController.text = _ponchiModels.contains(defaultModel) ? defaultModel : _ponchiModels.first;
         }
       });
-    } catch (_) {
-      // ignore
+    } catch (_) {}
+  }
+
+  Future<void> _loadFlowDefaultSrtPath() async {
+    if (!_isFlowProject) return;
+    final prefs = await SharedPreferences.getInstance();
+    var srtPath = (prefs.getString(_lastSrtPathPrefsKey()) ?? '').trim();
+    if (srtPath.isEmpty) {
+      final videoPath = (prefs.getString(_lastVideoPathPrefsKey()) ?? '').trim();
+      if (videoPath.isNotEmpty) {
+        final videoFile = File(videoPath);
+        final stem = videoFile.uri.pathSegments.isEmpty ? '' : videoFile.uri.pathSegments.last.split('.').first;
+        if (stem.isNotEmpty) {
+          srtPath = '${videoFile.parent.path}${Platform.pathSeparator}$stem.srt';
+        }
+      }
     }
+    if (srtPath.isEmpty || !await File(srtPath).exists() || !mounted) return;
+    setState(() {
+      _srtController.text = srtPath;
+    });
+  }
+
+  Future<void> _loadDraftRows() async {
+    try {
+      final uri = ApiConfig.httpUri('/ponchi/flow/draft').replace(queryParameters: {'project_id': ProjectState.currentProjectId.value});
+      final response = await http.get(uri).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final rows = (data['rows'] as List<dynamic>? ?? []).whereType<Map<String, dynamic>>().toList();
+      if (!mounted) return;
+      setState(() {
+        _ideaRows
+          ..clear()
+          ..addAll(rows.map((row) => _PonchiIdeaRow(
+                id: (row['id'] as String? ?? '').trim(),
+                start: (row['start_time'] as String? ?? '').trim(),
+                end: (row['end_time'] as String? ?? '').trim(),
+                illustrationPrompt: (row['illustration_prompt'] as String? ?? '').trim(),
+                note: (row['note'] as String? ?? '').trim(),
+                imagePath: (row['image_path'] as String? ?? '').trim(),
+              )));
+      });
+      _syncMarkdownTableFromRows();
+    } catch (_) {}
   }
 
   @override
@@ -3536,9 +3528,193 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _srtController.dispose();
     _outputController.dispose();
     _geminiModelController.dispose();
-    _outputTextController.dispose();
+    _markdownController.dispose();
     _persistence.dispose();
     super.dispose();
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _resolvePonchiApiKey() => ApiKeys.gemini.value;
+
+  void _syncMarkdownTableFromRows() {
+    final buffer = StringBuffer();
+    buffer.writeln('| start_time | end_time | illustration_prompt | note |');
+    buffer.writeln('|------------|----------|---------------------|------|');
+    for (final row in _ideaRows) {
+      final prompt = row.illustrationPrompt.replaceAll('|', r'\|');
+      final note = row.note.replaceAll('|', r'\|');
+      buffer.writeln('| ${row.start} | ${row.end} | $prompt | $note |');
+    }
+    _markdownController.text = buffer.toString();
+  }
+
+  Future<void> _saveDraftRows() async {
+    setState(() {
+      _isSavingDraft = true;
+    });
+    try {
+      final payload = {
+        'project_id': ProjectState.currentProjectId.value,
+        'rows': _ideaRows
+            .map((row) => {
+                  'start_time': row.start,
+                  'end_time': row.end,
+                  'illustration_prompt': row.illustrationPrompt,
+                  'note': row.note,
+                })
+            .toList(),
+      };
+      final response = await http.put(
+        ApiConfig.httpUri('/ponchi/flow/draft'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final rows = (data['rows'] as List<dynamic>? ?? []).whereType<Map<String, dynamic>>().toList();
+        setState(() {
+          for (var i = 0; i < _ideaRows.length && i < rows.length; i++) {
+            _ideaRows[i].id = (rows[i]['id'] as String? ?? '').trim();
+            if (_ideaRows[i].imagePath.isNotEmpty) {
+              // keep generated image path
+              continue;
+            }
+            _ideaRows[i].imagePath = (rows[i]['image_path'] as String? ?? '').trim();
+          }
+        });
+        _showSnackBar('下書きを保存しました。');
+      } else {
+        _showSnackBar('下書き保存に失敗しました: ${response.statusCode}');
+      }
+    } catch (e) {
+      _showSnackBar('下書き保存エラー: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingDraft = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _submitPonchiIdeas() async {
+    final apiKey = _resolvePonchiApiKey();
+    if (apiKey.isEmpty) {
+      _showSnackBar('APIキーが未設定です。');
+      return;
+    }
+    setState(() {
+      _isSubmittingIdeas = true;
+    });
+    final healthy = await widget.checkApiHealth();
+    if (!healthy) {
+      if (mounted) setState(() => _isSubmittingIdeas = false);
+      _showSnackBar('API サーバーに接続できません。');
+      return;
+    }
+    try {
+      final payload = {
+        'api_key': apiKey,
+        'engine': 'Gemini',
+        'srt_path': _srtController.text,
+        'output_dir': _outputController.text.trim().isEmpty ? null : _outputController.text.trim(),
+        'gemini_model': _geminiModelController.text,
+        'project_id': ProjectState.currentProjectId.value,
+      };
+      final response = await http.post(
+        ApiConfig.httpUri('/ponchi/ideas'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 120));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final items = (data['items'] as List<dynamic>? ?? []).whereType<Map<String, dynamic>>().toList();
+        setState(() {
+          _ideaRows
+            ..clear()
+            ..addAll(items.asMap().entries.map((entry) => _PonchiIdeaRow(
+                  id: 'row_${entry.key + 1}',
+                  start: (entry.value['start'] as String? ?? '').trim(),
+                  end: (entry.value['end'] as String? ?? '').trim(),
+                  illustrationPrompt: (entry.value['image_prompt'] as String? ?? '').trim(),
+                  note: (entry.value['note'] as String? ?? '').trim(),
+                )));
+        });
+        _syncMarkdownTableFromRows();
+        await _saveDraftRows();
+        _showSnackBar('時間付きポンチ絵案を取得しました。');
+      } else {
+        _showSnackBar('案出しに失敗しました: ${response.statusCode} ${response.body}');
+      }
+    } catch (e) {
+      _showSnackBar('案出しエラー: $e');
+    } finally {
+      if (mounted) setState(() => _isSubmittingIdeas = false);
+    }
+  }
+
+  Future<void> _generateRowImage(int index) async {
+    final row = _ideaRows[index];
+    final apiKey = _resolvePonchiApiKey();
+    if (apiKey.isEmpty) {
+      _showSnackBar('APIキーが未設定です。');
+      return;
+    }
+    setState(() => _isGeneratingRow = true);
+    try {
+      final response = await http.post(
+        ApiConfig.httpUri('/ponchi/flow/generate-row'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'api_key': apiKey,
+          'project_id': ProjectState.currentProjectId.value,
+          'row_id': row.id,
+          'start_time': row.start,
+          'end_time': row.end,
+          'illustration_prompt': row.illustrationPrompt,
+          'note': row.note,
+          'model': _geminiModelController.text.trim(),
+        }),
+      ).timeout(const Duration(seconds: 180));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final rowData = data['row'] as Map<String, dynamic>;
+        final imageBase64 = (rowData['image_base64'] as String? ?? '').trim();
+        setState(() {
+          row.id = (rowData['id'] as String? ?? row.id).trim();
+          row.imagePath = (rowData['image_path'] as String? ?? '').trim();
+          row.imageBytes = imageBase64.isEmpty ? null : base64Decode(imageBase64);
+        });
+        _showSnackBar('行 ${index + 1} のポンチ絵を生成しました。');
+      } else {
+        _showSnackBar('行生成に失敗しました: ${response.statusCode} ${response.body}');
+      }
+    } catch (e) {
+      _showSnackBar('行生成エラー: $e');
+    } finally {
+      if (mounted) setState(() => _isGeneratingRow = false);
+    }
+  }
+
+  Future<void> _finalizeRows() async {
+    try {
+      final response = await http.post(
+        ApiConfig.httpUri('/ponchi/flow/finalize'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'project_id': ProjectState.currentProjectId.value}),
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        _showSnackBar('画像がある行を動画編集ステップへ引き渡しました。');
+      } else {
+        _showSnackBar('引き渡しに失敗しました: ${response.statusCode}');
+      }
+    } catch (e) {
+      _showSnackBar('引き渡しエラー: $e');
+    }
   }
 
   @override
@@ -3547,38 +3723,22 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
       key: _formKey,
       child: ListView(
         children: [
-          Text('ポンチ絵作成', style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 16),
-          ValueListenableBuilder<String>(
-            valueListenable: ProjectState.currentProjectType,
-            builder: (context, projectType, _) {
-              final isFlow = projectType == 'flow';
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (isFlow)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 8),
-                      child: Text('AIフローでは②動画作成で出力されたSRTをデフォルト読み込みします。'),
-                    ),
-                  TextFormField(
-                    controller: _srtController,
-                    decoration: InputDecoration(
-                      labelText: 'SRTファイル',
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.subtitles),
-                        onPressed: () => _selectFile(
-                          _srtController,
-                          const XTypeGroup(label: 'SRT', extensions: ['srt']),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-              );
-            },
+          Text('ポンチ絵作成（AI案出し → 編集 → 採用）', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 12),
+          if (_isFlowProject)
+            const Text('AIフローでは②動画作成で出力されたSRTを優先して利用します。'),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _srtController,
+            decoration: InputDecoration(
+              labelText: 'SRTファイル',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.subtitles),
+                onPressed: () => _selectFile(_srtController, const XTypeGroup(label: 'SRT', extensions: ['srt'])),
+              ),
+            ),
           ),
+          const SizedBox(height: 8),
           TextFormField(
             controller: _outputController,
             decoration: InputDecoration(
@@ -3589,418 +3749,151 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          TextFormField(
-            initialValue: 'Gemini',
-            readOnly: true,
-            decoration: const InputDecoration(labelText: '提案生成AI'),
-          ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            value: _ponchiModels.contains(_geminiModelController.text)
-                ? _geminiModelController.text
-                : _ponchiModels.first,
+            value: _ponchiModels.contains(_geminiModelController.text) ? _geminiModelController.text : _ponchiModels.first,
             decoration: const InputDecoration(labelText: 'Gemini 提案モデル'),
-            items: _ponchiModels
-                .map((model) => DropdownMenuItem(value: model, child: Text(model)))
-                .toList(),
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _geminiModelController.text = value;
-              });
-              _persistence.setString('gemini_model', value);
+            items: _ponchiModels.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+            onChanged: (v) {
+              if (v == null) return;
+              setState(() => _geminiModelController.text = v);
+              _persistence.setString('gemini_model', v);
             },
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
+            spacing: 10,
+            runSpacing: 10,
             children: [
               ElevatedButton.icon(
                 onPressed: _isSubmittingIdeas ? null : _submitPonchiIdeas,
                 icon: const Icon(Icons.lightbulb),
-                label: Text(_isSubmittingIdeas ? '生成中...' : '案出し'),
-              ),
-              ElevatedButton.icon(
-                onPressed: _isSubmittingImages ? null : _submitPonchiImages,
-                icon: const Icon(Icons.brush),
-                label: Text(_isSubmittingImages ? '生成中...' : 'ポンチ絵作成'),
+                label: Text(_isSubmittingIdeas ? '生成中...' : 'STEP A: AI案出し'),
               ),
               OutlinedButton.icon(
-                onPressed: () {
-                  _outputTextController.clear();
-                  setState(() {
-                    _previewItems.clear();
-                    _ideaRows.clear();
-                  });
-                },
-                icon: const Icon(Icons.clear),
-                label: const Text('クリア'),
+                onPressed: _isSavingDraft ? null : _saveDraftRows,
+                icon: const Icon(Icons.save),
+                label: Text(_isSavingDraft ? '保存中...' : '途中保存'),
+              ),
+              ElevatedButton.icon(
+                onPressed: _finalizeRows,
+                icon: const Icon(Icons.navigate_next),
+                label: const Text('次へ（動画編集）'),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          Text('生成結果', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          _buildPonchiPreviewGrid(),
           const SizedBox(height: 12),
+          Text('AI出力Markdown（表形式）', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
           TextFormField(
-            controller: _outputTextController,
+            controller: _markdownController,
             maxLines: 8,
-            decoration: const InputDecoration(
-              hintText: '生成結果（Markdown表）がここに表示されます。',
-            ),
+            readOnly: true,
+            decoration: const InputDecoration(hintText: 'AIが返した表をここに表示します。'),
           ),
           const SizedBox(height: 12),
-          Text('提案テーブル（編集可）', style: Theme.of(context).textTheme.titleMedium),
+          Text('STEP B/C: 編集テーブル + 行単位ポンチ絵生成', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           if (_ideaRows.isEmpty)
-            const Text('案出しを実行すると編集可能な表が表示されます。')
+            const Text('案出しを実行すると行が表示されます。')
           else
-            ..._ideaRows.asMap().entries.map(
-              (entry) {
-                final index = entry.key;
-                final row = entry.value;
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Column(
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('start_time')),
+                  DataColumn(label: Text('end_time')),
+                  DataColumn(label: Text('illustration_prompt')),
+                  DataColumn(label: Text('note')),
+                  DataColumn(label: Text('action')),
+                ],
+                rows: _ideaRows.asMap().entries.map((entry) {
+                  final i = entry.key;
+                  final row = entry.value;
+                  return DataRow(cells: [
+                    DataCell(SizedBox(width: 120, child: TextFormField(initialValue: row.start, onChanged: (v) { row.start = v; _syncMarkdownTableFromRows(); }))),
+                    DataCell(SizedBox(width: 120, child: TextFormField(initialValue: row.end, onChanged: (v) { row.end = v; _syncMarkdownTableFromRows(); }))),
+                    DataCell(SizedBox(width: 280, child: TextFormField(initialValue: row.illustrationPrompt, maxLines: 2, onChanged: (v) { row.illustrationPrompt = v; _syncMarkdownTableFromRows(); }))),
+                    DataCell(SizedBox(width: 180, child: TextFormField(initialValue: row.note, maxLines: 2, onChanged: (v) { row.note = v; _syncMarkdownTableFromRows(); }))),
+                    DataCell(Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                initialValue: row.start,
-                                decoration: const InputDecoration(labelText: '開始'),
-                                onChanged: (v) {
-                                  row.start = v;
-                                  _syncMarkdownTableFromRows();
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: TextFormField(
-                                initialValue: row.end,
-                                decoration: const InputDecoration(labelText: '終了'),
-                                onChanged: (v) {
-                                  row.end = v;
-                                  _syncMarkdownTableFromRows();
-                                },
-                              ),
-                            ),
-                            IconButton(
-                              onPressed: () {
-                                setState(() {
-                                  _ideaRows.removeAt(index);
-                                });
-                                _syncMarkdownTableFromRows();
-                              },
-                              icon: const Icon(Icons.delete_outline),
-                              tooltip: '行削除',
-                            ),
-                          ],
+                        ElevatedButton(
+                          onPressed: _isGeneratingRow ? null : () => _generateRowImage(i),
+                          child: Text(_isGeneratingRow ? '生成中...' : 'ポンチ絵生成'),
                         ),
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          initialValue: row.visualSuggestion,
-                          maxLines: 2,
-                          decoration: const InputDecoration(labelText: 'ポンチ絵内容'),
-                          onChanged: (v) {
-                            row.visualSuggestion = v;
-                            _syncMarkdownTableFromRows();
-                          },
-                        ),
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          initialValue: row.imagePrompt,
-                          maxLines: 2,
-                          decoration: const InputDecoration(labelText: '画像生成プロンプト'),
-                          onChanged: (v) {
-                            row.imagePrompt = v;
-                            _syncMarkdownTableFromRows();
-                          },
-                        ),
+                        const SizedBox(height: 6),
+                        if (row.imagePath.isNotEmpty)
+                          SizedBox(
+                            width: 120,
+                            height: 80,
+                            child: row.imageBytes != null
+                                ? Image.memory(row.imageBytes!, fit: BoxFit.contain)
+                                : Image.file(File(row.imagePath), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Text('画像読込失敗')),
+                          ),
                       ],
-                    ),
-                  ),
-                );
-              },
+                    )),
+                  ]);
+                }).toList(),
+              ),
             ),
+          const SizedBox(height: 12),
+          ExpansionTile(
+            title: const Text('ログ（補助表示）'),
+            children: const [
+              Padding(
+                padding: EdgeInsets.all(12),
+                child: Text('この画面ではログを主表示にせず、必要時のみ参照します。'),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
-
-  void _showSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
-  }
-
-  String _resolvePonchiApiKey() {
-    return ApiKeys.gemini.value;
-  }
-
-  Future<void> _submitPonchiIdeas() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-    final apiKey = _resolvePonchiApiKey();
-    if (apiKey.isEmpty) {
-      _showSnackBar('APIキーが未設定です。設定タブで入力してください。');
-      return;
-    }
-    setState(() {
-      _isSubmittingIdeas = true;
-    });
-    final healthy = await widget.checkApiHealth();
-    if (!healthy) {
-      if (mounted) {
-        setState(() {
-          _isSubmittingIdeas = false;
-        });
-      }
-      _showSnackBar('API サーバーに接続できません。');
-      return;
-    }
-    try {
-      final payload = {
-        'api_key': apiKey,
-        'engine': _engine,
-        'srt_path': _srtController.text,
-        'output_dir': _outputController.text.trim().isEmpty
-            ? null
-            : _outputController.text.trim(),
-        'gemini_model': _geminiModelController.text,
-        'project_id': ProjectState.currentProjectId.value,
-      };
-      final response = await http
-          .post(
-            ApiConfig.httpUri('/ponchi/ideas'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(payload),
-          )
-          .timeout(const Duration(seconds: 120));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final items = data['items'] as List<dynamic>? ?? [];
-        final jsonPath = data['json_path'] as String?;
-        final rows = <_PonchiIdeaRow>[];
-        for (final item in items) {
-          final map = item as Map<String, dynamic>;
-          rows.add(
-            _PonchiIdeaRow(
-              start: (map['start'] as String? ?? '').trim(),
-              end: (map['end'] as String? ?? '').trim(),
-              visualSuggestion: (map['visual_suggestion'] as String? ?? '').trim(),
-              imagePrompt: (map['image_prompt'] as String? ?? '').trim(),
-            ),
-          );
-        }
-        setState(() {
-          _ideaRows
-            ..clear()
-            ..addAll(rows);
-        });
-        _syncMarkdownTableFromRows();
-        if (jsonPath != null && jsonPath.trim().isNotEmpty) {
-          _outputTextController.text =
-              '${_outputTextController.text}\n\n<!-- source_json: ${jsonPath.trim()} -->';
-        }
-        _showSnackBar('ポンチ絵の案出しが完了しました。');
-      } else {
-        _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
-      }
-    } on TimeoutException {
-      _showSnackBar('リクエストがタイムアウトしました。');
-    } catch (error) {
-      _showSnackBar('生成エラー: $error');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmittingIdeas = false;
-        });
-      }
-    }
-  }
-
-
-  Widget _buildPonchiPreviewGrid() {
-    if (_previewItems.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(color: Theme.of(context).dividerColor),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Text('生成されたポンチ絵のプレビューがここに表示されます。'),
-      );
-    }
-    return Column(
-      children: _previewItems
-          .map(
-            (item) => Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).dividerColor),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(item.title, style: Theme.of(context).textTheme.titleSmall),
-                  if (item.subtitle.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(item.subtitle, style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: 180,
-                    child: item.bytes != null
-                        ? Image.memory(item.bytes!, fit: BoxFit.contain)
-                        : Image.file(
-                            File(item.path),
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const Text('画像を読み込めませんでした。'),
-                          ),
-                  ),
-                ],
-              ),
-            ),
-          )
-          .toList(),
-    );
-  }
-
-  Future<void> _submitPonchiImages() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-    final apiKey = ApiKeys.gemini.value;
-    if (apiKey.isEmpty) {
-      _showSnackBar('Gemini APIキーが未設定です。設定タブで入力してください。');
-      return;
-    }
-    if (_outputController.text.trim().isEmpty) {
-      _showSnackBar('出力フォルダを指定してください。');
-      return;
-    }
-    setState(() {
-      _isSubmittingImages = true;
-    });
-    final healthy = await widget.checkApiHealth();
-    if (!healthy) {
-      if (mounted) {
-        setState(() {
-          _isSubmittingImages = false;
-        });
-      }
-      _showSnackBar('API サーバーに接続できません。');
-      return;
-    }
-    try {
-      final payload = {
-        'api_key': apiKey,
-        'srt_path': _srtController.text,
-        'output_dir': _outputController.text.trim(),
-        'model': _geminiModelController.text.trim(),
-        'project_id': ProjectState.currentProjectId.value,
-      };
-      final response = await http
-          .post(
-            ApiConfig.httpUri('/ponchi/images'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(payload),
-          )
-          .timeout(const Duration(seconds: 300));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final items = data['items'] as List<dynamic>? ?? [];
-        final outputDir = data['output_dir'] as String? ?? '';
-        final jsonPath = data['json_path'] as String? ?? '';
-        final buffer = StringBuffer();
-        buffer.writeln('✅ ${items.length} 件のポンチ絵を生成しました。');
-        if (jsonPath.isNotEmpty) {
-          buffer.writeln('JSON: $jsonPath');
-        }
-        final previews = <_PonchiPreviewItem>[];
-        for (final item in items) {
-          final map = item as Map<String, dynamic>;
-          final imageName = (map['image'] as String? ?? '').trim();
-          final imagePath = (outputDir.isNotEmpty && imageName.isNotEmpty)
-              ? _joinPaths(outputDir, imageName)
-              : imageName;
-          final imageBase64 = (map['image_base64'] as String? ?? '').trim();
-          Uint8List? bytes;
-          if (imageBase64.isNotEmpty) {
-            bytes = base64Decode(imageBase64);
-          }
-          previews.add(
-            _PonchiPreviewItem(
-              title: '${map['start']}〜${map['end']}',
-              subtitle: (map['visual_suggestion'] as String? ?? '').trim(),
-              path: imagePath,
-              bytes: bytes,
-            ),
-          );
-          buffer.writeln('${map['start']}〜${map['end']} | ${map['visual_suggestion']}');
-        }
-        setState(() {
-          _outputTextController.text = buffer.toString();
-          _previewItems
-            ..clear()
-            ..addAll(previews);
-        });
-        _showSnackBar('ポンチ絵作成が完了しました。');
-      } else {
-        _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
-      }
-    } on TimeoutException {
-      _showSnackBar('リクエストがタイムアウトしました。');
-    } catch (error) {
-      _showSnackBar('生成エラー: $error');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmittingImages = false;
-        });
-      }
-    }
-  }
 }
-
 
 class _PonchiIdeaRow {
   _PonchiIdeaRow({
+    required this.id,
     required this.start,
     required this.end,
-    required this.visualSuggestion,
-    required this.imagePrompt,
+    required this.illustrationPrompt,
+    required this.note,
+    this.imagePath = '',
+    this.imageBytes,
+  });
+
+  String id;
+  String start;
+  String end;
+  String illustrationPrompt;
+  String note;
+  String imagePath;
+  Uint8List? imageBytes;
+}
+
+class _FlowOverlayAdjustRow {
+  _FlowOverlayAdjustRow({
+    required this.start,
+    required this.end,
+    required this.imagePath,
+    this.enabled = true,
+    this.x = 100,
+    this.y = 200,
+    this.width = 360,
+    this.height = 360,
   });
 
   String start;
   String end;
-  String visualSuggestion;
-  String imagePrompt;
-}
-
-class _PonchiPreviewItem {
-  const _PonchiPreviewItem({
-    required this.title,
-    required this.subtitle,
-    required this.path,
-    required this.bytes,
-  });
-
-  final String title;
-  final String subtitle;
-  final String path;
-  final Uint8List? bytes;
+  String imagePath;
+  bool enabled;
+  double x;
+  double y;
+  double width;
+  double height;
 }
 
 
@@ -4038,6 +3931,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
   double _previewY = 0;
   double _previewScale = 100;
   final List<Map<String, String>> _overlays = [];
+  final List<_FlowOverlayAdjustRow> _flowOverlays = [];
 
   @override
   void initState() {
@@ -4077,6 +3971,32 @@ class _VideoEditFormState extends State<VideoEditForm> {
       _previewY = previewY ?? _previewY;
       _previewScale = previewScale ?? _previewScale;
     });
+    await _loadFlowFinalizeRows();
+  }
+
+  Future<void> _loadFlowFinalizeRows() async {
+    try {
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/ponchi/flow/finalize'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'project_id': ProjectState.currentProjectId.value}),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final items = (data['items'] as List<dynamic>? ?? []).whereType<Map<String, dynamic>>().toList();
+      if (!mounted) return;
+      setState(() {
+        _flowOverlays
+          ..clear()
+          ..addAll(items.map((item) => _FlowOverlayAdjustRow(
+                start: (item['start'] as String? ?? '').trim(),
+                end: (item['end'] as String? ?? '').trim(),
+                imagePath: (item['image_path'] as String? ?? '').trim(),
+              )));
+      });
+    } catch (_) {}
   }
 
   @override
@@ -4113,6 +4033,85 @@ class _VideoEditFormState extends State<VideoEditForm> {
             '動画編集（簡易オーバーレイ）',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
+          const SizedBox(height: 16),
+          Text('AIフロー引き渡しポンチ絵（STEP E）', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (_flowOverlays.isEmpty)
+            const Text('「次へ（動画編集）」で確定したポンチ絵がここに表示されます。')
+          else
+            ..._flowOverlays.asMap().entries.map((entry) {
+              final row = entry.value;
+              return Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${row.start}〜${row.end}'),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: 120,
+                            height: 80,
+                            child: Image.file(
+                              File(row.imagePath),
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => const Text('画像読込失敗'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                SwitchListTile(
+                                  value: row.enabled,
+                                  onChanged: (v) => setState(() => row.enabled = v),
+                                  contentPadding: EdgeInsets.zero,
+                                  title: const Text('表示ON/OFF'),
+                                ),
+                                _buildSliderRow(
+                                  label: 'X',
+                                  value: row.x,
+                                  min: 0,
+                                  max: 1920,
+                                  onChanged: (v) => setState(() => row.x = v),
+                                  displayValue: row.x.toStringAsFixed(0),
+                                ),
+                                _buildSliderRow(
+                                  label: 'Y',
+                                  value: row.y,
+                                  min: 0,
+                                  max: 1080,
+                                  onChanged: (v) => setState(() => row.y = v),
+                                  displayValue: row.y.toStringAsFixed(0),
+                                ),
+                                _buildSliderRow(
+                                  label: 'W',
+                                  value: row.width,
+                                  min: 100,
+                                  max: 1080,
+                                  onChanged: (v) => setState(() => row.width = v),
+                                  displayValue: row.width.toStringAsFixed(0),
+                                ),
+                                _buildSliderRow(
+                                  label: 'H',
+                                  value: row.height,
+                                  min: 100,
+                                  max: 1080,
+                                  onChanged: (v) => setState(() => row.height = v),
+                                  displayValue: row.height.toStringAsFixed(0),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
           const SizedBox(height: 16),
           Card(
             color: Theme.of(context).colorScheme.surface,
