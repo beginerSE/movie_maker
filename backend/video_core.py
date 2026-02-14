@@ -896,21 +896,42 @@ def generate_video(
         final_out = next_available_path(requested_out)
         if final_out != requested_out:
             log_fn(f"出力先ファイルが既に存在するため、別名で保存します: {final_out.name}")
-        srt_path = final_out.with_suffix(".srt")
-        log_fn(f"動画を書き出し中: {final_out}")
 
         mp_logger = TkMoviePyLogger(progress_fn=progress_fn, base=0.8, span=0.2)
 
-        final.write_videofile(
-            str(final_out),
-            codec="libx264",
-            audio_codec="aac",
-            fps=fps,
-            logger=mp_logger,
-        )
+        last_write_error: Optional[Exception] = None
+        for attempt in range(3):
+            srt_path = final_out.with_suffix(".srt")
+            log_fn(f"動画を書き出し中: {final_out}")
+            try:
+                final.write_videofile(
+                    str(final_out),
+                    codec="libx264",
+                    audio_codec="aac",
+                    fps=fps,
+                    logger=mp_logger,
+                )
+                break
+            except OSError as exc:
+                last_write_error = exc
+                msg = str(exc)
+                if "Permission denied" not in msg or attempt >= 2:
+                    raise
+                fallback_base = requested_out.with_name(
+                    f"{requested_out.stem}_retry{attempt + 1}{requested_out.suffix}"
+                )
+                final_out = next_available_path(fallback_base)
+                log_fn(
+                    "出力ファイルが使用中のため、別名で再試行します: "
+                    f"{final_out.name}"
+                )
+
+        if last_write_error is not None and not final_out.exists():
+            raise last_write_error
 
         update_progress(1.0)
 
+        srt_path = final_out.with_suffix(".srt")
         log_fn(f"SRT を出力中: {srt_path}")
         write_srt(lines, srt_path, per_line_secs)
 
