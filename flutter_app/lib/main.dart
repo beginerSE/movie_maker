@@ -428,6 +428,12 @@ class MovieMakerApp extends StatelessWidget {
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
+        scrollbarTheme: const ScrollbarThemeData(
+          thumbVisibility: MaterialStatePropertyAll(true),
+          trackVisibility: MaterialStatePropertyAll(true),
+          thickness: MaterialStatePropertyAll(10),
+          radius: Radius.circular(8),
+        ),
       ),
       home: const StudioShell(),
     );
@@ -918,6 +924,18 @@ class _StudioShellState extends State<StudioShell> {
     }
   }
 
+  String? _flowStepKeyForMenuIndex(int index) {
+    return switch (index) {
+      1 => 'script',
+      2 => 'base_video',
+      3 => 'title_description',
+      4 => 'thumbnail',
+      5 => 'ponchi',
+      6 => 'final_edit',
+      _ => null,
+    };
+  }
+
   Future<void> _loadCurrentProjectFlowState() async {
     if (!_isFlowProjectSelected) {
       if (mounted) {
@@ -996,9 +1014,52 @@ class _StudioShellState extends State<StudioShell> {
     }
   }
 
+  Widget _flowStepStatusBadge({
+    required String stepKey,
+    required String currentStatus,
+  }) {
+    final selectedStatus = kFlowStatuses.contains(currentStatus)
+        ? currentStatus
+        : '未着手';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withOpacity(0.35),
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: selectedStatus,
+          isDense: true,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+          items: kFlowStatuses
+              .map(
+                (status) => DropdownMenuItem<String>(
+                  value: status,
+                  child: Text('状態: $status'),
+                ),
+              )
+              .toList(),
+          onChanged: _flowStateLoading
+              ? null
+              : (value) {
+                  if (value == null || value == selectedStatus) return;
+                  _updateCurrentProjectFlowStep(stepKey, value);
+                },
+        ),
+      ),
+    );
+  }
+
   Widget _wrapFlowStep({
     required String stepKey,
-    required String stepTitle,
     required String description,
     required Widget child,
   }) {
@@ -1006,45 +1067,28 @@ class _StudioShellState extends State<StudioShell> {
       return child;
     }
     final currentStatus = _currentFlowState[stepKey] ?? '未着手';
-    return ListView(
-      children: [
-        Text(stepTitle, style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 8),
-        Text(description),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                value: kFlowStatuses.contains(currentStatus) ? currentStatus : '未着手',
-                decoration: const InputDecoration(labelText: 'この工程の状態'),
-                items: kFlowStatuses
-                    .map((status) => DropdownMenuItem(value: status, child: Text(status)))
-                    .toList(),
-                onChanged: _flowStateLoading
-                    ? null
-                    : (value) {
-                        if (value == null || value == currentStatus) return;
-                        _updateCurrentProjectFlowStep(stepKey, value);
-                      },
-              ),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: _flowStateLoading ? null : _loadCurrentProjectFlowState,
-              icon: const Icon(Icons.refresh),
-              label: const Text('再読込'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        if (_flowStateLoading) const LinearProgressIndicator(),
-        const SizedBox(height: 16),
-        SizedBox(
-          height: 560,
-          child: child,
-        ),
-      ],
+    return Scrollbar(
+      thumbVisibility: true,
+      trackVisibility: true,
+      child: ListView(
+        children: [
+          Row(
+            children: [
+              const Spacer(),
+              _flowStepStatusBadge(stepKey: stepKey, currentStatus: currentStatus),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(description),
+          const SizedBox(height: 8),
+          if (_flowStateLoading) const LinearProgressIndicator(),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 560,
+            child: child,
+          ),
+        ],
+      ),
     );
   }
 
@@ -1490,12 +1534,34 @@ class _StudioShellState extends State<StudioShell> {
               color: backgroundColor,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text(
-              '○ $label',
-              style: TextStyle(
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                color: isSelected ? Colors.black87 : Colors.black54,
-              ),
+            child: Builder(
+              builder: (context) {
+                final stepKey = _flowStepKeyForMenuIndex(index);
+                final stepStatus = stepKey == null ? null : _currentFlowState[stepKey];
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '○ $label',
+                      style: TextStyle(
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                        color: isSelected ? Colors.black87 : Colors.black54,
+                      ),
+                    ),
+                    if (_isFlowProjectSelected && stepStatus != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          '状態: $stepStatus',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isSelected ? Colors.black54 : Colors.black45,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -1518,7 +1584,6 @@ class _StudioShellState extends State<StudioShell> {
       case 1:
         return _wrapFlowStep(
           stepKey: 'script',
-          stepTitle: '① 台本作成（AI + 人間修正）',
           description: 'AI生成した台本は必ず人が確認・編集してから確定してください。自動で次工程には進みません。',
           child: ScriptGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1527,7 +1592,6 @@ class _StudioShellState extends State<StudioShell> {
       case 2:
         return _wrapFlowStep(
           stepKey: 'base_video',
-          stepTitle: '② 動画作成（ベース動画生成）',
           description: '既存の動画設定をそのまま使ってベース動画を生成します。ここでは最終編集を行いません。',
           child: VideoGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1540,7 +1604,6 @@ class _StudioShellState extends State<StudioShell> {
       case 3:
         return _wrapFlowStep(
           stepKey: 'title_description',
-          stepTitle: '③ 動画タイトル・説明文作成（AI）',
           description: '台本に基づいて候補を作成し、ユーザーが確認・選択して採用します。',
           child: TitleGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1549,7 +1612,6 @@ class _StudioShellState extends State<StudioShell> {
       case 4:
         return _wrapFlowStep(
           stepKey: 'thumbnail',
-          stepTitle: '④ サムネイル作成（AI）',
           description: 'タイトルを踏まえてサムネイル候補を生成し、プレビュー確認後に採用してください。',
           child: MaterialsGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1558,7 +1620,6 @@ class _StudioShellState extends State<StudioShell> {
       case 5:
         return _wrapFlowStep(
           stepKey: 'ponchi',
-          stepTitle: '⑤ ポンチ絵（補足ビジュアル）案の作成',
           description: 'SRTをもとに提案を作成し、開始/終了時間や画像・サイズ・位置は必ず手動で調整します。',
           child: PonchiGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1572,7 +1633,6 @@ class _StudioShellState extends State<StudioShell> {
       case 6:
         return _wrapFlowStep(
           stepKey: 'final_edit',
-          stepTitle: '⑥ 動画編集（最終編集）',
           description: 'ポンチ絵設定を反映して最終動画を出力します。必要に応じて再編集してください。',
           child: const VideoEditForm(),
         );
@@ -7467,14 +7527,6 @@ class _LogPanelState extends State<LogPanel> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: ElevatedButton.icon(
-            onPressed: _connectLatestJob,
-            icon: const Icon(Icons.auto_graph),
-            label: const Text('最新ジョブに自動接続'),
-          ),
-        ),
         if (widget.collapsed) const SizedBox.shrink() else ...[
         if (_currentJobId != null) ...[
           Padding(
@@ -7561,15 +7613,6 @@ class _LogPanelState extends State<LogPanel> {
   void _handleLatestJobIdChanged() {
     final jobId = widget.latestJobId?.value;
     if (jobId == null || jobId.isEmpty || jobId == _currentJobId) {
-      return;
-    }
-    _connectWebSocket(jobId);
-  }
-
-  void _connectLatestJob() {
-    final jobId = widget.latestJobId?.value;
-    if (jobId == null || jobId.isEmpty) {
-      AppLogger.warn('まだジョブが送信されていません。動画生成を開始してください。');
       return;
     }
     _connectWebSocket(jobId);

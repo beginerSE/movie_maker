@@ -672,6 +672,7 @@ def generate_video(
     caption_box_height: int = DEFAULT_CAPTION_BOX_HEIGHT,
     bg_off_style: str = DEFAULT_BG_OFF_STYLE,
     caption_text_color: str = DEFAULT_CAPTION_TEXT_COLOR,
+    output_stem: Optional[str] = None,
 ) -> None:
     last_progress: Optional[float] = None
     last_emit_time = 0.0
@@ -878,9 +879,9 @@ def generate_video(
                 log_fn(f"BGM 合成中にエラーが発生しました（BGMなしで続行します）: {exc}")
 
         # ===== 動画書き出し ===== (80%〜100%)
-        txt_stem = Path(script_path).stem
-        final_out = output_dir_path / f"{txt_stem}.mp4"
-        srt_path = output_dir_path / f"{txt_stem}.srt"
+        resolved_stem = (output_stem or "").strip() or Path(script_path).stem
+        final_out = output_dir_path / f"{resolved_stem}.mp4"
+        srt_path = output_dir_path / f"{resolved_stem}.srt"
         log_fn(f"動画を書き出し中: {final_out}")
 
         mp_logger = TkMoviePyLogger(progress_fn=progress_fn, base=0.8, span=0.2)
