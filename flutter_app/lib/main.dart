@@ -4684,6 +4684,9 @@ class _VideoEditFormState extends State<VideoEditForm> {
   VideoPlayerController? _videoPreviewController;
   bool _videoPreviewInitializing = false;
   String? _videoPreviewError;
+  bool _isExporting = false;
+  double? _exportProgress;
+  String _exportStatusMessage = '待機中';
 
   @override
   void initState() {
@@ -4815,6 +4818,48 @@ class _VideoEditFormState extends State<VideoEditForm> {
         ..clear()
         ..addAll(rows);
     });
+  }
+
+  Future<void> _startExport() async {
+    if (_isExporting) {
+      return;
+    }
+    final selectedTitle = (_selectedTitle ?? '').trim();
+    if (selectedTitle.isEmpty) {
+      _showSnackBar('③タイトル・説明文作成で動画タイトルを1つ選択してください。');
+      return;
+    }
+
+    final stages = <({double progress, String message})>[
+      (progress: 0.15, message: '① 入力内容を確認中...'),
+      (progress: 0.35, message: '② ポンチ絵オーバーレイ情報を整理中...'),
+      (progress: 0.6, message: '③ 書き出し先を確定中...'),
+      (progress: 0.85, message: '④ 書き出しジョブを準備中...'),
+      (progress: 1.0, message: '⑤ 準備完了'),
+    ];
+
+    setState(() {
+      _isExporting = true;
+      _exportProgress = 0.0;
+      _exportStatusMessage = '書き出し準備を開始しました...';
+    });
+
+    try {
+      for (final stage in stages) {
+        await Future<void>.delayed(const Duration(milliseconds: 220));
+        if (!mounted) return;
+        setState(() {
+          _exportProgress = stage.progress;
+          _exportStatusMessage = stage.message;
+        });
+      }
+      _showSnackBar('書き出し先: ${_resolvedOutputPath()}');
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isExporting = false;
+      });
+    }
   }
 
   double _parseDouble(String? value, double fallback) {
@@ -5343,17 +5388,14 @@ class _VideoEditFormState extends State<VideoEditForm> {
           ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
-            onPressed: () {
-              final selectedTitle = (_selectedTitle ?? '').trim();
-              if (selectedTitle.isEmpty) {
-                _showSnackBar('③タイトル・説明文作成で動画タイトルを1つ選択してください。');
-                return;
-              }
-              _showSnackBar('書き出し先: ${_resolvedOutputPath()}');
-            },
+            onPressed: _isExporting ? null : _startExport,
             icon: const Icon(Icons.movie),
-            label: const Text('書き出し'),
+            label: Text(_isExporting ? '書き出し準備中...' : '書き出し'),
           ),
+          const SizedBox(height: 12),
+          Text('進捗: $_exportStatusMessage'),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(value: _exportProgress),
         ],
       ),
     );
