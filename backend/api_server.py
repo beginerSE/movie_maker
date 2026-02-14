@@ -1178,12 +1178,36 @@ def _run_final_video_export(
     output_path = Path(payload.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    missing = [ov.image for ov in payload.overlays if not Path(ov.image).exists()]
-    if missing:
-        detail = "overlays.image が見つかりません: " + ", ".join(missing[:5])
-        if len(missing) > 5:
-            detail += " ..."
-        raise HTTPException(status_code=400, detail=detail)
+    valid_overlays: List[FinalOverlayItem] = []
+    skipped_overlays = 0
+    for ov in payload.overlays:
+        image_path = (ov.image or "").strip()
+        if not image_path:
+            skipped_overlays += 1
+            continue
+        image_file = Path(image_path)
+        if not image_file.exists() or not image_file.is_file():
+            skipped_overlays += 1
+            continue
+        if ov.end <= ov.start:
+            skipped_overlays += 1
+            continue
+        valid_overlays.append(
+            FinalOverlayItem(
+                image=str(image_file),
+                start=ov.start,
+                end=ov.end,
+                x=ov.x,
+                y=ov.y,
+                w=ov.w,
+                h=ov.h,
+                opacity=ov.opacity,
+            )
+        )
+
+    if skipped_overlays > 0:
+        _log(f"最終編集: 無効なオーバーレイ行をスキップ skipped={skipped_overlays}")
+        logger.warning("final export skipped invalid overlays skipped=%s", skipped_overlays)
 
     _progress(0.05)
     _log("最終編集: 書き出し準備完了")
@@ -1203,7 +1227,7 @@ def _run_final_video_export(
     args = _build_final_export_ffmpeg_args(
         input_path=str(input_path),
         output_path=str(ffmpeg_output_path),
-        overlays=payload.overlays,
+        overlays=valid_overlays,
         duration_seconds=source_duration_seconds,
     )
     logger.info(
@@ -1211,9 +1235,9 @@ def _run_final_video_export(
         ffmpeg,
         str(output_path),
         str(ffmpeg_output_path),
-        len(payload.overlays),
+        len(valid_overlays),
     )
-    _log(f"最終編集: ffmpeg開始 overlays={len(payload.overlays)}")
+    _log(f"最終編集: ffmpeg開始 overlays={len(valid_overlays)}")
     _progress(0.2)
 
     stderr_lines: List[str] = []
