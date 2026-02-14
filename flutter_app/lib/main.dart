@@ -3861,9 +3861,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                 },
                 children: [
                   _buildIdeaTableHeaderRow(context),
-                  ..._ideaRows.asMap().entries.map(
-                    (entry) => _buildIdeaTableDataRow(entry.key, entry.value),
-                  ),
+                  ..._ideaRows.map(_buildIdeaTableDataRow),
                 ],
               ),
             ),
@@ -3911,7 +3909,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     );
   }
 
-  TableRow _buildIdeaTableDataRow(int index, _PonchiIdeaRow row) {
+  TableRow _buildIdeaTableDataRow(_PonchiIdeaRow row) {
     Widget cell(Widget child) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -3988,9 +3986,10 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           IconButton(
             onPressed: () {
               setState(() {
-                _ideaRows.removeAt(index);
+                _ideaRows.remove(row);
               });
               _syncMarkdownTableFromRows();
+              _persistPonchiPreviewItems();
             },
             icon: const Icon(Icons.delete_outline),
             tooltip: '行削除',
@@ -4060,22 +4059,15 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
       }
       final payload = {
         'api_key': apiKey,
-        'srt_path': _srtController.text,
+        'prompt': row.imagePrompt.trim().isEmpty
+            ? row.visualSuggestion
+            : row.imagePrompt.trim(),
         'output_dir': _outputController.text.trim(),
-        'model': _geminiModelController.text.trim(),
         'project_id': ProjectState.currentProjectId.value,
-        'suggestions': [
-          {
-            'start': row.start,
-            'end': row.end,
-            'visual_suggestion': row.visualSuggestion,
-            'image_prompt': row.imagePrompt,
-          }
-        ],
       };
       final response = await http
           .post(
-            ApiConfig.httpUri('/ponchi/images'),
+            ApiConfig.httpUri('/materials/generate'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(payload),
           )
@@ -4085,35 +4077,26 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         return;
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final items = data['items'] as List<dynamic>? ?? [];
-      final outputDir = data['output_dir'] as String? ?? '';
-      _PonchiPreviewItem? generated;
-      if (items.isNotEmpty) {
-        final map = items.first as Map<String, dynamic>;
-        final imageName = (map['image'] as String? ?? '').trim();
-        final imagePath = (outputDir.isNotEmpty && imageName.isNotEmpty)
-            ? _joinPaths(outputDir, imageName)
-            : imageName;
-        final imageBase64 = (map['image_base64'] as String? ?? '').trim();
-        Uint8List? bytes;
-        if (imageBase64.isNotEmpty) {
-          bytes = base64Decode(imageBase64);
-        }
-        generated = _PonchiPreviewItem(
-          title: '${map['start']}〜${map['end']}',
-          subtitle: (map['visual_suggestion'] as String? ?? '').trim(),
-          path: imagePath,
-          bytes: bytes,
-        );
+      final imagePath = (data['image_path'] as String? ?? '').trim();
+      final imageBase64 = (data['image_base64'] as String? ?? '').trim();
+      Uint8List? bytes;
+      if (imageBase64.isNotEmpty) {
+        bytes = base64Decode(imageBase64);
       }
+      final generated = _PonchiPreviewItem(
+        title: '${row.start}〜${row.end}',
+        subtitle: row.visualSuggestion,
+        path: imagePath,
+        bytes: bytes,
+      );
       if (!mounted) return;
-      if (generated == null) {
+      if (generated.path.isEmpty && (generated.bytes == null || generated.bytes!.isEmpty)) {
         _showSnackBar('この行の画像が生成されませんでした。');
         return;
       }
       setState(() {
-        _previewItems.removeWhere((item) => item.title == generated!.title);
-        _previewItems.add(generated!);
+        _previewItems.removeWhere((item) => item.title == generated.title);
+        _previewItems.add(generated);
       });
       _persistPonchiPreviewItems();
       await _openPreviewDialog(generated);
