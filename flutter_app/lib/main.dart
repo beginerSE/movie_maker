@@ -5492,6 +5492,15 @@ class _VideoEditFormState extends State<VideoEditForm> {
 
   @override
   Widget build(BuildContext context) {
+    final previewVideoSize = (_videoPreviewController != null &&
+            _videoPreviewController!.value.isInitialized)
+        ? _videoPreviewController!.value.size
+        : null;
+    final previewWidthLimit =
+        (previewVideoSize != null && previewVideoSize.width > 0) ? previewVideoSize.width : 1920.0;
+    final previewHeightLimit =
+        (previewVideoSize != null && previewVideoSize.height > 0) ? previewVideoSize.height : 1080.0;
+
     return Form(
       key: _formKey,
       child: ListView(
@@ -5564,7 +5573,8 @@ class _VideoEditFormState extends State<VideoEditForm> {
                                             opacity: _previewOpacity.clamp(0.0, 1.0),
                                             child: Image.file(
                                               File(overlayPath),
-                                              fit: BoxFit.contain,
+                                              fit: BoxFit.fill,
+                                              alignment: Alignment.topLeft,
                                               errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                                             ),
                                           ),
@@ -5620,7 +5630,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                     label: '画像X',
                     value: _previewX,
                     min: 0,
-                    max: 1920,
+                    max: previewWidthLimit,
                     onChanged: (value) {
                       setState(() {
                         _previewX = value;
@@ -5633,7 +5643,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                     label: '画像Y',
                     value: _previewY,
                     min: 0,
-                    max: 1080,
+                    max: previewHeightLimit,
                     onChanged: (value) {
                       setState(() {
                         _previewY = value;
@@ -5646,7 +5656,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                     label: '画像W',
                     value: _previewOverlayW,
                     min: 0,
-                    max: 1920,
+                    max: previewWidthLimit,
                     onChanged: (value) {
                       setState(() {
                         _previewOverlayW = value;
@@ -5659,7 +5669,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                     label: '画像H',
                     value: _previewOverlayH,
                     min: 0,
-                    max: 1080,
+                    max: previewHeightLimit,
                     onChanged: (value) {
                       setState(() {
                         _previewOverlayH = value;
