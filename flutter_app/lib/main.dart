@@ -5077,6 +5077,18 @@ class _VideoEditFormState extends State<VideoEditForm> {
               'overlays': overlays,
             }),
           )
+          .then((resp) async {
+            if (resp.statusCode != 404) return resp;
+            return _postWithApiPrefixFallback(
+              '/video/final-export-job',
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'input_path': inputPath,
+                'output_path': outputPath,
+                'overlays': overlays,
+              }),
+            );
+          })
           .timeout(const Duration(minutes: 10));
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -5125,8 +5137,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
         await Future.delayed(const Duration(milliseconds: 500));
         http.Response statusResponse;
         try {
-          statusResponse = await http
-              .get(ApiConfig.httpUri('/jobs/$jobId'))
+          statusResponse = await _getWithApiPrefixFallback('/jobs/$jobId')
               .timeout(const Duration(seconds: 5));
         } catch (e) {
           consecutiveFetchFailures += 1;

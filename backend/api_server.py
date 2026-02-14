@@ -1264,6 +1264,7 @@ async def final_video_export_job(payload: FinalVideoExportRequest) -> JobRespons
 
     def progress_fn(value: float) -> None:
         manager.update_progress(job.job_id, value, None)
+        logger.info("final export progress job=%s progress=%.1f%%", job.job_id, value * 100)
 
     def worker() -> None:
         try:
