@@ -2215,7 +2215,7 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('削除確認'),
-            content: Text('「${project.name}」を削除します。フォルダごと消去されます。よろしいですか？'),
+            content: Text('「${project.name}」を削除します。フォルダごと消去されます。本当によろしいですか？'),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
               ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('削除')),
@@ -2241,6 +2241,11 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
         ProjectState.currentProjectId.value = ProjectState.defaultProjectId;
       }
       await widget.onChanged();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('削除しました！')),
+        );
+      }
     } catch (error) {
       _showErrorSnackBar(error.toString().replaceFirst('Exception: ', ''));
     } finally {
