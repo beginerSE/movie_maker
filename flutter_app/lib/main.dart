@@ -4722,24 +4722,29 @@ class _VideoEditFormState extends State<VideoEditForm> {
   }
 
   Future<void> _initInputVideoPreview(String videoPath) async {
-    final trimmedPath = videoPath.trim();
-    if (trimmedPath.isEmpty) {
-      final old = _videoPreviewController;
-      _videoPreviewController = null;
-      _videoPreviewError = null;
-      await old?.dispose();
-      if (mounted) {
-        setState(() {});
-      }
+    final localPath = videoPath.trim();
+    final old = _videoPreviewController;
+    if (old != null) {
+      await old.pause();
+      await old.dispose();
+    }
+    _videoPreviewController = null;
+
+    if (localPath.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _videoPreviewInitializing = false;
+        _videoPreviewError = '動画未選択';
+      });
       return;
     }
 
-    final file = File(trimmedPath);
-    if (!await file.exists()) {
+    final file = File(localPath);
+    if (!file.existsSync()) {
       if (!mounted) return;
       setState(() {
-        _videoPreviewError = '動画ファイルが見つかりません: $trimmedPath';
-        _videoPreviewController = null;
+        _videoPreviewInitializing = false;
+        _videoPreviewError = '動画ファイルが見つかりません。PATH: $localPath';
       });
       return;
     }
@@ -4750,34 +4755,30 @@ class _VideoEditFormState extends State<VideoEditForm> {
       _videoPreviewError = null;
     });
 
-    final old = _videoPreviewController;
-    final previewUri = ApiConfig.httpUri('/video/preview').replace(
-      queryParameters: {'path': file.absolute.path},
-    );
     VideoPlayerController? controller;
-
     try {
-      controller = VideoPlayerController.networkUrl(previewUri);
+      controller = VideoPlayerController.file(File(localPath));
       await controller.initialize();
-    } catch (_) {
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _videoPreviewController = controller;
+        _videoPreviewInitializing = false;
+        _videoPreviewError = null;
+      });
+    } catch (e, st) {
+      debugPrint(e.toString());
+      debugPrint(st.toString());
       await controller?.dispose();
-      controller = null;
+      if (!mounted) return;
+      setState(() {
+        _videoPreviewController = null;
+        _videoPreviewInitializing = false;
+        _videoPreviewError = 'プレビュー初期化に失敗しました。PATH: $localPath\nERROR: $e';
+      });
     }
-
-    await old?.dispose();
-
-    if (!mounted) {
-      await controller?.dispose();
-      return;
-    }
-
-    setState(() {
-      _videoPreviewInitializing = false;
-      _videoPreviewController = controller;
-      _videoPreviewError = controller == null
-          ? 'プレビュー初期化に失敗しました。PATH: ${previewUri.path}'
-          : null;
-    });
   }
 
   Future<void> _selectInputVideo() async {
@@ -5878,56 +5879,66 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   }
 
   Future<void> _initVideoPreview(String videoPath) async {
-    final file = File(videoPath);
-    if (!await file.exists()) {
+    final localPath = videoPath.trim();
+    final old = _previewController;
+    if (old != null) {
+      await old.pause();
+      await old.dispose();
+    }
+    _previewController = null;
+
+    if (localPath.isEmpty) {
       if (!mounted) return;
       setState(() {
-        _previewErrorMessage = '動画ファイルが見つかりません: $videoPath';
-        _previewController = null;
+        _previewInitializing = false;
+        _generatedVideoPath = null;
+        _previewErrorMessage = '動画未選択';
       });
       return;
     }
-    setState(() {
-      _previewInitializing = true;
-      _generatedVideoPath = videoPath;
-      _previewErrorMessage = null;
-    });
 
-    final old = _previewController;
-    final previewUri = ApiConfig.httpUri('/video/preview').replace(
-      queryParameters: {'path': file.absolute.path},
-    );
-    VideoPlayerController? controller;
-
-    try {
-      controller = VideoPlayerController.networkUrl(previewUri);
-      await controller.initialize();
-    } catch (error) {
-      await controller?.dispose();
-      controller = null;
-    }
-
-    await old?.dispose();
-
-    if (!mounted) {
-      await controller?.dispose();
-      return;
-    }
-
-    if (controller == null) {
+    final file = File(localPath);
+    if (!file.existsSync()) {
+      if (!mounted) return;
       setState(() {
         _previewInitializing = false;
-        _previewController = null;
-        _previewErrorMessage = 'プレビュー初期化に失敗しました。PATH: ${previewUri.path}';
+        _generatedVideoPath = localPath;
+        _previewErrorMessage = '動画ファイルが見つかりません。PATH: $localPath';
       });
       return;
     }
 
+    if (!mounted) return;
     setState(() {
-      _previewController = controller;
-      _previewInitializing = false;
+      _previewInitializing = true;
+      _generatedVideoPath = localPath;
       _previewErrorMessage = null;
     });
+
+    VideoPlayerController? controller;
+    try {
+      controller = VideoPlayerController.file(File(localPath));
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _previewController = controller;
+        _previewInitializing = false;
+        _previewErrorMessage = null;
+      });
+    } catch (e, st) {
+      debugPrint(e.toString());
+      debugPrint(st.toString());
+      await controller?.dispose();
+      if (!mounted) return;
+      setState(() {
+        _previewController = null;
+        _previewInitializing = false;
+        _previewErrorMessage = 'プレビュー初期化に失敗しました。PATH: $localPath\nERROR: $e';
+      });
+    }
   }
 
 
