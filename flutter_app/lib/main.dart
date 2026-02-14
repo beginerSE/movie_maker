@@ -477,6 +477,7 @@ class _StudioShellState extends State<StudioShell> {
     'ポンチ絵作成',
     '動画編集',
     '詳細動画編集',
+    '画像収集',
     '設定',
     'About',
     'AIフロー',
@@ -943,7 +944,7 @@ class _StudioShellState extends State<StudioShell> {
         return '⑤ ポンチ絵案';
       case 6:
         return '⑥ 最終編集';
-      case 10:
+      case 11:
         return 'AIフロー進捗';
       default:
         return _pages[index];
@@ -1158,7 +1159,7 @@ class _StudioShellState extends State<StudioShell> {
 
   Future<void> _openFlowPage() async {
     setState(() {
-      _selectedIndex = 10;
+      _selectedIndex = 11;
     });
   }
 
@@ -1714,10 +1715,12 @@ class _StudioShellState extends State<StudioShell> {
       case 7:
         return const DetailedEditForm();
       case 8:
-        return const SettingsForm();
+        return const ImageCollectForm();
       case 9:
-        return const AboutPanel();
+        return const SettingsForm();
       case 10:
+        return const AboutPanel();
+      case 11:
         return FlowProjectPanel(
           selectedProject: _currentProjectSummary(),
           checkApiHealth: _checkApiHealthAndUpdate,
@@ -4884,17 +4887,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
   final _formKey = GlobalKey<FormState>();
   final _inputVideoController = TextEditingController();
   final _outputDirController = TextEditingController();
-  final _srtController = TextEditingController();
-  final _imageOutputController =
-      TextEditingController(text: '${Directory.current.path}/srt_images');
-  final _searchApiKeyController = TextEditingController();
-  final _defaultXController = TextEditingController(text: '100');
-  final _defaultYController = TextEditingController(text: '200');
-  final _defaultWController = TextEditingController(text: '0');
-  final _defaultHController = TextEditingController(text: '0');
-  final _defaultOpacityController = TextEditingController(text: '1.0');
   late final InputPersistence _persistence;
-  String _searchProvider = 'Google';
   double _previewX = 0;
   double _previewY = 0;
   double _previewOverlayW = 0;
@@ -4918,14 +4911,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _persistence = InputPersistence('video_edit.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_inputVideoController, 'input_video');
     _persistence.registerController(_outputDirController, 'output_dir');
-    _persistence.registerController(_srtController, 'srt_path');
-    _persistence.registerController(_imageOutputController, 'image_output');
-    _persistence.registerController(_searchApiKeyController, 'search_api_key');
-    _persistence.registerController(_defaultXController, 'default_x');
-    _persistence.registerController(_defaultYController, 'default_y');
-    _persistence.registerController(_defaultWController, 'default_w');
-    _persistence.registerController(_defaultHController, 'default_h');
-    _persistence.registerController(_defaultOpacityController, 'default_opacity');
     _projectListener = () {
       _loadLinkedPonchiRows();
     };
@@ -4935,7 +4920,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
 
   Future<void> _initPersistence() async {
     await _persistence.init();
-    final searchProvider = await _persistence.readString('search_provider');
     final previewX = await _persistence.readDouble('preview_x');
     final previewY = await _persistence.readDouble('preview_y');
     final previewW = await _persistence.readDouble('preview_w');
@@ -4946,7 +4930,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
     final selectedTitle = (prefs.getString(_selectedTitlePrefsKey()) ?? '').trim();
     if (!mounted) return;
     setState(() {
-      _searchProvider = searchProvider ?? _searchProvider;
       _previewX = previewX ?? _previewX;
       _previewY = previewY ?? _previewY;
       _previewOverlayW = previewW ?? _previewOverlayW;
@@ -5024,11 +5007,11 @@ class _VideoEditFormState extends State<VideoEditForm> {
               'end': (item['end'] as String? ?? '').trim(),
               'visual': (item['visual_suggestion'] as String? ?? '').trim(),
               'image': (item['image_path'] as String? ?? '').trim(),
-              'x': (item['x'] as String? ?? _defaultXController.text).trim(),
-              'y': (item['y'] as String? ?? _defaultYController.text).trim(),
-              'w': (item['w'] as String? ?? _defaultWController.text).trim(),
-              'h': (item['h'] as String? ?? _defaultHController.text).trim(),
-              'opacity': (item['opacity'] as String? ?? _defaultOpacityController.text).trim(),
+              'x': (item['x'] as String? ?? '100').trim(),
+              'y': (item['y'] as String? ?? '200').trim(),
+              'w': (item['w'] as String? ?? '0').trim(),
+              'h': (item['h'] as String? ?? '0').trim(),
+              'opacity': (item['opacity'] as String? ?? '1.0').trim(),
             });
           }
         }
@@ -5440,14 +5423,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
   void dispose() {
     _inputVideoController.dispose();
     _outputDirController.dispose();
-    _srtController.dispose();
-    _imageOutputController.dispose();
-    _searchApiKeyController.dispose();
-    _defaultXController.dispose();
-    _defaultYController.dispose();
-    _defaultWController.dispose();
-    _defaultHController.dispose();
-    _defaultOpacityController.dispose();
     _videoPreviewController?.dispose();
     ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
@@ -5773,124 +5748,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
                     .toList(),
               ),
             ),
-          const SizedBox(height: 12),
-          Text('SRTから画像収集', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Text(
-            '字幕ごとに検索キーワードを生成し、Google/Bing画像検索から取得します。',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _srtController,
-            decoration: InputDecoration(
-              labelText: 'SRTファイル',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.subtitles),
-                onPressed: () => _selectFile(
-                  _srtController,
-                  const XTypeGroup(label: 'SRT', extensions: ['srt']),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _imageOutputController,
-            decoration: InputDecoration(
-              labelText: '保存先フォルダ',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.folder),
-                onPressed: () => _selectDirectory(_imageOutputController),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _searchProvider,
-            decoration: const InputDecoration(labelText: '画像検索プロバイダ'),
-            items: const [
-              DropdownMenuItem(value: 'Google', child: Text('Google')),
-              DropdownMenuItem(value: 'Bing', child: Text('Bing')),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _searchProvider = value;
-              });
-              _persistence.setString('search_provider', value);
-            },
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _searchApiKeyController,
-            decoration: const InputDecoration(labelText: '画像検索 APIキー（SerpAPI）'),
-            obscureText: true,
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _defaultXController,
-                  decoration: const InputDecoration(labelText: '既定X'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _defaultYController,
-                  decoration: const InputDecoration(labelText: '既定Y'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _defaultWController,
-                  decoration: const InputDecoration(labelText: '既定W'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _defaultHController,
-                  decoration: const InputDecoration(labelText: '既定H'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 140,
-                child: TextFormField(
-                  controller: _defaultOpacityController,
-                  decoration: const InputDecoration(labelText: '既定Opacity'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              ElevatedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.auto_fix_high),
-                label: const Text('SRTから画像収集'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.upload_file),
-                label: const Text('JSON読み込み'),
-              ),
-            ],
-          ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
             onPressed: _isExporting ? null : _startExport,
@@ -5942,6 +5799,201 @@ class DetailedEditForm extends StatefulWidget {
 
   @override
   State<DetailedEditForm> createState() => _DetailedEditFormState();
+}
+
+class ImageCollectForm extends StatefulWidget {
+  const ImageCollectForm({super.key});
+
+  @override
+  State<ImageCollectForm> createState() => _ImageCollectFormState();
+}
+
+class _ImageCollectFormState extends State<ImageCollectForm> {
+  final _srtController = TextEditingController();
+  final _imageOutputController = TextEditingController(text: '${Directory.current.path}/srt_images');
+  final _searchApiKeyController = TextEditingController();
+  final _defaultXController = TextEditingController(text: '100');
+  final _defaultYController = TextEditingController(text: '200');
+  final _defaultWController = TextEditingController(text: '0');
+  final _defaultHController = TextEditingController(text: '0');
+  final _defaultOpacityController = TextEditingController(text: '1.0');
+  late final InputPersistence _persistence;
+  String _searchProvider = 'Google';
+
+  @override
+  void initState() {
+    super.initState();
+    _persistence = InputPersistence('image_collect.', scopeListenable: ProjectState.currentProjectId);
+    _persistence.registerController(_srtController, 'srt_path');
+    _persistence.registerController(_imageOutputController, 'image_output');
+    _persistence.registerController(_searchApiKeyController, 'search_api_key');
+    _persistence.registerController(_defaultXController, 'default_x');
+    _persistence.registerController(_defaultYController, 'default_y');
+    _persistence.registerController(_defaultWController, 'default_w');
+    _persistence.registerController(_defaultHController, 'default_h');
+    _persistence.registerController(_defaultOpacityController, 'default_opacity');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+    final searchProvider = await _persistence.readString('search_provider');
+    if (!mounted) return;
+    setState(() {
+      _searchProvider = searchProvider ?? _searchProvider;
+    });
+  }
+
+  @override
+  void dispose() {
+    _srtController.dispose();
+    _imageOutputController.dispose();
+    _searchApiKeyController.dispose();
+    _defaultXController.dispose();
+    _defaultYController.dispose();
+    _defaultWController.dispose();
+    _defaultHController.dispose();
+    _defaultOpacityController.dispose();
+    _persistence.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        Text('画像収集', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('SRTから画像収集', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                Text(
+                  '字幕ごとに検索キーワードを生成し、Google/Bing画像検索から取得します。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _srtController,
+                  decoration: InputDecoration(
+                    labelText: 'SRTファイル',
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.subtitles),
+                      onPressed: () => _selectFile(
+                        _srtController,
+                        const XTypeGroup(label: 'SRT', extensions: ['srt']),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _imageOutputController,
+                  decoration: InputDecoration(
+                    labelText: '保存先フォルダ',
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.folder),
+                      onPressed: () => _selectDirectory(_imageOutputController),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _searchProvider,
+                  decoration: const InputDecoration(labelText: '画像検索プロバイダ'),
+                  items: const [
+                    DropdownMenuItem(value: 'Google', child: Text('Google')),
+                    DropdownMenuItem(value: 'Bing', child: Text('Bing')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _searchProvider = value;
+                    });
+                    _persistence.setString('search_provider', value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _searchApiKeyController,
+                  decoration: const InputDecoration(labelText: '画像検索 APIキー（SerpAPI）'),
+                  obscureText: true,
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    SizedBox(
+                      width: 120,
+                      child: TextFormField(
+                        controller: _defaultXController,
+                        decoration: const InputDecoration(labelText: '既定X'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 120,
+                      child: TextFormField(
+                        controller: _defaultYController,
+                        decoration: const InputDecoration(labelText: '既定Y'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 120,
+                      child: TextFormField(
+                        controller: _defaultWController,
+                        decoration: const InputDecoration(labelText: '既定W'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 120,
+                      child: TextFormField(
+                        controller: _defaultHController,
+                        decoration: const InputDecoration(labelText: '既定H'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 140,
+                      child: TextFormField(
+                        controller: _defaultOpacityController,
+                        decoration: const InputDecoration(labelText: '既定Opacity'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () {},
+                      icon: const Icon(Icons.auto_fix_high),
+                      label: const Text('SRTから画像収集'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () {},
+                      icon: const Icon(Icons.upload_file),
+                      label: const Text('JSON読み込み'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _DetailedEditFormState extends State<DetailedEditForm> {
