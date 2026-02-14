@@ -3854,18 +3854,6 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          Text('画像プレビュー', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(context).dividerColor),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: _buildPonchiPreviewGrid(),
-          ),
           const SizedBox(height: 12),
           Text('生成結果', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
@@ -4540,6 +4528,9 @@ class _VideoEditFormState extends State<VideoEditForm> {
   final List<Map<String, String>> _overlays = [];
   final List<Map<String, String>> _linkedPonchiRows = [];
   late final VoidCallback _projectListener;
+  VideoPlayerController? _videoPreviewController;
+  bool _videoPreviewInitializing = false;
+  String? _videoPreviewError;
 
   @override
   void initState() {
@@ -4584,6 +4575,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
       _previewScale = previewScale ?? _previewScale;
     });
     await _loadLinkedPonchiRows();
+    await _initInputVideoPreview(_inputVideoController.text);
   }
 
   String _sharedOverlayRowsPrefsKey() => 'ponchi.overlay_rows.${ProjectState.currentProjectId.value}';
@@ -4668,6 +4660,73 @@ class _VideoEditFormState extends State<VideoEditForm> {
     });
   }
 
+  Future<void> _initInputVideoPreview(String videoPath) async {
+    final trimmedPath = videoPath.trim();
+    if (trimmedPath.isEmpty) {
+      final old = _videoPreviewController;
+      _videoPreviewController = null;
+      _videoPreviewError = null;
+      await old?.dispose();
+      if (mounted) {
+        setState(() {});
+      }
+      return;
+    }
+
+    final file = File(trimmedPath);
+    if (!await file.exists()) {
+      if (!mounted) return;
+      setState(() {
+        _videoPreviewError = '動画ファイルが見つかりません: $trimmedPath';
+        _videoPreviewController = null;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _videoPreviewInitializing = true;
+      _videoPreviewError = null;
+    });
+
+    final old = _videoPreviewController;
+    final previewUri = ApiConfig.httpUri('/video/preview').replace(
+      queryParameters: {'path': file.absolute.path},
+    );
+    VideoPlayerController? controller;
+
+    try {
+      controller = VideoPlayerController.networkUrl(previewUri);
+      await controller.initialize();
+    } catch (_) {
+      await controller?.dispose();
+      controller = null;
+    }
+
+    await old?.dispose();
+
+    if (!mounted) {
+      await controller?.dispose();
+      return;
+    }
+
+    setState(() {
+      _videoPreviewInitializing = false;
+      _videoPreviewController = controller;
+      _videoPreviewError = controller == null
+          ? 'プレビュー初期化に失敗しました。PATH: ${previewUri.path}'
+          : null;
+    });
+  }
+
+  Future<void> _selectInputVideo() async {
+    await _selectFile(
+      _inputVideoController,
+      const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
+    );
+    await _initInputVideoPreview(_inputVideoController.text);
+  }
+
   @override
   void dispose() {
     _inputVideoController.dispose();
@@ -4688,6 +4747,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _defaultWController.dispose();
     _defaultHController.dispose();
     _defaultOpacityController.dispose();
+    _videoPreviewController?.dispose();
     ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
     super.dispose();
@@ -4714,15 +4774,68 @@ class _VideoEditFormState extends State<VideoEditForm> {
                   Text('プレビュー', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 12),
                   Container(
-                    height: 180,
                     width: double.infinity,
-                    alignment: Alignment.center,
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       color: Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.grey.shade300),
                     ),
-                    child: const Text('動画を選択してください'),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_videoPreviewInitializing) const LinearProgressIndicator(),
+                        if (_videoPreviewError != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _videoPreviewError!,
+                            style: TextStyle(color: Theme.of(context).colorScheme.error),
+                          ),
+                        ],
+                        if (_videoPreviewController != null &&
+                            _videoPreviewController!.value.isInitialized) ...[
+                          const SizedBox(height: 8),
+                          AspectRatio(
+                            aspectRatio: _videoPreviewController!.value.aspectRatio,
+                            child: VideoPlayer(_videoPreviewController!),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: () {
+                                  final c = _videoPreviewController!;
+                                  if (c.value.isPlaying) {
+                                    c.pause();
+                                  } else {
+                                    c.play();
+                                  }
+                                  setState(() {});
+                                },
+                                icon: Icon(
+                                  _videoPreviewController!.value.isPlaying
+                                      ? Icons.pause
+                                      : Icons.play_arrow,
+                                ),
+                                label: Text(
+                                  _videoPreviewController!.value.isPlaying ? '一時停止' : '再生',
+                                ),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: () => _initInputVideoPreview(_inputVideoController.text),
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('再読み込み'),
+                              ),
+                            ],
+                          ),
+                        ] else
+                          const SizedBox(
+                            height: 180,
+                            child: Center(child: Text('動画を選択してください')),
+                          ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                   _buildSliderRow(
@@ -4771,15 +4884,24 @@ class _VideoEditFormState extends State<VideoEditForm> {
           const SizedBox(height: 12),
           TextFormField(
             controller: _inputVideoController,
+            onChanged: (value) {
+              _persistence.setString('input_video', value);
+            },
             decoration: InputDecoration(
               labelText: '入力動画（MP4）',
               suffixIcon: IconButton(
                 icon: const Icon(Icons.video_file),
-                onPressed: () => _selectFile(
-                  _inputVideoController,
-                  const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
-                ),
+                onPressed: _selectInputVideo,
               ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () => _initInputVideoPreview(_inputVideoController.text),
+              icon: const Icon(Icons.play_circle_outline),
+              label: const Text('この動画をプレビュー'),
             ),
           ),
           const SizedBox(height: 12),
