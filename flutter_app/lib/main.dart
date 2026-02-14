@@ -5757,44 +5757,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
               ),
             ),
           const SizedBox(height: 12),
-          Text('オーバーレイ一覧（表）', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columns: const [
-                DataColumn(label: Text('image')),
-                DataColumn(label: Text('start')),
-                DataColumn(label: Text('end')),
-                DataColumn(label: Text('x')),
-                DataColumn(label: Text('y')),
-                DataColumn(label: Text('w')),
-                DataColumn(label: Text('h')),
-                DataColumn(label: Text('opacity')),
-                DataColumn(label: Text('source')),
-                DataColumn(label: Text('内容')),
-              ],
-              rows: _linkedPonchiRows
-                  .map(
-                    (overlay) => DataRow(
-                      cells: [
-                        DataCell(Text(overlay['image'] ?? '')),
-                        DataCell(Text(overlay['start'] ?? '')),
-                        DataCell(Text(overlay['end'] ?? '')),
-                        DataCell(Text(overlay['x'] ?? '')),
-                        DataCell(Text(overlay['y'] ?? '')),
-                        DataCell(Text(overlay['w'] ?? '')),
-                        DataCell(Text(overlay['h'] ?? '')),
-                        DataCell(Text(overlay['opacity'] ?? '')),
-                        DataCell(Text(overlay['source'] ?? '')),
-                        DataCell(SizedBox(width: 220, child: Text(overlay['visual'] ?? ''))),
-                      ],
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-          const SizedBox(height: 12),
           Text('SRTから画像収集', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           Text(
