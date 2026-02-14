@@ -1060,7 +1060,6 @@ class _StudioShellState extends State<StudioShell> {
 
   Widget _wrapFlowStep({
     required String stepKey,
-    required String stepTitle,
     required String description,
     required Widget child,
   }) {
@@ -1074,12 +1073,8 @@ class _StudioShellState extends State<StudioShell> {
       child: ListView(
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(stepTitle, style: Theme.of(context).textTheme.headlineSmall),
-              ),
-              const SizedBox(width: 8),
+              const Spacer(),
               _flowStepStatusBadge(stepKey: stepKey, currentStatus: currentStatus),
             ],
           ),
@@ -1589,7 +1584,6 @@ class _StudioShellState extends State<StudioShell> {
       case 1:
         return _wrapFlowStep(
           stepKey: 'script',
-          stepTitle: '① 台本作成（AI + 人間修正）',
           description: 'AI生成した台本は必ず人が確認・編集してから確定してください。自動で次工程には進みません。',
           child: ScriptGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1598,7 +1592,6 @@ class _StudioShellState extends State<StudioShell> {
       case 2:
         return _wrapFlowStep(
           stepKey: 'base_video',
-          stepTitle: '② 動画作成（ベース動画生成）',
           description: '既存の動画設定をそのまま使ってベース動画を生成します。ここでは最終編集を行いません。',
           child: VideoGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1611,7 +1604,6 @@ class _StudioShellState extends State<StudioShell> {
       case 3:
         return _wrapFlowStep(
           stepKey: 'title_description',
-          stepTitle: '③ 動画タイトル・説明文作成（AI）',
           description: '台本に基づいて候補を作成し、ユーザーが確認・選択して採用します。',
           child: TitleGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1620,7 +1612,6 @@ class _StudioShellState extends State<StudioShell> {
       case 4:
         return _wrapFlowStep(
           stepKey: 'thumbnail',
-          stepTitle: '④ サムネイル作成（AI）',
           description: 'タイトルを踏まえてサムネイル候補を生成し、プレビュー確認後に採用してください。',
           child: MaterialsGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1629,7 +1620,6 @@ class _StudioShellState extends State<StudioShell> {
       case 5:
         return _wrapFlowStep(
           stepKey: 'ponchi',
-          stepTitle: '⑤ ポンチ絵（補足ビジュアル）案の作成',
           description: 'SRTをもとに提案を作成し、開始/終了時間や画像・サイズ・位置は必ず手動で調整します。',
           child: PonchiGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
@@ -1643,7 +1633,6 @@ class _StudioShellState extends State<StudioShell> {
       case 6:
         return _wrapFlowStep(
           stepKey: 'final_edit',
-          stepTitle: '⑥ 動画編集（最終編集）',
           description: 'ポンチ絵設定を反映して最終動画を出力します。必要に応じて再編集してください。',
           child: const VideoEditForm(),
         );
