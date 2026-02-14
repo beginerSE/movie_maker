@@ -9,14 +9,16 @@ import logging
 import mimetypes
 import os
 import pathlib
+import queue
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
 import traceback
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,8 +26,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
 
+try:
+    import imageio_ffmpeg  # type: ignore
+except Exception:  # pragma: no cover
+    imageio_ffmpeg = None
 
-from pathlib import Path
+
 
 def app_root() -> Path:
     # PyInstaller exe で動いているときは exe のあるフォルダ
@@ -548,6 +554,172 @@ class JobStatusResponse(BaseModel):
     result: dict
 
 
+class FinalOverlayItem(BaseModel):
+    image: str
+    start: float
+    end: float
+    x: int
+    y: int
+    w: int = 0
+    h: int = 0
+    opacity: float = 1.0
+
+
+class FinalVideoExportRequest(BaseModel):
+    input_path: str
+    output_path: str
+    overlays: List[FinalOverlayItem] = Field(default_factory=list)
+
+
+class FinalVideoExportResponse(BaseModel):
+    output_path: str
+
+
+def _resolve_ffmpeg_executable_for_backend() -> str:
+    if imageio_ffmpeg is not None:
+        try:
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if exe and Path(exe).exists():
+                return exe
+        except Exception:
+            pass
+    return "ffmpeg"
+
+
+def _build_final_export_ffmpeg_args(
+    input_path: str,
+    output_path: str,
+    overlays: List[FinalOverlayItem],
+    duration_seconds: Optional[float] = None,
+) -> List[str]:
+    args: List[str] = ["-y", "-i", input_path]
+    if not overlays:
+        args_out = [
+            *args,
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+        ]
+        if duration_seconds is not None and duration_seconds > 0:
+            args_out.extend(["-t", f"{duration_seconds:.3f}"])
+        args_out.append(output_path)
+        return args_out
+
+    for ov in overlays:
+        args.extend(["-loop", "1", "-i", ov.image])
+
+    filters = ["[0:v]setpts=PTS-STARTPTS[v0]"]
+    prev_label = "v0"
+    for i, ov in enumerate(overlays):
+        input_index = i + 1
+        img_label = f"ov{i}"
+        out_label = f"v{i + 1}"
+        opacity = f"{max(0.0, min(1.0, ov.opacity)):.3f}"
+        start = f"{ov.start:.3f}"
+        end = f"{ov.end:.3f}"
+
+        image_filter = f"[{input_index}:v]format=rgba,colorchannelmixer=aa={opacity}"
+        if ov.w > 0 and ov.h > 0:
+            image_filter += f",scale={ov.w}:{ov.h}"
+        image_filter += f"[{img_label}]"
+        filters.append(image_filter)
+        filters.append(
+            f"[{prev_label}][{img_label}]overlay=x={ov.x}:y={ov.y}:enable=between(t\\,{start}\\,{end})[{out_label}]"
+        )
+        prev_label = out_label
+
+    args_out = [
+        *args,
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            f"[{prev_label}]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
+    ]
+    if duration_seconds is not None and duration_seconds > 0:
+        args_out.extend(["-t", f"{duration_seconds:.3f}"])
+    args_out.append(output_path)
+    return args_out
+
+
+def _probe_media_duration_seconds(path: Path) -> Optional[float]:
+    ffprobe_cmds = ["ffprobe"]
+    if imageio_ffmpeg is not None:
+        try:
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if ffmpeg_exe:
+                ffprobe_cmds.insert(0, str(Path(ffmpeg_exe).with_name("ffprobe" + Path(ffmpeg_exe).suffix)))
+        except Exception:
+            pass
+    for ffprobe in ffprobe_cmds:
+        try:
+            completed = subprocess.run(
+                [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                continue
+            raw = (completed.stdout or "").strip()
+            if not raw:
+                continue
+            value = float(raw)
+            if value > 0:
+                return value
+        except Exception:
+            continue
+    return None
+
+
+def _probe_media_duration_with_ffmpeg(ffmpeg: str, path: Path) -> Optional[float]:
+    try:
+        completed = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", str(path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        stderr_text = (completed.stderr or "")
+        m = re.search(r"Duration:\s*(\d{2}:\d{2}:\d{2}(?:\.\d+)?)", stderr_text)
+        if m is None:
+            return None
+        raw = m.group(1)
+        hh, mm, ss = raw.split(":")
+        value = int(hh) * 3600 + int(mm) * 60 + float(ss)
+        return value if value > 0 else None
+    except Exception:
+        return None
+
+
 @app.get("/health")
 async def health() -> dict:
     _ensure_default_project()
@@ -986,6 +1158,338 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
             logger.exception("Video generation failed: %s", error_message)
             log_fn(f"[error] {error_message}")
             log_fn(traceback_text)
+            manager.set_error(job.job_id, error_message)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return JobResponse(job_id=job.job_id)
+
+
+def _run_final_video_export(
+    payload: FinalVideoExportRequest,
+    *,
+    log_fn: Optional[Callable[[str], None]] = None,
+    progress_fn: Optional[Callable[[float], None]] = None,
+) -> str:
+    progress_step = 0.002
+
+    def _quantize_progress(value: float) -> float:
+        clamped = max(0.0, min(1.0, value))
+        return round(clamped / progress_step) * progress_step
+
+    def _parse_hhmmss_time(text: str) -> Optional[float]:
+        m = re.search(r"(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)", text)
+        if m is None:
+            return None
+        hh = int(m.group(1))
+        mm = int(m.group(2))
+        ss = float(m.group(3))
+        return hh * 3600 + mm * 60 + ss
+
+    def _log(message: str) -> None:
+        if log_fn is not None:
+            log_fn(message)
+
+    def _progress(value: float) -> None:
+        if progress_fn is not None:
+            progress_fn(_quantize_progress(value))
+
+    input_path = Path(payload.input_path)
+    if not input_path.exists():
+        raise HTTPException(status_code=400, detail=f"input_path が見つかりません: {payload.input_path}")
+
+    output_path = Path(payload.output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    valid_overlays: List[FinalOverlayItem] = []
+    skipped_overlays = 0
+    for ov in payload.overlays:
+        image_path = (ov.image or "").strip()
+        if not image_path:
+            skipped_overlays += 1
+            continue
+        image_file = Path(image_path)
+        if not image_file.exists() or not image_file.is_file():
+            skipped_overlays += 1
+            continue
+        if ov.end <= ov.start:
+            skipped_overlays += 1
+            continue
+        valid_overlays.append(
+            FinalOverlayItem(
+                image=str(image_file),
+                start=ov.start,
+                end=ov.end,
+                x=ov.x,
+                y=ov.y,
+                w=ov.w,
+                h=ov.h,
+                opacity=ov.opacity,
+            )
+        )
+
+    if skipped_overlays > 0:
+        _log(f"最終編集: 無効なオーバーレイ行をスキップ skipped={skipped_overlays}")
+        logger.warning("final export skipped invalid overlays skipped=%s", skipped_overlays)
+
+    requested_overlay_count = len(payload.overlays)
+    if requested_overlay_count > 0 and not valid_overlays:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "有効なオーバーレイがありません。"
+                "画像パスの存在、start/end 時間、座標/サイズの入力を確認してください。"
+            ),
+        )
+
+    _progress(0.05)
+    _log("最終編集: 書き出し準備完了")
+
+    ffmpeg = _resolve_ffmpeg_executable_for_backend()
+    source_duration_seconds = _probe_media_duration_seconds(input_path)
+    source_duration_seconds = source_duration_seconds or _probe_media_duration_with_ffmpeg(ffmpeg, input_path)
+    if source_duration_seconds is not None:
+        _log(f"最終編集: 入力動画長を検出 duration={source_duration_seconds:.3f}s")
+    else:
+        _log("最終編集: 入力動画長を検出できませんでした（ffprobe未検出または解析失敗）")
+    ffmpeg_output_path = output_path
+    output_text = str(output_path)
+    if any(ord(ch) > 127 for ch in output_text):
+        suffix = output_path.suffix or ".mp4"
+        ffmpeg_output_path = output_path.parent / f"final_export_{int(time.time() * 1000)}{suffix}"
+
+    args = _build_final_export_ffmpeg_args(
+        input_path=str(input_path),
+        output_path=str(ffmpeg_output_path),
+        overlays=valid_overlays,
+        duration_seconds=source_duration_seconds,
+    )
+    logger.info(
+        "final export start ffmpeg=%s output=%s actual_output=%s overlays=%s mode=%s",
+        ffmpeg,
+        str(output_path),
+        str(ffmpeg_output_path),
+        len(valid_overlays),
+        "stream-copy" if not valid_overlays else "overlay-render",
+    )
+    _log(f"最終編集: ffmpeg開始 overlays={len(valid_overlays)}")
+    _progress(0.2)
+
+    stderr_lines: List[str] = []
+    total_duration_seconds: Optional[float] = None
+    progress_value = 0.2
+    ffmpeg_start_at = time.time()
+    last_wait_log_at = ffmpeg_start_at
+    last_stderr_line_at = ffmpeg_start_at
+    stall_warned = False
+    silent_warn_seconds = 45.0
+    silent_kill_seconds = 180.0
+
+    def _process_ffmpeg_line(line: str) -> None:
+        nonlocal total_duration_seconds, progress_value, stderr_lines, last_stderr_line_at, stall_warned
+        if not line:
+            return
+        last_stderr_line_at = time.time()
+        stall_warned = False
+        stderr_lines.append(line)
+        if len(stderr_lines) > 120:
+            stderr_lines = stderr_lines[-120:]
+
+        if total_duration_seconds is None and "Duration:" in line:
+            total_duration_seconds = _parse_hhmmss_time(line)
+
+        encoded_seconds: Optional[float] = None
+        if line.startswith("out_time_ms="):
+            try:
+                encoded_seconds = float(line.split("=", 1)[1]) / 1_000_000.0
+            except Exception:
+                encoded_seconds = None
+        elif line.startswith("out_time="):
+            encoded_seconds = _parse_hhmmss_time(line.split("=", 1)[1])
+        elif "time=" in line:
+            time_match = re.search(r"time=\s*([0-9:.]+)", line)
+            if time_match is not None:
+                encoded_seconds = _parse_hhmmss_time(time_match.group(1))
+
+        has_progress_hint = (
+            encoded_seconds is not None
+            or line.startswith("progress=")
+            or "frame=" in line
+            or "fps=" in line
+            or "bitrate=" in line
+        )
+        if has_progress_hint:
+            if total_duration_seconds and encoded_seconds is not None and total_duration_seconds > 0:
+                ratio = max(0.0, min(1.0, encoded_seconds / total_duration_seconds))
+                progress_value = 0.2 + (0.7 * ratio)
+            else:
+                progress_value = min(0.9, progress_value + progress_step)
+            _progress(progress_value)
+
+        if len(stderr_lines) % 15 == 0:
+            _log(f"最終編集: ffmpeg進行中 {line}")
+
+    try:
+        ffmpeg_cmd = [ffmpeg, "-progress", "pipe:2", "-nostats", *args]
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        stderr_queue: queue.Queue[str] = queue.Queue()
+        stderr_done = threading.Event()
+
+        def _drain_stderr() -> None:
+            try:
+                if process.stderr is None:
+                    return
+                for raw_line in process.stderr:
+                    line = raw_line.strip()
+                    if line:
+                        stderr_queue.put(line)
+            finally:
+                stderr_done.set()
+
+        threading.Thread(target=_drain_stderr, daemon=True).start()
+
+        # stderr 読み取りとプロセス待機を並行し、行が出ない時間帯でも進捗を更新する
+        while True:
+            drained = 0
+            while drained < 200:
+                try:
+                    line = stderr_queue.get_nowait()
+                except queue.Empty:
+                    break
+                _process_ffmpeg_line(line)
+                drained += 1
+
+            return_code = process.poll()
+            if return_code is not None and stderr_done.is_set() and stderr_queue.empty():
+                break
+
+            elapsed = time.time() - ffmpeg_start_at
+            now = time.time()
+            silent_elapsed = now - last_stderr_line_at
+            if (not stall_warned) and silent_elapsed >= silent_warn_seconds:
+                stall_warned = True
+                logger.warning(
+                    "final export ffmpeg silent too long elapsed=%ss progress=%.1f%%",
+                    int(silent_elapsed),
+                    progress_value * 100,
+                )
+                _log(
+                    "最終編集: ffmpegログ無通信が継続しています "
+                    f"silent={int(silent_elapsed)}s progress={progress_value*100:.1f}%"
+                )
+            if silent_elapsed >= silent_kill_seconds:
+                process.kill()
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "ffmpegが長時間ログ無通信となったため中断しました。"
+                        f" silent={int(silent_elapsed)}s"
+                    ),
+                )
+
+            if (now - last_wait_log_at) >= 20.0:
+                last_wait_log_at = now
+                progress_value = min(0.98, progress_value + 0.002)
+                _progress(progress_value)
+                _log(f"最終編集: ffmpeg終了待機中 elapsed={int(elapsed)}s")
+            time.sleep(0.2)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("final export failed to start")
+        raise HTTPException(status_code=500, detail=f"ffmpeg 起動失敗: {exc}") from exc
+
+    if return_code != 0:
+        stderr_text = "\n".join(stderr_lines).strip()
+        detail = stderr_text or "ffmpeg 実行エラー"
+        logger.error("final export ffmpeg failed code=%s detail=%s", return_code, detail)
+        _log(f"最終編集: ffmpeg失敗 exit={return_code}")
+        raise HTTPException(status_code=500, detail=f"ffmpeg失敗(exit={return_code}): {detail}")
+
+    _progress(max(0.9, progress_value))
+    _log("最終編集: ffmpeg完了、後処理を開始")
+
+    if ffmpeg_output_path != output_path:
+        _progress(0.92)
+        _log(f"最終編集: 出力名調整中 temp={str(ffmpeg_output_path)}")
+        deadline = time.time() + 60.0
+        last_exc: Optional[Exception] = None
+        while time.time() < deadline:
+            try:
+                if output_path.exists():
+                    output_path.unlink()
+                ffmpeg_output_path.replace(output_path)
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(0.5)
+
+        if last_exc is not None:
+            logger.exception("final export rename failed temp=%s target=%s", str(ffmpeg_output_path), str(output_path))
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "書き出し後のファイル名変更に失敗しました。"
+                    "出力ファイルを他アプリで開いていないか確認してください: "
+                    f"{last_exc}"
+                ),
+            ) from last_exc
+        _progress(0.96)
+        _log("最終編集: 出力名調整完了")
+
+    _progress(0.99)
+    _log("最終編集: 最終化処理中")
+    _progress(1.0)
+    _log(f"最終編集: 書き出し完了 output={str(output_path)}")
+
+    return str(output_path)
+
+
+@app.post("/video/final-export", response_model=FinalVideoExportResponse)
+async def final_video_export(payload: FinalVideoExportRequest) -> FinalVideoExportResponse:
+    output_path = _run_final_video_export(payload)
+    return FinalVideoExportResponse(output_path=output_path)
+
+
+@app.post("/video/final-export-job", response_model=JobResponse)
+async def final_video_export_job(payload: FinalVideoExportRequest) -> JobResponse:
+    try:
+        job = manager.create_job()
+        manager.update_status(job.job_id, "running")
+    except Exception as exc:
+        logger.exception("Failed to create final export job")
+        raise HTTPException(status_code=500, detail=f"ジョブ作成に失敗しました: {exc}") from exc
+
+    def log_fn(message: str) -> None:
+        manager.add_log(job.job_id, message)
+
+    last_progress_log_at = 0.0
+
+    def progress_fn(value: float) -> None:
+        nonlocal last_progress_log_at
+        manager.update_progress(job.job_id, value, None)
+        now = time.time()
+        # APIサーバーログは高頻度になりすぎないよう20秒間隔で出力する
+        if (now - last_progress_log_at) >= 20.0 or value >= 0.999:
+            logger.info("final export progress job=%s progress=%.1f%%", job.job_id, value * 100)
+            last_progress_log_at = now
+
+    def worker() -> None:
+        try:
+            output_path = _run_final_video_export(payload, log_fn=log_fn, progress_fn=progress_fn)
+            manager.set_result(job.job_id, {"message": "completed", "output_path": output_path})
+        except Exception as exc:
+            error_message = f"{type(exc).__name__}: {exc}"
+            logger.exception("Final export failed: %s", error_message)
+            log_fn(f"[error] {error_message}")
             manager.set_error(job.job_id, error_message)
 
     threading.Thread(target=worker, daemon=True).start()
