@@ -3415,6 +3415,7 @@ class PonchiGenerateForm extends StatefulWidget {
 }
 
 class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
+  static const double _compactFontSize = 12;
   final _formKey = GlobalKey<FormState>();
   final _srtController = TextEditingController();
   final _outputController = TextEditingController(text: 'ponchi_images');
@@ -3669,10 +3670,12 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                       children: [
                         Row(
                           children: [
-                            Expanded(
+                            SizedBox(
+                              width: 110,
                               child: TextFormField(
                                 initialValue: row.start,
-                                decoration: const InputDecoration(labelText: '開始'),
+                                style: const TextStyle(fontSize: _compactFontSize),
+                                decoration: _compactInputDecoration('開始'),
                                 onChanged: (v) {
                                   row.start = v;
                                   _syncMarkdownTableFromRows();
@@ -3680,16 +3683,19 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Expanded(
+                            SizedBox(
+                              width: 110,
                               child: TextFormField(
                                 initialValue: row.end,
-                                decoration: const InputDecoration(labelText: '終了'),
+                                style: const TextStyle(fontSize: _compactFontSize),
+                                decoration: _compactInputDecoration('終了'),
                                 onChanged: (v) {
                                   row.end = v;
                                   _syncMarkdownTableFromRows();
                                 },
                               ),
                             ),
+                            const Spacer(),
                             IconButton(
                               onPressed: () {
                                 setState(() {
@@ -3706,7 +3712,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                         TextFormField(
                           initialValue: row.visualSuggestion,
                           maxLines: 2,
-                          decoration: const InputDecoration(labelText: 'ポンチ絵内容'),
+                          style: const TextStyle(fontSize: _compactFontSize),
+                          decoration: _compactInputDecoration('ポンチ絵内容'),
                           onChanged: (v) {
                             row.visualSuggestion = v;
                             _syncMarkdownTableFromRows();
@@ -3716,7 +3723,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                         TextFormField(
                           initialValue: row.imagePrompt,
                           maxLines: 2,
-                          decoration: const InputDecoration(labelText: '画像生成プロンプト'),
+                          style: const TextStyle(fontSize: _compactFontSize),
+                          decoration: _compactInputDecoration('画像生成プロンプト'),
                           onChanged: (v) {
                             row.imagePrompt = v;
                             _syncMarkdownTableFromRows();
@@ -3742,6 +3750,54 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
 
   String _resolvePonchiApiKey() {
     return ApiKeys.gemini.value;
+  }
+
+  InputDecoration _compactInputDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      labelStyle: const TextStyle(fontSize: _compactFontSize),
+    );
+  }
+
+  Future<void> _openPreviewDialog(_PonchiPreviewItem item) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final image = item.bytes != null
+            ? Image.memory(item.bytes!, fit: BoxFit.contain)
+            : Image.file(
+                File(item.path),
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Text('画像を読み込めませんでした。'),
+              );
+        return Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(item.title, style: Theme.of(context).textTheme.titleMedium),
+                if (item.subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(item.subtitle, style: Theme.of(context).textTheme.bodySmall),
+                ],
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 560),
+                    child: image,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _submitPonchiIdeas() async {
@@ -3859,15 +3915,27 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                     Text(item.subtitle, style: Theme.of(context).textTheme.bodySmall),
                   ],
                   const SizedBox(height: 8),
-                  SizedBox(
-                    height: 180,
-                    child: item.bytes != null
-                        ? Image.memory(item.bytes!, fit: BoxFit.contain)
-                        : Image.file(
-                            File(item.path),
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const Text('画像を読み込めませんでした。'),
-                          ),
+                  GestureDetector(
+                    onTap: () => _openPreviewDialog(item),
+                    child: SizedBox(
+                      height: 180,
+                      child: item.bytes != null
+                          ? Image.memory(item.bytes!, fit: BoxFit.contain)
+                          : Image.file(
+                              File(item.path),
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => const Text('画像を読み込めませんでした。'),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () => _openPreviewDialog(item),
+                      icon: const Icon(Icons.zoom_in),
+                      label: const Text('拡大プレビュー'),
+                    ),
                   ),
                 ],
               ),
