@@ -3430,6 +3430,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _outputTextController = TextEditingController();
   final List<_PonchiPreviewItem> _previewItems = [];
   final List<_PonchiIdeaRow> _ideaRows = [];
+  final Set<String> _rowGeneratingKeys = <String>{};
   late final InputPersistence _persistence;
   String _engine = 'Gemini';
   List<String> _ponchiModels = const ['gemini-2.0-flash'];
@@ -3864,9 +3865,13 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           SizedBox(
             height: 36,
             child: ElevatedButton(
-              onPressed: _isSubmittingImages ? null : () => _generateImageForRow(row),
+              onPressed: _isSubmittingImages || _rowGeneratingKeys.contains(_rowKey(row))
+                  ? null
+                  : () => _generateImageForRow(row),
               child: Text(
-                _isSubmittingImages ? '生成中' : '生成',
+                (_isSubmittingImages || _rowGeneratingKeys.contains(_rowKey(row)))
+                    ? '生成中'
+                    : '生成',
                 style: const TextStyle(fontSize: _compactFontSize),
               ),
             ),
@@ -3899,6 +3904,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     return null;
   }
 
+  String _rowKey(_PonchiIdeaRow row) => '${row.start}|${row.end}|${row.imagePrompt}';
+
   Widget _buildPreviewCell(_PonchiIdeaRow row) {
     final preview = _findPreviewForRow(row);
     if (preview == null) {
@@ -3926,14 +3933,95 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   }
 
   Future<void> _generateImageForRow(_PonchiIdeaRow row) async {
-    await _submitPonchiImages();
-    if (!mounted) return;
-    final preview = _findPreviewForRow(row);
-    if (preview != null) {
-      await _openPreviewDialog(preview);
+    final apiKey = ApiKeys.gemini.value;
+    if (apiKey.isEmpty) {
+      _showSnackBar('Gemini APIキーが未設定です。設定タブで入力してください。');
       return;
     }
-    _showSnackBar('この行のプレビューが見つかりませんでした。');
+    if (_outputController.text.trim().isEmpty) {
+      _showSnackBar('出力フォルダを指定してください。');
+      return;
+    }
+    final rowKey = _rowKey(row);
+    setState(() {
+      _rowGeneratingKeys.add(rowKey);
+    });
+    try {
+      final healthy = await widget.checkApiHealth();
+      if (!healthy) {
+        _showSnackBar('API サーバーに接続できません。');
+        return;
+      }
+      final payload = {
+        'api_key': apiKey,
+        'srt_path': _srtController.text,
+        'output_dir': _outputController.text.trim(),
+        'model': _geminiModelController.text.trim(),
+        'project_id': ProjectState.currentProjectId.value,
+        'suggestions': [
+          {
+            'start': row.start,
+            'end': row.end,
+            'visual_suggestion': row.visualSuggestion,
+            'image_prompt': row.imagePrompt,
+          }
+        ],
+      };
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/ponchi/images'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 180));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _showSnackBar('行画像の生成に失敗しました: ${response.statusCode} ${response.body}');
+        return;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final items = data['items'] as List<dynamic>? ?? [];
+      final outputDir = data['output_dir'] as String? ?? '';
+      _PonchiPreviewItem? generated;
+      if (items.isNotEmpty) {
+        final map = items.first as Map<String, dynamic>;
+        final imageName = (map['image'] as String? ?? '').trim();
+        final imagePath = (outputDir.isNotEmpty && imageName.isNotEmpty)
+            ? _joinPaths(outputDir, imageName)
+            : imageName;
+        final imageBase64 = (map['image_base64'] as String? ?? '').trim();
+        Uint8List? bytes;
+        if (imageBase64.isNotEmpty) {
+          bytes = base64Decode(imageBase64);
+        }
+        generated = _PonchiPreviewItem(
+          title: '${map['start']}〜${map['end']}',
+          subtitle: (map['visual_suggestion'] as String? ?? '').trim(),
+          path: imagePath,
+          bytes: bytes,
+        );
+      }
+      if (!mounted) return;
+      if (generated == null) {
+        _showSnackBar('この行の画像が生成されませんでした。');
+        return;
+      }
+      setState(() {
+        _previewItems.removeWhere((item) => item.title == generated!.title);
+        _previewItems.add(generated!);
+      });
+      await _openPreviewDialog(generated);
+      _showSnackBar('行ごとの画像生成が完了しました。');
+    } on TimeoutException {
+      _showSnackBar('行画像生成リクエストがタイムアウトしました。');
+    } catch (error) {
+      _showSnackBar('行画像生成エラー: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _rowGeneratingKeys.remove(rowKey);
+        });
+      }
+    }
   }
 
   void _showSnackBar(String message) {
