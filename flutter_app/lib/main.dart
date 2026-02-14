@@ -364,13 +364,14 @@ class MovieMakerApp extends StatelessWidget {
       surface: const Color(0xFFFFFFFF),
       background: const Color(0xFFF6F4FF),
     );
-    final baseTextTheme = ThemeData(useMaterial3: true).textTheme.apply(fontSizeFactor: 0.92);
+    final baseTextTheme = ThemeData(useMaterial3: true).textTheme.apply(fontSizeFactor: 0.88);
     return MaterialApp(
       title: appTitle,
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF6F4FF),
+        visualDensity: VisualDensity.compact,
         cardTheme: CardThemeData(
           elevation: 3,
           shadowColor: colorScheme.primary.withOpacity(0.2),
@@ -392,11 +393,11 @@ class MovieMakerApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: colorScheme.primary, width: 1.6),
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             backgroundColor: colorScheme.primary,
             foregroundColor: Colors.white,
             elevation: 2,
@@ -405,7 +406,7 @@ class MovieMakerApp extends StatelessWidget {
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             side: BorderSide(color: colorScheme.primary.withOpacity(0.6)),
           ),
