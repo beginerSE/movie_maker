@@ -3746,9 +3746,11 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                 columnWidths: const {
                   0: FixedColumnWidth(90),
                   1: FixedColumnWidth(90),
-                  2: FixedColumnWidth(240),
-                  3: FixedColumnWidth(340),
-                  4: FixedColumnWidth(56),
+                  2: FixedColumnWidth(220),
+                  3: FixedColumnWidth(300),
+                  4: FixedColumnWidth(120),
+                  5: FixedColumnWidth(180),
+                  6: FixedColumnWidth(56),
                 },
                 children: [
                   _buildIdeaTableHeaderRow(context),
@@ -3758,37 +3760,6 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                 ],
               ),
             ),
-          const SizedBox(height: 16),
-          Text('画像生成操作（再表示）', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              ElevatedButton.icon(
-                onPressed: _isSubmittingIdeas ? null : _submitPonchiIdeas,
-                icon: const Icon(Icons.lightbulb),
-                label: Text(_isSubmittingIdeas ? '生成中...' : '案出し'),
-              ),
-              ElevatedButton.icon(
-                onPressed: _isSubmittingImages ? null : _submitPonchiImages,
-                icon: const Icon(Icons.brush),
-                label: Text(_isSubmittingImages ? '生成中...' : '画像生成（ポンチ絵作成）'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text('画像プレビュー（再表示）', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(context).dividerColor),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: _buildPonchiPreviewGrid(),
-          ),
           const SizedBox(height: 16),
           Align(
             alignment: Alignment.centerRight,
@@ -3826,6 +3797,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         headerCell('終了'),
         headerCell('ポンチ絵内容'),
         headerCell('画像生成プロンプト'),
+        headerCell('画像生成'),
+        headerCell('プレビュー'),
         headerCell('削除'),
       ],
     );
@@ -3888,6 +3861,19 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           ),
         ),
         cell(
+          SizedBox(
+            height: 36,
+            child: ElevatedButton(
+              onPressed: _isSubmittingImages ? null : () => _generateImageForRow(row),
+              child: Text(
+                _isSubmittingImages ? '生成中' : '生成',
+                style: const TextStyle(fontSize: _compactFontSize),
+              ),
+            ),
+          ),
+        ),
+        cell(_buildPreviewCell(row)),
+        cell(
           IconButton(
             onPressed: () {
               setState(() {
@@ -3901,6 +3887,53 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         ),
       ],
     );
+  }
+
+  _PonchiPreviewItem? _findPreviewForRow(_PonchiIdeaRow row) {
+    final rowTitle = '${row.start}〜${row.end}'.trim();
+    for (final item in _previewItems) {
+      if (item.title.trim() == rowTitle) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  Widget _buildPreviewCell(_PonchiIdeaRow row) {
+    final preview = _findPreviewForRow(row);
+    if (preview == null) {
+      return const SizedBox(
+        height: 72,
+        child: Center(
+          child: Text('未生成', style: TextStyle(fontSize: _compactFontSize)),
+        ),
+      );
+    }
+    final image = preview.bytes != null
+        ? Image.memory(preview.bytes!, fit: BoxFit.cover)
+        : Image.file(
+            File(preview.path),
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const Center(child: Text('読込失敗')),
+          );
+    return GestureDetector(
+      onTap: () => _openPreviewDialog(preview),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(height: 72, child: image),
+      ),
+    );
+  }
+
+  Future<void> _generateImageForRow(_PonchiIdeaRow row) async {
+    await _submitPonchiImages();
+    if (!mounted) return;
+    final preview = _findPreviewForRow(row);
+    if (preview != null) {
+      await _openPreviewDialog(preview);
+      return;
+    }
+    _showSnackBar('この行のプレビューが見つかりませんでした。');
   }
 
   void _showSnackBar(String message) {
