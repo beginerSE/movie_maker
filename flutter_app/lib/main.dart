@@ -5057,17 +5057,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
         _exportProgress = 0.2;
         _exportStatusMessage = 'FFmpeg コマンドを構築中...';
       });
-      final ffmpegExecutable = _resolveFfmpegExecutable();
-      if (ffmpegExecutable == null) {
-        AppLogger.error('最終編集: ffmpeg実行ファイルが見つかりません');
-        if (!mounted) return;
-        setState(() {
-          _exportProgress = 0.0;
-          _exportStatusMessage = '失敗: ffmpeg が見つかりません';
-        });
-        _showSnackBar('ffmpeg 実行ファイルが見つかりません。FFMPEG_PATH か PATH を確認してください。');
-        return;
-      }
+      final ffmpegExecutable = await _resolveFfmpegExecutable();
       final args = _buildFfmpegArgs(
         inputPath: inputPath,
         outputPath: outputPath,
@@ -5383,7 +5373,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     );
   }
 
-  String? _resolveFfmpegExecutable() {
+  Future<String> _resolveFfmpegExecutable() async {
     final executableName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
     final candidates = <String>[];
     final envPath = (Platform.environment['FFMPEG_PATH'] ?? '').trim();
@@ -5422,7 +5412,35 @@ class _VideoEditFormState extends State<VideoEditForm> {
         return normalized;
       }
     }
-    return null;
+
+    try {
+      if (Platform.isWindows) {
+        final whereResult = await Process.run('where', ['ffmpeg']);
+        if (whereResult.exitCode == 0) {
+          final lines = (whereResult.stdout ?? '')
+              .toString()
+              .split(RegExp(r'\r?\n'))
+              .map((line) => line.trim())
+              .where((line) => line.isNotEmpty)
+              .toList();
+          if (lines.isNotEmpty) {
+            return lines.first;
+          }
+        }
+      } else {
+        final whichResult = await Process.run('which', ['ffmpeg']);
+        if (whichResult.exitCode == 0) {
+          final resolved = (whichResult.stdout ?? '').toString().trim();
+          if (resolved.isNotEmpty) {
+            return resolved;
+          }
+        }
+      }
+    } catch (_) {
+      // 探索補助の失敗時はコマンド名での実行にフォールバックする
+    }
+
+    return 'ffmpeg';
   }
 
   @override
