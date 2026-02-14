@@ -596,13 +596,11 @@ def _build_final_export_ffmpeg_args(
     if not overlays:
         args_out = [
             *args,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "18",
-            "-c:a",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c",
             "copy",
             "-movflags",
             "+faststart",
@@ -1256,11 +1254,12 @@ def _run_final_video_export(
         duration_seconds=source_duration_seconds,
     )
     logger.info(
-        "final export start ffmpeg=%s output=%s actual_output=%s overlays=%s",
+        "final export start ffmpeg=%s output=%s actual_output=%s overlays=%s mode=%s",
         ffmpeg,
         str(output_path),
         str(ffmpeg_output_path),
         len(valid_overlays),
+        "stream-copy" if not valid_overlays else "overlay-render",
     )
     _log(f"最終編集: ffmpeg開始 overlays={len(valid_overlays)}")
     _progress(0.2)
@@ -1320,8 +1319,9 @@ def _run_final_video_export(
             _log(f"最終編集: ffmpeg進行中 {line}")
 
     try:
+        ffmpeg_cmd = [ffmpeg, "-progress", "pipe:2", "-nostats", *args]
         process = subprocess.Popen(
-            [ffmpeg, *args, "-progress", "pipe:2", "-nostats"],
+            ffmpeg_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
