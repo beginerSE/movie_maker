@@ -264,6 +264,60 @@ class ProjectFlowStep {
   final String label;
 }
 
+enum AppLogLevel { info, warn, error }
+
+class AppLogEntry {
+  AppLogEntry({
+    required this.timestamp,
+    required this.level,
+    required this.message,
+  });
+
+  final DateTime timestamp;
+  final AppLogLevel level;
+  final String message;
+}
+
+class AppLogger {
+  AppLogger._();
+
+  static const int _maxLogs = 2000;
+  static final List<AppLogEntry> _entries = <AppLogEntry>[];
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+
+  static List<AppLogEntry> get entries => List<AppLogEntry>.unmodifiable(_entries);
+
+  static void info(String message) => _add(AppLogLevel.info, message);
+  static void warn(String message) => _add(AppLogLevel.warn, message);
+
+  static void error(String message, {Object? error, StackTrace? stackTrace}) {
+    final details = StringBuffer(message);
+    if (error != null) {
+      details.write(' | error=$error');
+    }
+    if (stackTrace != null) {
+      final lines = stackTrace.toString().split('\n');
+      if (lines.isNotEmpty) {
+        details.write(' | st=${lines.first}');
+      }
+    }
+    _add(AppLogLevel.error, details.toString());
+  }
+
+  static void clear() {
+    _entries.clear();
+    revision.value += 1;
+  }
+
+  static void _add(AppLogLevel level, String message) {
+    _entries.add(AppLogEntry(timestamp: DateTime.now(), level: level, message: message));
+    if (_entries.length > _maxLogs) {
+      _entries.removeRange(0, _entries.length - _maxLogs);
+    }
+    revision.value += 1;
+  }
+}
+
 const List<ProjectFlowStep> kFlowSteps = [
   ProjectFlowStep(key: 'script', label: '① 台本作成（AI + 人間修正）'),
   ProjectFlowStep(key: 'base_video', label: '② 動画作成（ベース動画生成）'),
@@ -418,6 +472,8 @@ class _StudioShellState extends State<StudioShell> {
   bool _projectsLoading = false;
   Map<String, String> _currentFlowState = {for (final step in kFlowSteps) step.key: '未着手'};
   bool _flowStateLoading = false;
+  double _bottomPanelRatio = 0.25;
+  bool _bottomPanelCollapsed = false;
 
   @override
   void initState() {
@@ -1020,6 +1076,7 @@ class _StudioShellState extends State<StudioShell> {
   }
 
   void _showApiServerSnackBar(String message) {
+    AppLogger.warn('API通知: $message');
     if (!mounted) {
       return;
     }
@@ -1035,6 +1092,7 @@ class _StudioShellState extends State<StudioShell> {
     if (line.trim().isEmpty) {
       return;
     }
+    AppLogger.error('APIエラー詳細: $line');
     setState(() {
       final existing = _apiServerErrorDetails;
       if (existing == null || existing.isEmpty) {
@@ -1049,6 +1107,7 @@ class _StudioShellState extends State<StudioShell> {
   }
 
   void _setApiServerError(String message) {
+    AppLogger.error('APIエラー: $message');
     if (!mounted) {
       return;
     }
@@ -1063,6 +1122,27 @@ class _StudioShellState extends State<StudioShell> {
     }
     setState(() {
       _apiServerErrorDetails = null;
+    });
+  }
+
+  void _resizeBottomPanel(double deltaDy, double totalHeight) {
+    if (totalHeight <= 0) {
+      return;
+    }
+    final minRatio = 120 / totalHeight;
+    final maxRatio = 0.6;
+    final next = (_bottomPanelRatio - (deltaDy / totalHeight)).clamp(minRatio, maxRatio);
+    setState(() {
+      _bottomPanelRatio = next;
+      if (_bottomPanelCollapsed) {
+        _bottomPanelCollapsed = false;
+      }
+    });
+  }
+
+  void _toggleBottomPanelCollapsed() {
+    setState(() {
+      _bottomPanelCollapsed = !_bottomPanelCollapsed;
     });
   }
 
@@ -1146,8 +1226,17 @@ class _StudioShellState extends State<StudioShell> {
                 ),
               ),
             Expanded(
-              child: Row(
-                children: [
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final totalHeight = constraints.maxHeight;
+                  final minRatio = totalHeight <= 0 ? 0.0 : 120 / totalHeight;
+                  final clampedRatio = _bottomPanelRatio.clamp(minRatio, 0.6);
+                  final panelHeight = _bottomPanelCollapsed ? 38.0 : totalHeight * clampedRatio;
+                  return Column(
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
                   Container(
                     width: 220,
                     decoration: BoxDecoration(
@@ -1303,7 +1392,7 @@ class _StudioShellState extends State<StudioShell> {
                     ),
                   ),
                   Expanded(
-                    flex: 3,
+                    flex: 1,
                     child: Padding(
                       padding: const EdgeInsets.all(20),
                       child: Card(
@@ -1314,18 +1403,49 @@ class _StudioShellState extends State<StudioShell> {
                       ),
                     ),
                   ),
-                  Expanded(
-                    flex: 2,
-                    child: Card(
-                      margin: const EdgeInsets.all(20),
-                      child: LogPanel(
-                        pageName: _pageLabel(_selectedIndex),
-                        latestJobId: _latestJobId,
-                        jobInProgress: _videoJobInProgress,
-                      ),
-                    ),
-                  ),
                 ],
+                      ),
+                      ),
+                      MouseRegion(
+                        cursor: SystemMouseCursors.resizeUpDown,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onVerticalDragUpdate: (details) {
+                            _resizeBottomPanel(details.delta.dy, totalHeight);
+                          },
+                          child: Container(
+                            height: 8,
+                            color: Colors.black.withOpacity(0.06),
+                            alignment: Alignment.center,
+                            child: Container(
+                              width: 48,
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: Colors.black26,
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        height: panelHeight,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                          child: Card(
+                            child: LogPanel(
+                              pageName: _pageLabel(_selectedIndex),
+                              latestJobId: _latestJobId,
+                              jobInProgress: _videoJobInProgress,
+                              collapsed: _bottomPanelCollapsed,
+                              onToggleCollapse: _toggleBottomPanelCollapsed,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ],
@@ -4843,6 +4963,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
       _exportProgress = 0.0;
       _exportStatusMessage = '書き出し準備を開始しました...';
     });
+    AppLogger.info('最終編集: 書き出し準備開始');
 
     try {
       for (final stage in stages) {
@@ -4852,8 +4973,10 @@ class _VideoEditFormState extends State<VideoEditForm> {
           _exportProgress = stage.progress;
           _exportStatusMessage = stage.message;
         });
+        AppLogger.info('最終編集: ${stage.message}');
       }
       _showSnackBar('書き出し先: ${_resolvedOutputPath()}');
+      AppLogger.info('最終編集: 書き出し先 ${_resolvedOutputPath()}');
     } finally {
       if (!mounted) return;
       setState(() {
@@ -4885,14 +5008,17 @@ class _VideoEditFormState extends State<VideoEditForm> {
 
   Future<void> _initInputVideoPreview(String videoPath) async {
     final localPath = videoPath.trim();
+    AppLogger.info('詳細動画編集: initialize開始 path=$localPath');
     final old = _videoPreviewController;
     if (old != null) {
+      AppLogger.info('詳細動画編集: 既存プレビュー停止/破棄');
       await old.pause();
       await old.dispose();
     }
     _videoPreviewController = null;
 
     if (localPath.isEmpty) {
+      AppLogger.warn('詳細動画編集: 動画未選択');
       if (!mounted) return;
       setState(() {
         _videoPreviewInitializing = false;
@@ -4903,6 +5029,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
 
     final file = File(localPath);
     if (!file.existsSync()) {
+      AppLogger.error('詳細動画編集: 動画ファイルが見つかりません path=$localPath');
       if (!mounted) return;
       setState(() {
         _videoPreviewInitializing = false;
@@ -4921,6 +5048,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     try {
       controller = VideoPlayerController.file(File(localPath));
       await controller.initialize();
+      AppLogger.info('詳細動画編集: initialize成功 path=$localPath');
       if (!mounted) {
         await controller.dispose();
         return;
@@ -4933,6 +5061,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     } catch (e, st) {
       debugPrint(e.toString());
       debugPrint(st.toString());
+      AppLogger.error('詳細動画編集: initialize失敗 path=$localPath', error: e, stackTrace: st);
       await controller?.dispose();
       if (!mounted) return;
       setState(() {
@@ -4944,10 +5073,12 @@ class _VideoEditFormState extends State<VideoEditForm> {
   }
 
   Future<void> _selectInputVideo() async {
+    AppLogger.info('詳細動画編集: ファイル選択ダイアログを開きます');
     await _selectFile(
       _inputVideoController,
       const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
     );
+    AppLogger.info('詳細動画編集: ファイル選択 path=${_inputVideoController.text.trim()}');
     await _initInputVideoPreview(_inputVideoController.text);
   }
 
@@ -5040,8 +5171,10 @@ class _VideoEditFormState extends State<VideoEditForm> {
                                 onPressed: () {
                                   final c = _videoPreviewController!;
                                   if (c.value.isPlaying) {
+                                    AppLogger.info('詳細動画編集: 再生停止');
                                     c.pause();
                                   } else {
+                                    AppLogger.info('詳細動画編集: 再生開始');
                                     c.play();
                                   }
                                   setState(() {});
@@ -6065,14 +6198,17 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
 
   Future<void> _initVideoPreview(String videoPath) async {
     final localPath = videoPath.trim();
+    AppLogger.info('動画作成: initialize開始 path=$localPath');
     final old = _previewController;
     if (old != null) {
+      AppLogger.info('動画作成: 再生停止');
       await old.pause();
       await old.dispose();
     }
     _previewController = null;
 
     if (localPath.isEmpty) {
+      AppLogger.warn('動画作成: 動画未選択');
       if (!mounted) return;
       setState(() {
         _previewInitializing = false;
@@ -6084,6 +6220,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
 
     final file = File(localPath);
     if (!file.existsSync()) {
+      AppLogger.error('動画作成: 動画ファイルが見つかりません path=$localPath');
       if (!mounted) return;
       setState(() {
         _previewInitializing = false;
@@ -6104,6 +6241,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     try {
       controller = VideoPlayerController.file(File(localPath));
       await controller.initialize();
+      AppLogger.info('動画作成: initialize成功 path=$localPath');
       if (!mounted) {
         await controller.dispose();
         return;
@@ -6116,6 +6254,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     } catch (e, st) {
       debugPrint(e.toString());
       debugPrint(st.toString());
+      AppLogger.error('動画作成: initialize失敗 path=$localPath', error: e, stackTrace: st);
       await controller?.dispose();
       if (!mounted) return;
       setState(() {
@@ -6173,8 +6312,8 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
         _lastJobLogsText = combined;
       });
       await _saveVideoArtifacts(logsText: combined);
-    } catch (_) {
-      // ignore transient log fetch errors
+    } catch (e, st) {
+      AppLogger.error('動画作成: ログ取得失敗 job=$jobId', error: e, stackTrace: st);
     }
   }
 
@@ -6221,11 +6360,12 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
           widget.jobInProgress.value = false;
           return;
         }
-      } catch (_) {
-        // ignore transient polling errors
+      } catch (e, st) {
+        AppLogger.error('動画作成: ジョブ監視失敗 job=$jobId', error: e, stackTrace: st);
       }
       await Future<void>.delayed(const Duration(seconds: 2));
     }
+    AppLogger.warn('動画作成: ジョブ監視タイムアウト job=$jobId');
   }
 
   @override
@@ -7007,8 +7147,10 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                       onPressed: () {
                         final c = _previewController!;
                         if (c.value.isPlaying) {
+                          AppLogger.info('動画作成: 再生停止');
                           c.pause();
                         } else {
+                          AppLogger.info('動画作成: 再生開始');
                           c.play();
                         }
                         setState(() {});
@@ -7209,32 +7351,26 @@ class LogPanel extends StatefulWidget {
     required this.pageName,
     this.latestJobId,
     this.jobInProgress,
+    this.collapsed = false,
+    this.onToggleCollapse,
   });
 
   final String pageName;
   final ValueListenable<String?>? latestJobId;
   final ValueNotifier<bool>? jobInProgress;
+  final bool collapsed;
+  final VoidCallback? onToggleCollapse;
 
   @override
   State<LogPanel> createState() => _LogPanelState();
 }
 
-enum _LogLevel { info, warning, error, success }
-
-class _LogEntry {
-  _LogEntry({
-    required this.timestamp,
-    required this.message,
-    this.level = _LogLevel.info,
-  });
-
-  final DateTime timestamp;
-  final String message;
-  final _LogLevel level;
-}
-
 class _LogPanelState extends State<LogPanel> {
-  final List<_LogEntry> _logs = [];
+  static const _tabLogs = 'Logs';
+  static const _tabErrors = 'Errors';
+  static const _tabRequests = 'Requests';
+
+  final List<String> _tabs = const [_tabLogs, _tabErrors, _tabRequests];
   final ScrollController _scrollController = ScrollController();
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -7242,11 +7378,14 @@ class _LogPanelState extends State<LogPanel> {
   double? _progress;
   String _progressLabel = '';
   String? _eta;
+  bool _autoScroll = true;
+  String _activeTab = _tabLogs;
 
   @override
   void initState() {
     super.initState();
     widget.latestJobId?.addListener(_handleLatestJobIdChanged);
+    AppLogger.revision.addListener(_scrollToBottom);
   }
 
   @override
@@ -7261,6 +7400,7 @@ class _LogPanelState extends State<LogPanel> {
   @override
   void dispose() {
     widget.latestJobId?.removeListener(_handleLatestJobIdChanged);
+    AppLogger.revision.removeListener(_scrollToBottom);
     _subscription?.cancel();
     _channel?.sink.close();
     _scrollController.dispose();
@@ -7269,32 +7409,82 @@ class _LogPanelState extends State<LogPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final visibleLogs = _visibleLogs();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            '${widget.pageName} ログ',
-            style: Theme.of(context).textTheme.titleMedium,
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF6F8FC),
+            border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
+          ),
+          child: Row(
+            children: [
+              ..._tabs.map(
+                (tab) => Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    label: Text(tab),
+                    selected: _activeTab == tab,
+                    onSelected: (_) => setState(() {
+                      _activeTab = tab;
+                    }),
+                  ),
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Clear',
+                icon: const Icon(Icons.clear_all, size: 18),
+                onPressed: () {
+                  AppLogger.clear();
+                },
+              ),
+              IconButton(
+                tooltip: 'Copy',
+                icon: const Icon(Icons.copy, size: 18),
+                onPressed: () async {
+                  final text = visibleLogs
+                      .map((entry) => '[${_formatTimestamp(entry.timestamp)}] ${entry.level.name.toUpperCase()} ${entry.message}')
+                      .join('\n');
+                  await Clipboard.setData(ClipboardData(text: text));
+                },
+              ),
+              IconButton(
+                tooltip: _autoScroll ? 'Auto-scroll ON' : 'Auto-scroll OFF',
+                icon: Icon(_autoScroll ? Icons.vertical_align_bottom : Icons.do_not_disturb_alt, size: 18),
+                onPressed: () {
+                  setState(() {
+                    _autoScroll = !_autoScroll;
+                  });
+                },
+              ),
+              IconButton(
+                tooltip: widget.collapsed ? 'Expand' : 'Collapse',
+                icon: Icon(widget.collapsed ? Icons.unfold_less : Icons.unfold_more, size: 18),
+                onPressed: widget.onToggleCollapse,
+              ),
+            ],
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: ElevatedButton.icon(
             onPressed: _connectLatestJob,
             icon: const Icon(Icons.auto_graph),
             label: const Text('最新ジョブに自動接続'),
           ),
         ),
+        if (widget.collapsed) const SizedBox.shrink() else ...[
         if (_currentJobId != null) ...[
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
             child: Text('Job: $_currentJobId'),
           ),
           if (_progress != null) ...[
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
               child: Text(
                 _progressLabel,
                 style: const TextStyle(
@@ -7305,48 +7495,68 @@ class _LogPanelState extends State<LogPanel> {
             ),
             const SizedBox(height: 8),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
               child: LinearProgressIndicator(value: _progress),
             ),
             if (_eta != null)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
                 child: Text('ETA: $_eta'),
               ),
           ],
         ],
-        const SizedBox(height: 8),
         Expanded(
           child: Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.white, Colors.grey.shade50],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              border: Border.all(color: Colors.grey.shade200),
-              borderRadius: BorderRadius.circular(16),
+              color: const Color(0xFF101216),
+              border: Border.all(color: Colors.black26),
+              borderRadius: BorderRadius.circular(8),
             ),
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: _logs.length,
-              itemBuilder: (context, index) {
-                final entry = _logs[index];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(
-                    '[${_formatTimestamp(entry.timestamp)}] ${entry.message}',
-                    style: TextStyle(color: _logColor(entry.level)),
-                  ),
+            child: ValueListenableBuilder<int>(
+              valueListenable: AppLogger.revision,
+              builder: (context, _, __) {
+                final logs = _visibleLogs();
+                return ListView.builder(
+                  controller: _scrollController,
+                  itemCount: logs.length,
+                  itemBuilder: (context, index) {
+                    final entry = logs[index];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text(
+                        '${_formatTimestamp(entry.timestamp)}  ${entry.level.name.toUpperCase().padRight(5)}  ${entry.message}',
+                        style: TextStyle(
+                          color: _logColor(entry.level),
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                          height: 1.2,
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
             ),
           ),
         ),
+        ],
       ],
     );
+  }
+
+  List<AppLogEntry> _visibleLogs() {
+    final source = AppLogger.entries;
+    return source.where((entry) {
+      if (_activeTab == _tabErrors) {
+        return entry.level == AppLogLevel.error;
+      }
+      if (_activeTab == _tabRequests) {
+        return entry.message.contains('http') || entry.message.contains('API');
+      }
+      return true;
+    }).toList(growable: false);
   }
 
   void _handleLatestJobIdChanged() {
@@ -7360,7 +7570,7 @@ class _LogPanelState extends State<LogPanel> {
   void _connectLatestJob() {
     final jobId = widget.latestJobId?.value;
     if (jobId == null || jobId.isEmpty) {
-      _addLog('まだジョブが送信されていません。動画生成を開始してください。');
+      AppLogger.warn('まだジョブが送信されていません。動画生成を開始してください。');
       return;
     }
     _connectWebSocket(jobId);
@@ -7376,25 +7586,24 @@ class _LogPanelState extends State<LogPanel> {
 
     setState(() {
       _currentJobId = jobId;
-      _logs.clear();
       _progress = null;
       _progressLabel = '';
       _eta = null;
       _channel = channel;
     });
     _setJobInProgress(true);
-    _addLog('Connecting to $jobId ...');
+    AppLogger.info('Connecting to $jobId ...');
 
     _subscription = channel.stream.listen(
       (event) {
         _handleSocketEvent(event);
       },
       onError: (error) {
-        _addLog('WebSocket error: $error', level: _LogLevel.error);
+        AppLogger.error('WebSocket error', error: error);
         _setJobInProgress(false);
       },
       onDone: () {
-        _addLog('WebSocket closed', level: _LogLevel.warning);
+        AppLogger.warn('WebSocket closed');
         _setJobInProgress(false);
       },
     );
@@ -7416,7 +7625,7 @@ class _LogPanelState extends State<LogPanel> {
     }
 
     if (payload == null) {
-      _addLog(event.toString());
+      AppLogger.info(event.toString());
       return;
     }
 
@@ -7442,16 +7651,16 @@ class _LogPanelState extends State<LogPanel> {
         }
         return;
       case 'error':
-        _addLog('エラー: ${payload['message']}', level: _LogLevel.error);
+        AppLogger.error('エラー: ${payload['message']}');
         _setJobInProgress(false);
         return;
       case 'completed':
-        _addLog('完了: ${jsonEncode(payload['result'])}', level: _LogLevel.success);
+        AppLogger.info('完了: ${jsonEncode(payload['result'])}');
         _setJobInProgress(false);
         return;
       case 'log':
       default:
-        _addLog('${payload['message']}');
+        AppLogger.info('${payload['message']}');
         return;
     }
   }
@@ -7462,18 +7671,10 @@ class _LogPanelState extends State<LogPanel> {
     notifier.value = value;
   }
 
-  void _addLog(String message, { _LogLevel level = _LogLevel.info }) {
-    setState(() {
-      _logs.add(_LogEntry(timestamp: DateTime.now(), message: message, level: level));
-      const maxLogs = 200;
-      if (_logs.length > maxLogs) {
-        _logs.removeRange(0, _logs.length - maxLogs);
-      }
-    });
-    _scrollToBottom();
-  }
-
   void _scrollToBottom() {
+    if (!_autoScroll || widget.collapsed) {
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
       _scrollController.animateTo(
@@ -7491,25 +7692,28 @@ class _LogPanelState extends State<LogPanel> {
     return '$h:$m:$s';
   }
 
-  Color _logColor(_LogLevel level) {
+  Color _logColor(AppLogLevel level) {
     switch (level) {
-      case _LogLevel.error:
-        return Colors.redAccent;
-      case _LogLevel.warning:
-        return Colors.orangeAccent;
-      case _LogLevel.success:
-        return Colors.green;
-      case _LogLevel.info:
+      case AppLogLevel.error:
+        return const Color(0xFFFF8A80);
+      case AppLogLevel.warn:
+        return const Color(0xFFFFCC80);
+      case AppLogLevel.info:
       default:
-        return Colors.black87;
+        return const Color(0xFFCFD8DC);
     }
   }
 }
 
 Future<void> _selectFile(TextEditingController controller, XTypeGroup typeGroup) async {
+  AppLogger.info('ファイル選択を開始: ${typeGroup.label}');
   final file = await openFile(acceptedTypeGroups: [typeGroup]);
-  if (file == null) return;
+  if (file == null) {
+    AppLogger.warn('ファイル選択キャンセル: ${typeGroup.label}');
+    return;
+  }
   controller.text = file.path;
+  AppLogger.info('ファイル選択: ${file.path}');
 }
 
 Future<void> _selectFiles(TextEditingController controller, XTypeGroup typeGroup) async {
