@@ -6229,12 +6229,20 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     return (prefs.getString(_flowScriptPrefsKey()) ?? '').trim();
   }
 
-  String _expectedVideoPath(String scriptPath, String outputDir) {
-    final stem = File(scriptPath).uri.pathSegments.isEmpty
-        ? 'output'
-        : File(scriptPath).uri.pathSegments.last.split('.').first;
-    final baseDir = outputDir.trim().isEmpty ? Directory.current.path : outputDir.trim();
-    return '$baseDir${Platform.pathSeparator}$stem.mp4';
+
+
+  String? _extractVideoPathFromLogs(String logsText) {
+    final lines = logsText.split('\n').map((line) => line.trim()).toList().reversed;
+    for (final line in lines) {
+      final idx = line.indexOf('動画を書き出し中:');
+      if (idx >= 0) {
+        final candidate = line.substring(idx + '動画を書き出し中:'.length).trim();
+        if (candidate.isNotEmpty) {
+          return candidate;
+        }
+      }
+    }
+    return null;
   }
 
   Future<void> _initVideoPreview(String videoPath) async {
@@ -6324,14 +6332,19 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     final prefs = await SharedPreferences.getInstance();
     final savedVideoPath = (prefs.getString(_lastVideoPathPrefsKey()) ?? '').trim();
     final savedLogs = prefs.getString(_lastJobLogsPrefsKey()) ?? '';
+    final recoveredFromLogs = _extractVideoPathFromLogs(savedLogs) ?? '';
+    final resolvedPath = savedVideoPath.isNotEmpty ? savedVideoPath : recoveredFromLogs;
+    if (savedVideoPath.isEmpty && recoveredFromLogs.isNotEmpty) {
+      await _saveVideoArtifacts(videoPath: recoveredFromLogs);
+    }
     if (!mounted) return;
     setState(() {
       _lastJobLogsText = savedLogs;
-      _generatedVideoPath = savedVideoPath.isEmpty ? null : savedVideoPath;
+      _generatedVideoPath = resolvedPath.isEmpty ? null : resolvedPath;
       _previewErrorMessage = null;
     });
-    if (savedVideoPath.isNotEmpty) {
-      await _initVideoPreview(savedVideoPath);
+    if (resolvedPath.isNotEmpty) {
+      await _initVideoPreview(resolvedPath);
     }
   }
 
@@ -6360,10 +6373,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
 
   Future<void> _watchJobUntilFinished({
     required String jobId,
-    required String scriptPath,
-    required String outputDir,
   }) async {
-    final fallbackVideoPath = _expectedVideoPath(scriptPath, outputDir);
     for (var i = 0; i < 180; i += 1) {
       if (!mounted || _jobId != jobId) {
         return;
@@ -6383,12 +6393,17 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
           final result = data['result'] as Map<String, dynamic>? ?? {};
           final videoPath = (result['video_path'] as String? ?? '').trim();
           final srtPath = (result['srt_path'] as String? ?? '').trim();
-          final resolvedPath = videoPath.isEmpty ? fallbackVideoPath : videoPath;
-          await _initVideoPreview(resolvedPath);
+          final logsPath = _extractVideoPathFromLogs(_lastJobLogsText) ?? '';
+          final resolvedPath = videoPath.isNotEmpty ? videoPath : logsPath;
+          if (resolvedPath.isNotEmpty) {
+            await _initVideoPreview(resolvedPath);
+          }
           await _saveVideoArtifacts(videoPath: resolvedPath, srtPath: srtPath);
           if (!mounted) return;
           setState(() {
-            _statusMessage = 'Completed';
+            _statusMessage = resolvedPath.isEmpty
+                ? 'Completed (動画パス取得待ち: ログを確認してください)'
+                : 'Completed';
           });
           widget.jobInProgress.value = false;
           return;
@@ -7354,8 +7369,6 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
           unawaited(
             _watchJobUntilFinished(
               jobId: jobId,
-              scriptPath: scriptPath,
-              outputDir: _outputController.text,
             ),
           );
         }
