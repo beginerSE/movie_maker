@@ -5355,6 +5355,21 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _persistence.setString('preview_overlay_path', _previewOverlayPath);
   }
 
+  void _syncPreviewOverlayValueToLinkedRow(String key, String value) {
+    final overlayPath = _previewOverlayPath.trim();
+    if (overlayPath.isEmpty) {
+      return;
+    }
+    for (final row in _linkedPonchiRows) {
+      if ((row['image'] ?? '').trim() != overlayPath) {
+        continue;
+      }
+      row[key] = value;
+      break;
+    }
+    _persistLinkedPonchiRows();
+  }
+
   Future<void> _initInputVideoPreview(String videoPath) async {
     final localPath = videoPath.trim();
     AppLogger.info('詳細動画編集: initialize開始 path=$localPath');
@@ -5566,16 +5581,20 @@ class _VideoEditFormState extends State<VideoEditForm> {
                                       Positioned(
                                         left: _previewX * scaleX,
                                         top: _previewY * scaleY,
-                                        width: overlayWidth,
-                                        height: overlayHeight,
                                         child: IgnorePointer(
                                           child: Opacity(
                                             opacity: _previewOpacity.clamp(0.0, 1.0),
-                                            child: Image.file(
-                                              File(overlayPath),
-                                              fit: BoxFit.fill,
-                                              alignment: Alignment.topLeft,
-                                              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                                            child: SizedBox(
+                                              width: overlayWidth,
+                                              height: overlayHeight,
+                                              child: Image.file(
+                                                File(overlayPath),
+                                                width: overlayWidth,
+                                                height: overlayHeight,
+                                                fit: BoxFit.fill,
+                                                alignment: Alignment.topLeft,
+                                                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -5636,6 +5655,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                         _previewX = value;
                       });
                       _persistence.setDouble('preview_x', value);
+                      _syncPreviewOverlayValueToLinkedRow('x', value.toStringAsFixed(0));
                     },
                     displayValue: _previewX.toStringAsFixed(0),
                   ),
@@ -5649,6 +5669,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                         _previewY = value;
                       });
                       _persistence.setDouble('preview_y', value);
+                      _syncPreviewOverlayValueToLinkedRow('y', value.toStringAsFixed(0));
                     },
                     displayValue: _previewY.toStringAsFixed(0),
                   ),
@@ -5662,6 +5683,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                         _previewOverlayW = value;
                       });
                       _persistence.setDouble('preview_w', value);
+                      _syncPreviewOverlayValueToLinkedRow('w', value.toStringAsFixed(0));
                     },
                     displayValue: _previewOverlayW.toStringAsFixed(0),
                   ),
@@ -5675,6 +5697,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                         _previewOverlayH = value;
                       });
                       _persistence.setDouble('preview_h', value);
+                      _syncPreviewOverlayValueToLinkedRow('h', value.toStringAsFixed(0));
                     },
                     displayValue: _previewOverlayH.toStringAsFixed(0),
                   ),
@@ -5688,6 +5711,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                         _previewOpacity = value;
                       });
                       _persistence.setDouble('preview_opacity', value);
+                      _syncPreviewOverlayValueToLinkedRow('opacity', value.toStringAsFixed(3));
                     },
                     displayValue: _previewOpacity.toStringAsFixed(2),
                   ),
