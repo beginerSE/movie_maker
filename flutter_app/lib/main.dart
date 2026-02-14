@@ -5057,6 +5057,17 @@ class _VideoEditFormState extends State<VideoEditForm> {
         _exportProgress = 0.2;
         _exportStatusMessage = 'FFmpeg コマンドを構築中...';
       });
+      final ffmpegExecutable = _resolveFfmpegExecutable();
+      if (ffmpegExecutable == null) {
+        AppLogger.error('最終編集: ffmpeg実行ファイルが見つかりません');
+        if (!mounted) return;
+        setState(() {
+          _exportProgress = 0.0;
+          _exportStatusMessage = '失敗: ffmpeg が見つかりません';
+        });
+        _showSnackBar('ffmpeg 実行ファイルが見つかりません。FFMPEG_PATH か PATH を確認してください。');
+        return;
+      }
       final args = _buildFfmpegArgs(
         inputPath: inputPath,
         outputPath: outputPath,
@@ -5067,7 +5078,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
         _exportProgress = 0.35;
         _exportStatusMessage = '最終動画を書き出し中...';
       });
-      final result = await Process.run('ffmpeg', args);
+      final result = await Process.run(ffmpegExecutable, args);
       final stderrText = (result.stderr ?? '').toString();
       final stdoutText = (result.stdout ?? '').toString();
 
@@ -5347,12 +5358,71 @@ class _VideoEditFormState extends State<VideoEditForm> {
           initialValue: row[key] ?? '',
           decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
           onChanged: (value) {
-            row[key] = value;
+            setState(() {
+              row[key] = value;
+              final isPreviewTarget = (row['image'] ?? '').trim() == _previewOverlayPath.trim();
+              if (!isPreviewTarget) {
+                return;
+              }
+              if (key == 'x') {
+                _previewX = _parseDouble(value, _previewX);
+              } else if (key == 'y') {
+                _previewY = _parseDouble(value, _previewY);
+              } else if (key == 'w') {
+                _previewOverlayW = _parseDouble(value, _previewOverlayW);
+              } else if (key == 'h') {
+                _previewOverlayH = _parseDouble(value, _previewOverlayH);
+              } else if (key == 'opacity') {
+                _previewOpacity = _parseDouble(value, _previewOpacity).clamp(0.0, 1.0);
+              }
+            });
             _persistLinkedPonchiRows();
           },
         ),
       ),
     );
+  }
+
+  String? _resolveFfmpegExecutable() {
+    final executableName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+    final candidates = <String>[];
+    final envPath = (Platform.environment['FFMPEG_PATH'] ?? '').trim();
+    if (envPath.isNotEmpty) {
+      candidates.add(envPath);
+    }
+
+    final pathValue = Platform.environment['PATH'] ?? '';
+    final delimiter = Platform.isWindows ? ';' : ':';
+    for (final dirPath in pathValue.split(delimiter)) {
+      final trimmed = dirPath.trim();
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      candidates.add('$trimmed${Platform.pathSeparator}$executableName');
+    }
+
+    if (Platform.isWindows) {
+      final userProfile = (Platform.environment['USERPROFILE'] ?? '').trim();
+      if (userProfile.isNotEmpty) {
+        candidates.add('$userProfile\\scoop\\shims\\ffmpeg.exe');
+      }
+      candidates.addAll(const [
+        r'C:\ffmpeg\bin\ffmpeg.exe',
+        r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
+        r'C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe',
+      ]);
+    }
+
+    for (final candidate in candidates) {
+      final normalized = candidate.trim();
+      if (normalized.isEmpty) {
+        continue;
+      }
+      if (File(normalized).existsSync()) {
+        return normalized;
+      }
+    }
+    return null;
   }
 
   @override
@@ -5800,7 +5870,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
           ElevatedButton.icon(
             onPressed: _isExporting ? null : _startExport,
             icon: const Icon(Icons.movie),
-            label: Text(_isExporting ? '書き出し準備中...' : '書き出し'),
+            label: Text(_isExporting ? '書き出し中・・・' : '書き出し'),
           ),
           const SizedBox(height: 12),
           Text('進捗: $_exportStatusMessage'),
