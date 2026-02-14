@@ -477,6 +477,7 @@ class _StudioShellState extends State<StudioShell> {
     'ポンチ絵作成',
     '動画編集',
     '詳細動画編集',
+    '画像収集',
     '設定',
     'About',
     'AIフロー',
@@ -695,7 +696,13 @@ class _StudioShellState extends State<StudioShell> {
         process.stderr
             .transform(const Utf8Decoder(allowMalformed: true))
             .transform(const LineSplitter())
-            .listen(_appendApiServerError);
+            .listen((line) {
+          if (_looksLikeApiErrorLine(line)) {
+            _appendApiServerError(line);
+            return;
+          }
+          AppLogger.info('APIログ: $line');
+        });
         process.stdout
             .transform(const Utf8Decoder(allowMalformed: true))
             .transform(const LineSplitter())
@@ -937,7 +944,7 @@ class _StudioShellState extends State<StudioShell> {
         return '⑤ ポンチ絵案';
       case 6:
         return '⑥ 最終編集';
-      case 10:
+      case 11:
         return 'AIフロー進捗';
       default:
         return _pages[index];
@@ -1152,7 +1159,7 @@ class _StudioShellState extends State<StudioShell> {
 
   Future<void> _openFlowPage() async {
     setState(() {
-      _selectedIndex = 10;
+      _selectedIndex = 11;
     });
   }
 
@@ -1206,6 +1213,22 @@ class _StudioShellState extends State<StudioShell> {
             : combined;
       }
     });
+  }
+
+  bool _looksLikeApiErrorLine(String line) {
+    final normalized = line.trim();
+    if (normalized.isEmpty) {
+      return false;
+    }
+    if (normalized.contains('Traceback')) {
+      return true;
+    }
+    final upper = normalized.toUpperCase();
+    return upper.contains(' ERROR ') ||
+        upper.contains('CRITICAL') ||
+        upper.contains('EXCEPTION') ||
+        upper.startsWith('ERROR') ||
+        upper.contains('[ERROR]');
   }
 
   void _setApiServerError(String message) {
@@ -1692,10 +1715,12 @@ class _StudioShellState extends State<StudioShell> {
       case 7:
         return const DetailedEditForm();
       case 8:
-        return const SettingsForm();
+        return const ImageCollectForm();
       case 9:
-        return const AboutPanel();
+        return const SettingsForm();
       case 10:
+        return const AboutPanel();
+      case 11:
         return FlowProjectPanel(
           selectedProject: _currentProjectSummary(),
           checkApiHealth: _checkApiHealthAndUpdate,
@@ -4862,17 +4887,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
   final _formKey = GlobalKey<FormState>();
   final _inputVideoController = TextEditingController();
   final _outputDirController = TextEditingController();
-  final _srtController = TextEditingController();
-  final _imageOutputController =
-      TextEditingController(text: '${Directory.current.path}/srt_images');
-  final _searchApiKeyController = TextEditingController();
-  final _defaultXController = TextEditingController(text: '100');
-  final _defaultYController = TextEditingController(text: '200');
-  final _defaultWController = TextEditingController(text: '0');
-  final _defaultHController = TextEditingController(text: '0');
-  final _defaultOpacityController = TextEditingController(text: '1.0');
   late final InputPersistence _persistence;
-  String _searchProvider = 'Google';
   double _previewX = 0;
   double _previewY = 0;
   double _previewOverlayW = 0;
@@ -4888,6 +4903,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
   bool _isExporting = false;
   double? _exportProgress;
   String _exportStatusMessage = '待機中';
+  String? _exportJobId;
 
   @override
   void initState() {
@@ -4895,14 +4911,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _persistence = InputPersistence('video_edit.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_inputVideoController, 'input_video');
     _persistence.registerController(_outputDirController, 'output_dir');
-    _persistence.registerController(_srtController, 'srt_path');
-    _persistence.registerController(_imageOutputController, 'image_output');
-    _persistence.registerController(_searchApiKeyController, 'search_api_key');
-    _persistence.registerController(_defaultXController, 'default_x');
-    _persistence.registerController(_defaultYController, 'default_y');
-    _persistence.registerController(_defaultWController, 'default_w');
-    _persistence.registerController(_defaultHController, 'default_h');
-    _persistence.registerController(_defaultOpacityController, 'default_opacity');
     _projectListener = () {
       _loadLinkedPonchiRows();
     };
@@ -4912,7 +4920,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
 
   Future<void> _initPersistence() async {
     await _persistence.init();
-    final searchProvider = await _persistence.readString('search_provider');
     final previewX = await _persistence.readDouble('preview_x');
     final previewY = await _persistence.readDouble('preview_y');
     final previewW = await _persistence.readDouble('preview_w');
@@ -4923,7 +4930,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
     final selectedTitle = (prefs.getString(_selectedTitlePrefsKey()) ?? '').trim();
     if (!mounted) return;
     setState(() {
-      _searchProvider = searchProvider ?? _searchProvider;
       _previewX = previewX ?? _previewX;
       _previewY = previewY ?? _previewY;
       _previewOverlayW = previewW ?? _previewOverlayW;
@@ -5001,11 +5007,11 @@ class _VideoEditFormState extends State<VideoEditForm> {
               'end': (item['end'] as String? ?? '').trim(),
               'visual': (item['visual_suggestion'] as String? ?? '').trim(),
               'image': (item['image_path'] as String? ?? '').trim(),
-              'x': (item['x'] as String? ?? _defaultXController.text).trim(),
-              'y': (item['y'] as String? ?? _defaultYController.text).trim(),
-              'w': (item['w'] as String? ?? _defaultWController.text).trim(),
-              'h': (item['h'] as String? ?? _defaultHController.text).trim(),
-              'opacity': (item['opacity'] as String? ?? _defaultOpacityController.text).trim(),
+              'x': (item['x'] as String? ?? '100').trim(),
+              'y': (item['y'] as String? ?? '200').trim(),
+              'w': (item['w'] as String? ?? '0').trim(),
+              'h': (item['h'] as String? ?? '0').trim(),
+              'opacity': (item['opacity'] as String? ?? '1.0').trim(),
             });
           }
         }
@@ -5057,44 +5063,147 @@ class _VideoEditFormState extends State<VideoEditForm> {
         _exportProgress = 0.2;
         _exportStatusMessage = 'FFmpeg コマンドを構築中...';
       });
-      final args = _buildFfmpegArgs(
-        inputPath: inputPath,
-        outputPath: outputPath,
-        overlays: overlays,
-      );
-
       setState(() {
         _exportProgress = 0.35;
-        _exportStatusMessage = '最終動画を書き出し中...';
+        _exportStatusMessage = '最終書き出しジョブを開始中...';
       });
-      final result = await Process.run('ffmpeg', args);
-      final stderrText = (result.stderr ?? '').toString();
-      final stdoutText = (result.stdout ?? '').toString();
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/video/final-export-job'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'input_path': inputPath,
+              'output_path': outputPath,
+              'overlays': overlays,
+            }),
+          )
+          .then((resp) async {
+            if (resp.statusCode != 404) return resp;
+            return _postWithApiPrefixFallback(
+              '/video/final-export-job',
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'input_path': inputPath,
+                'output_path': outputPath,
+                'overlays': overlays,
+              }),
+            );
+          })
+          .timeout(const Duration(minutes: 10));
 
-      if (result.exitCode != 0) {
-        AppLogger.error(
-          '最終編集: ffmpeg失敗',
-          error: 'exit=${result.exitCode}',
-          stackTrace: StackTrace.current,
-        );
-        AppLogger.warn(stderrText.isEmpty ? stdoutText : stderrText);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final detail = (() {
+          try {
+            final data = jsonDecode(response.body) as Map<String, dynamic>;
+            return (data['detail'] ?? response.body).toString();
+          } catch (_) {
+            return response.body;
+          }
+        })();
+        AppLogger.error('最終編集: 書き出し失敗', error: 'status=${response.statusCode} detail=$detail');
         if (!mounted) return;
         setState(() {
           _exportProgress = 0.0;
-          _exportStatusMessage = '失敗: ffmpeg 実行エラー';
+          _exportStatusMessage = '失敗: $detail';
         });
-        _showSnackBar('書き出しに失敗しました。ffmpeg がインストール済みか確認してください。');
+        _showSnackBar('書き出しに失敗しました: $detail');
         return;
       }
+
+      String? jobId;
+      try {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        jobId = (body['job_id'] as String?)?.trim();
+      } catch (_) {}
+      if (jobId == null || jobId.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _exportProgress = 0.0;
+          _exportStatusMessage = '失敗: job_id が取得できませんでした';
+        });
+        _showSnackBar('書き出しに失敗しました: job_id が取得できませんでした');
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _exportJobId = jobId;
+        _exportStatusMessage = '最終書き出し中... (job: $jobId)';
+      });
+
+      Map<String, dynamic>? lastStatus;
+      var consecutiveFetchFailures = 0;
+      for (var i = 0; i < 1200; i += 1) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        http.Response statusResponse;
+        try {
+          statusResponse = await _getWithApiPrefixFallback('/jobs/$jobId')
+              .timeout(const Duration(seconds: 5));
+        } catch (e) {
+          consecutiveFetchFailures += 1;
+          if (consecutiveFetchFailures >= 20) {
+            AppLogger.error('最終編集: ジョブ状態取得連続失敗', error: e);
+            break;
+          }
+          if (mounted) {
+            setState(() {
+              _exportStatusMessage = '最終書き出し中... status=running (通信再試行 ${consecutiveFetchFailures}/20)';
+            });
+          }
+          continue;
+        }
+        if (statusResponse.statusCode < 200 || statusResponse.statusCode >= 300) {
+          consecutiveFetchFailures += 1;
+          if (consecutiveFetchFailures >= 20) {
+            break;
+          }
+          continue;
+        }
+
+        consecutiveFetchFailures = 0;
+        final statusData = jsonDecode(statusResponse.body) as Map<String, dynamic>;
+        lastStatus = statusData;
+        final progress = (statusData['progress'] as num?)?.toDouble();
+        final status = (statusData['status'] as String? ?? '').trim();
+        final progressText = progress == null ? '--' : '${(progress * 100).toStringAsFixed(1)}%';
+        if (mounted) {
+          setState(() {
+            _exportProgress = progress == null ? _exportProgress : progress.clamp(0.0, 1.0).toDouble();
+            _exportStatusMessage =
+                '最終書き出し中... status=${status.isEmpty ? 'running' : status} / progress=$progressText';
+          });
+        }
+        if (status == 'completed' || status == 'error') {
+          break;
+        }
+      }
+
+      final status = (lastStatus?['status'] as String? ?? '').trim();
+      if (status != 'completed') {
+        final error = (lastStatus?['error'] ?? 'タイムアウトまたは状態取得失敗（ジョブ状態の取得が継続できませんでした）').toString();
+        if (!mounted) return;
+        setState(() {
+          _exportProgress = 0.0;
+          _exportStatusMessage = '失敗: $error';
+        });
+        _showSnackBar('書き出しに失敗しました: $error');
+        return;
+      }
+
+      String finalOutputPath = outputPath;
+      try {
+        final result = (lastStatus?['result'] as Map<String, dynamic>?);
+        finalOutputPath = (result?['output_path'] as String? ?? outputPath).trim();
+      } catch (_) {}
 
       setState(() {
         _exportProgress = 1.0;
         _exportStatusMessage = '書き出し完了';
       });
-      _showSnackBar('書き出し完了: $outputPath');
-      await _initInputVideoPreview(outputPath);
-      _inputVideoController.text = outputPath;
-      await _persistence.setString('input_video', outputPath);
+      _showSnackBar('書き出し完了: $finalOutputPath');
+      await _initInputVideoPreview(finalOutputPath);
+      _inputVideoController.text = finalOutputPath;
+      await _persistence.setString('input_video', finalOutputPath);
     } catch (e, st) {
       AppLogger.error('最終編集: 書き出し失敗', error: e, stackTrace: st);
       if (!mounted) return;
@@ -5107,6 +5216,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
       if (!mounted) return;
       setState(() {
         _isExporting = false;
+        _exportJobId = null;
       });
     }
   }
@@ -5324,14 +5434,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
   void dispose() {
     _inputVideoController.dispose();
     _outputDirController.dispose();
-    _srtController.dispose();
-    _imageOutputController.dispose();
-    _searchApiKeyController.dispose();
-    _defaultXController.dispose();
-    _defaultYController.dispose();
-    _defaultWController.dispose();
-    _defaultHController.dispose();
-    _defaultOpacityController.dispose();
     _videoPreviewController?.dispose();
     ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
@@ -5347,7 +5449,24 @@ class _VideoEditFormState extends State<VideoEditForm> {
           initialValue: row[key] ?? '',
           decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
           onChanged: (value) {
-            row[key] = value;
+            setState(() {
+              row[key] = value;
+              final isPreviewTarget = (row['image'] ?? '').trim() == _previewOverlayPath.trim();
+              if (!isPreviewTarget) {
+                return;
+              }
+              if (key == 'x') {
+                _previewX = _parseDouble(value, _previewX);
+              } else if (key == 'y') {
+                _previewY = _parseDouble(value, _previewY);
+              } else if (key == 'w') {
+                _previewOverlayW = _parseDouble(value, _previewOverlayW);
+              } else if (key == 'h') {
+                _previewOverlayH = _parseDouble(value, _previewOverlayH);
+              } else if (key == 'opacity') {
+                _previewOpacity = _parseDouble(value, _previewOpacity).clamp(0.0, 1.0);
+              }
+            });
             _persistLinkedPonchiRows();
           },
         ),
@@ -5640,170 +5759,20 @@ class _VideoEditFormState extends State<VideoEditForm> {
                     .toList(),
               ),
             ),
-          const SizedBox(height: 12),
-          Text('オーバーレイ一覧（表）', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columns: const [
-                DataColumn(label: Text('image')),
-                DataColumn(label: Text('start')),
-                DataColumn(label: Text('end')),
-                DataColumn(label: Text('x')),
-                DataColumn(label: Text('y')),
-                DataColumn(label: Text('w')),
-                DataColumn(label: Text('h')),
-                DataColumn(label: Text('opacity')),
-                DataColumn(label: Text('source')),
-                DataColumn(label: Text('内容')),
-              ],
-              rows: _linkedPonchiRows
-                  .map(
-                    (overlay) => DataRow(
-                      cells: [
-                        DataCell(Text(overlay['image'] ?? '')),
-                        DataCell(Text(overlay['start'] ?? '')),
-                        DataCell(Text(overlay['end'] ?? '')),
-                        DataCell(Text(overlay['x'] ?? '')),
-                        DataCell(Text(overlay['y'] ?? '')),
-                        DataCell(Text(overlay['w'] ?? '')),
-                        DataCell(Text(overlay['h'] ?? '')),
-                        DataCell(Text(overlay['opacity'] ?? '')),
-                        DataCell(Text(overlay['source'] ?? '')),
-                        DataCell(SizedBox(width: 220, child: Text(overlay['visual'] ?? ''))),
-                      ],
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text('SRTから画像収集', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Text(
-            '字幕ごとに検索キーワードを生成し、Google/Bing画像検索から取得します。',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _srtController,
-            decoration: InputDecoration(
-              labelText: 'SRTファイル',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.subtitles),
-                onPressed: () => _selectFile(
-                  _srtController,
-                  const XTypeGroup(label: 'SRT', extensions: ['srt']),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _imageOutputController,
-            decoration: InputDecoration(
-              labelText: '保存先フォルダ',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.folder),
-                onPressed: () => _selectDirectory(_imageOutputController),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _searchProvider,
-            decoration: const InputDecoration(labelText: '画像検索プロバイダ'),
-            items: const [
-              DropdownMenuItem(value: 'Google', child: Text('Google')),
-              DropdownMenuItem(value: 'Bing', child: Text('Bing')),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _searchProvider = value;
-              });
-              _persistence.setString('search_provider', value);
-            },
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _searchApiKeyController,
-            decoration: const InputDecoration(labelText: '画像検索 APIキー（SerpAPI）'),
-            obscureText: true,
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _defaultXController,
-                  decoration: const InputDecoration(labelText: '既定X'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _defaultYController,
-                  decoration: const InputDecoration(labelText: '既定Y'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _defaultWController,
-                  decoration: const InputDecoration(labelText: '既定W'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _defaultHController,
-                  decoration: const InputDecoration(labelText: '既定H'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 140,
-                child: TextFormField(
-                  controller: _defaultOpacityController,
-                  decoration: const InputDecoration(labelText: '既定Opacity'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              ElevatedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.auto_fix_high),
-                label: const Text('SRTから画像収集'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.upload_file),
-                label: const Text('JSON読み込み'),
-              ),
-            ],
-          ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
             onPressed: _isExporting ? null : _startExport,
             icon: const Icon(Icons.movie),
-            label: Text(_isExporting ? '書き出し準備中...' : '書き出し'),
+            label: Text(_isExporting ? '書き出し中・・・' : '書き出し'),
           ),
           const SizedBox(height: 12),
           Text('進捗: $_exportStatusMessage'),
+          Text(
+            '進捗率: ${((_exportProgress ?? 0.0) * 100).toStringAsFixed(1)}%',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (_exportJobId != null && _exportJobId!.isNotEmpty)
+            SelectableText('最終書き出し Job ID: $_exportJobId'),
           const SizedBox(height: 8),
           LinearProgressIndicator(value: _exportProgress),
         ],
@@ -5841,6 +5810,201 @@ class DetailedEditForm extends StatefulWidget {
 
   @override
   State<DetailedEditForm> createState() => _DetailedEditFormState();
+}
+
+class ImageCollectForm extends StatefulWidget {
+  const ImageCollectForm({super.key});
+
+  @override
+  State<ImageCollectForm> createState() => _ImageCollectFormState();
+}
+
+class _ImageCollectFormState extends State<ImageCollectForm> {
+  final _srtController = TextEditingController();
+  final _imageOutputController = TextEditingController(text: '${Directory.current.path}/srt_images');
+  final _searchApiKeyController = TextEditingController();
+  final _defaultXController = TextEditingController(text: '100');
+  final _defaultYController = TextEditingController(text: '200');
+  final _defaultWController = TextEditingController(text: '0');
+  final _defaultHController = TextEditingController(text: '0');
+  final _defaultOpacityController = TextEditingController(text: '1.0');
+  late final InputPersistence _persistence;
+  String _searchProvider = 'Google';
+
+  @override
+  void initState() {
+    super.initState();
+    _persistence = InputPersistence('image_collect.', scopeListenable: ProjectState.currentProjectId);
+    _persistence.registerController(_srtController, 'srt_path');
+    _persistence.registerController(_imageOutputController, 'image_output');
+    _persistence.registerController(_searchApiKeyController, 'search_api_key');
+    _persistence.registerController(_defaultXController, 'default_x');
+    _persistence.registerController(_defaultYController, 'default_y');
+    _persistence.registerController(_defaultWController, 'default_w');
+    _persistence.registerController(_defaultHController, 'default_h');
+    _persistence.registerController(_defaultOpacityController, 'default_opacity');
+    _initPersistence();
+  }
+
+  Future<void> _initPersistence() async {
+    await _persistence.init();
+    final searchProvider = await _persistence.readString('search_provider');
+    if (!mounted) return;
+    setState(() {
+      _searchProvider = searchProvider ?? _searchProvider;
+    });
+  }
+
+  @override
+  void dispose() {
+    _srtController.dispose();
+    _imageOutputController.dispose();
+    _searchApiKeyController.dispose();
+    _defaultXController.dispose();
+    _defaultYController.dispose();
+    _defaultWController.dispose();
+    _defaultHController.dispose();
+    _defaultOpacityController.dispose();
+    _persistence.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        Text('画像収集', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('SRTから画像収集', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                Text(
+                  '字幕ごとに検索キーワードを生成し、Google/Bing画像検索から取得します。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _srtController,
+                  decoration: InputDecoration(
+                    labelText: 'SRTファイル',
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.subtitles),
+                      onPressed: () => _selectFile(
+                        _srtController,
+                        const XTypeGroup(label: 'SRT', extensions: ['srt']),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _imageOutputController,
+                  decoration: InputDecoration(
+                    labelText: '保存先フォルダ',
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.folder),
+                      onPressed: () => _selectDirectory(_imageOutputController),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _searchProvider,
+                  decoration: const InputDecoration(labelText: '画像検索プロバイダ'),
+                  items: const [
+                    DropdownMenuItem(value: 'Google', child: Text('Google')),
+                    DropdownMenuItem(value: 'Bing', child: Text('Bing')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _searchProvider = value;
+                    });
+                    _persistence.setString('search_provider', value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _searchApiKeyController,
+                  decoration: const InputDecoration(labelText: '画像検索 APIキー（SerpAPI）'),
+                  obscureText: true,
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    SizedBox(
+                      width: 120,
+                      child: TextFormField(
+                        controller: _defaultXController,
+                        decoration: const InputDecoration(labelText: '既定X'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 120,
+                      child: TextFormField(
+                        controller: _defaultYController,
+                        decoration: const InputDecoration(labelText: '既定Y'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 120,
+                      child: TextFormField(
+                        controller: _defaultWController,
+                        decoration: const InputDecoration(labelText: '既定W'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 120,
+                      child: TextFormField(
+                        controller: _defaultHController,
+                        decoration: const InputDecoration(labelText: '既定H'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 140,
+                      child: TextFormField(
+                        controller: _defaultOpacityController,
+                        decoration: const InputDecoration(labelText: '既定Opacity'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () {},
+                      icon: const Icon(Icons.auto_fix_high),
+                      label: const Text('SRTから画像収集'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () {},
+                      icon: const Icon(Icons.upload_file),
+                      label: const Text('JSON読み込み'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _DetailedEditFormState extends State<DetailedEditForm> {
