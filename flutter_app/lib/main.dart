@@ -924,6 +924,18 @@ class _StudioShellState extends State<StudioShell> {
     }
   }
 
+  String? _flowStepKeyForMenuIndex(int index) {
+    return switch (index) {
+      1 => 'script',
+      2 => 'base_video',
+      3 => 'title_description',
+      4 => 'thumbnail',
+      5 => 'ponchi',
+      6 => 'final_edit',
+      _ => null,
+    };
+  }
+
   Future<void> _loadCurrentProjectFlowState() async {
     if (!_isFlowProjectSelected) {
       if (mounted) {
@@ -1002,9 +1014,15 @@ class _StudioShellState extends State<StudioShell> {
     }
   }
 
-  Widget _flowStepStatusBadge(String status) {
+  Widget _flowStepStatusBadge({
+    required String stepKey,
+    required String currentStatus,
+  }) {
+    final selectedStatus = kFlowStatuses.contains(currentStatus)
+        ? currentStatus
+        : '未着手';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
         borderRadius: BorderRadius.circular(999),
@@ -1012,9 +1030,30 @@ class _StudioShellState extends State<StudioShell> {
           color: Theme.of(context).colorScheme.primary.withOpacity(0.35),
         ),
       ),
-      child: Text(
-        '状態: $status',
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: selectedStatus,
+          isDense: true,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+          items: kFlowStatuses
+              .map(
+                (status) => DropdownMenuItem<String>(
+                  value: status,
+                  child: Text('状態: $status'),
+                ),
+              )
+              .toList(),
+          onChanged: _flowStateLoading
+              ? null
+              : (value) {
+                  if (value == null || value == selectedStatus) return;
+                  _updateCurrentProjectFlowStep(stepKey, value);
+                },
+        ),
       ),
     );
   }
@@ -1041,37 +1080,11 @@ class _StudioShellState extends State<StudioShell> {
                 child: Text(stepTitle, style: Theme.of(context).textTheme.headlineSmall),
               ),
               const SizedBox(width: 8),
-              _flowStepStatusBadge(currentStatus),
+              _flowStepStatusBadge(stepKey: stepKey, currentStatus: currentStatus),
             ],
           ),
           const SizedBox(height: 8),
           Text(description),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: kFlowStatuses.contains(currentStatus) ? currentStatus : '未着手',
-                  decoration: const InputDecoration(labelText: 'この工程の状態'),
-                  items: kFlowStatuses
-                      .map((status) => DropdownMenuItem(value: status, child: Text(status)))
-                      .toList(),
-                  onChanged: _flowStateLoading
-                      ? null
-                      : (value) {
-                          if (value == null || value == currentStatus) return;
-                          _updateCurrentProjectFlowStep(stepKey, value);
-                        },
-                ),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: _flowStateLoading ? null : _loadCurrentProjectFlowState,
-                icon: const Icon(Icons.refresh),
-                label: const Text('再読込'),
-              ),
-            ],
-          ),
           const SizedBox(height: 8),
           if (_flowStateLoading) const LinearProgressIndicator(),
           const SizedBox(height: 16),
@@ -1526,12 +1539,34 @@ class _StudioShellState extends State<StudioShell> {
               color: backgroundColor,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text(
-              '○ $label',
-              style: TextStyle(
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                color: isSelected ? Colors.black87 : Colors.black54,
-              ),
+            child: Builder(
+              builder: (context) {
+                final stepKey = _flowStepKeyForMenuIndex(index);
+                final stepStatus = stepKey == null ? null : _currentFlowState[stepKey];
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '○ $label',
+                      style: TextStyle(
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                        color: isSelected ? Colors.black87 : Colors.black54,
+                      ),
+                    ),
+                    if (_isFlowProjectSelected && stepStatus != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          '状態: $stepStatus',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isSelected ? Colors.black54 : Colors.black45,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
             ),
           ),
         ),
