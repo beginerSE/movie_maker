@@ -6887,129 +6887,130 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             initiallyExpanded: true,
             children: [
               DropdownButtonFormField<String>(
-            value: _ttsEngine,
-            decoration: const InputDecoration(labelText: '音声合成エンジン'),
-            items: const [
-              DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
-              DropdownMenuItem(value: 'VOICEVOX', child: Text('VOICEVOX')),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _ttsEngine = value;
-              });
-              _persistence.setString('tts_engine', value);
-              if (value == 'VOICEVOX') {
-                _fetchVoicevoxSpeakers();
-              }
-            },
-          ),
-          const SizedBox(height: 12),
-          if (_ttsEngine == 'Gemini')
-            TextFormField(
-              controller: _voiceController,
-              decoration: const InputDecoration(labelText: 'Gemini 音声'),
-            ),
-          if (_ttsEngine == 'VOICEVOX') ...[
-            Row(
-              children: [
-                ElevatedButton.icon(
-                  onPressed:
-                      _voicevoxSpeakersLoading ? null : _fetchVoicevoxSpeakers,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('話者一覧を取得'),
+                value: _ttsEngine,
+                decoration: const InputDecoration(labelText: '音声合成エンジン'),
+                items: const [
+                  DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+                  DropdownMenuItem(value: 'VOICEVOX', child: Text('VOICEVOX')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _ttsEngine = value;
+                  });
+                  _persistence.setString('tts_engine', value);
+                  if (value == 'VOICEVOX') {
+                    _fetchVoicevoxSpeakers();
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              if (_ttsEngine == 'Gemini')
+                TextFormField(
+                  controller: _voiceController,
+                  decoration: const InputDecoration(labelText: 'Gemini 音声'),
                 ),
-                if (_voicevoxSpeakersLoading) ...[
-                  const SizedBox(width: 12),
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+              if (_ttsEngine == 'VOICEVOX') ...[
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed:
+                          _voicevoxSpeakersLoading ? null : _fetchVoicevoxSpeakers,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('話者一覧を取得'),
+                    ),
+                    if (_voicevoxSpeakersLoading) ...[
+                      const SizedBox(width: 12),
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ],
+                  ],
+                ),
+                if (_voicevoxSpeakersError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _voicevoxSpeakersError!,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
                   ),
                 ],
-              ],
-            ),
-            if (_voicevoxSpeakersError != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                _voicevoxSpeakersError!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _voicevoxMode,
-                    decoration: const InputDecoration(labelText: '話者モード'),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'ローテーション',
-                        child: Text('ローテーション'),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _voicevoxMode,
+                        decoration: const InputDecoration(labelText: '話者モード'),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'ローテーション',
+                            child: Text('ローテーション'),
+                          ),
+                          DropdownMenuItem(value: '2人対談', child: Text('2人対談')),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _voicevoxMode = value;
+                          });
+                          _persistence.setString('vv_mode', value);
+                        },
                       ),
-                      DropdownMenuItem(value: '2人対談', child: Text('2人対談')),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() {
-                        _voicevoxMode = value;
-                      });
-                      _persistence.setString('vv_mode', value);
-                    },
-                  ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _voicevoxRotationController,
+                        decoration:
+                            const InputDecoration(labelText: 'ローテーション話者(カンマ)'),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextFormField(
-                    controller: _voicevoxRotationController,
-                    decoration:
-                        const InputDecoration(labelText: 'ローテーション話者(カンマ)'),
-                  ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildVoicevoxSpeakerDropdown(
+                        label: 'キャスター話者',
+                        controller: _voicevoxCasterController,
+                        persistenceKey: 'vv_caster',
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildVoicevoxSpeakerDropdown(
+                        label: 'アナリスト話者',
+                        controller: _voicevoxAnalystController,
+                        persistenceKey: 'vv_analyst',
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildVoicevoxSpeakerDropdown(
-                    label: 'キャスター話者',
-                    controller: _voicevoxCasterController,
-                    persistenceKey: 'vv_caster',
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildVoicevoxSpeakerDropdown(
-                    label: 'アナリスト話者',
-                    controller: _voicevoxAnalystController,
-                    persistenceKey: 'vv_analyst',
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('話速(0.5〜2.0)'),
-                Slider(
-                  value: _voicevoxSpeed,
-                  min: 0.5,
-                  max: 2.0,
-                  divisions: 30,
-                  label: _voicevoxSpeed.toStringAsFixed(2),
-                  onChanged: (value) {
-                    setState(() {
-                      _voicevoxSpeed = value;
-                    });
-                    _persistence.setDouble('vv_speed', value);
-                  },
+                const SizedBox(height: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('話速(0.5〜2.0)'),
+                    Slider(
+                      value: _voicevoxSpeed,
+                      min: 0.5,
+                      max: 2.0,
+                      divisions: 30,
+                      label: _voicevoxSpeed.toStringAsFixed(2),
+                      onChanged: (value) {
+                        setState(() {
+                          _voicevoxSpeed = value;
+                        });
+                        _persistence.setDouble('vv_speed', value);
+                      },
+                    ),
+                  ],
                 ),
               ],
-            ),
-          ],
+            ],
           ),
           const SizedBox(height: 12),
           ExpansionTile(
@@ -7017,86 +7018,85 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             initiallyExpanded: true,
             children: [
               Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  controller: _captionFontSizeController,
-                  decoration: const InputDecoration(labelText: '字幕フォントサイズ'),
-                  keyboardType: TextInputType.number,
-                ),
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _captionFontSizeController,
+                      decoration: const InputDecoration(labelText: '字幕フォントサイズ'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _captionAlphaController,
+                      decoration: const InputDecoration(labelText: '字幕背景の透明度(alpha 0-255)'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextFormField(
-                  controller: _captionAlphaController,
-                  decoration:
-                      const InputDecoration(labelText: '字幕背景の透明度(alpha 0-255)'),
-                  keyboardType: TextInputType.number,
-                ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _bgOffStyle,
+                      decoration: const InputDecoration(labelText: '背景OFF時のデザイン'),
+                      items: const [
+                        DropdownMenuItem(value: '影', child: Text('影')),
+                        DropdownMenuItem(value: '角丸パネル', child: Text('角丸パネル')),
+                        DropdownMenuItem(value: 'なし', child: Text('なし')),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _bgOffStyle = value;
+                        });
+                        _persistence.setString('bg_off_style', value);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _captionTextColorController,
+                      decoration: const InputDecoration(labelText: '字幕文字色（#RRGGBB）'),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _bgOffStyle,
-                  decoration: const InputDecoration(labelText: '背景OFF時のデザイン'),
-                  items: const [
-                    DropdownMenuItem(value: '影', child: Text('影')),
-                    DropdownMenuItem(value: '角丸パネル', child: Text('角丸パネル')),
-                    DropdownMenuItem(value: 'なし', child: Text('なし')),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _bgOffStyle = value;
-                    });
-                    _persistence.setString('bg_off_style', value);
-                  },
-                ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _speakerFontSizeController,
+                      decoration: const InputDecoration(labelText: '話者名フォントサイズ'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _captionMaxCharsController,
+                      decoration: const InputDecoration(labelText: '1行あたり最大文字数'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextFormField(
-                  controller: _captionTextColorController,
-                  decoration: const InputDecoration(labelText: '字幕文字色（#RRGGBB）'),
-                ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                value: _captionBoxEnabled,
+                title: const Text('字幕背景（黒幕）を表示する（固定高さ）'),
+                onChanged: (value) {
+                  setState(() {
+                    _captionBoxEnabled = value;
+                  });
+                  _persistence.setBool('caption_box_enabled', value);
+                },
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  controller: _speakerFontSizeController,
-                  decoration: const InputDecoration(labelText: '話者名フォントサイズ'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextFormField(
-                  controller: _captionMaxCharsController,
-                  decoration: const InputDecoration(labelText: '1行あたり最大文字数'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SwitchListTile(
-            value: _captionBoxEnabled,
-            title: const Text('字幕背景（黒幕）を表示する（固定高さ）'),
-            onChanged: (value) {
-              setState(() {
-                _captionBoxEnabled = value;
-              });
-              _persistence.setBool('caption_box_enabled', value);
-            },
-          ),
               TextFormField(
                 controller: _captionBoxHeightController,
                 decoration: const InputDecoration(labelText: '字幕背景の高さ(px, 固定)'),
