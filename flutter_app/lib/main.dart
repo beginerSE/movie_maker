@@ -5137,20 +5137,46 @@ class _VideoEditFormState extends State<VideoEditForm> {
       });
 
       Map<String, dynamic>? lastStatus;
+      var consecutiveFetchFailures = 0;
       for (var i = 0; i < 1200; i += 1) {
         await Future.delayed(const Duration(milliseconds: 500));
-        final statusResponse = await http.get(ApiConfig.httpUri('/jobs/$jobId'));
-        if (statusResponse.statusCode < 200 || statusResponse.statusCode >= 300) {
+        http.Response statusResponse;
+        try {
+          statusResponse = await http
+              .get(ApiConfig.httpUri('/jobs/$jobId'))
+              .timeout(const Duration(seconds: 5));
+        } catch (e) {
+          consecutiveFetchFailures += 1;
+          if (consecutiveFetchFailures >= 20) {
+            AppLogger.error('最終編集: ジョブ状態取得連続失敗', error: e);
+            break;
+          }
+          if (mounted) {
+            setState(() {
+              _exportStatusMessage = '最終書き出し中... status=running (通信再試行 ${consecutiveFetchFailures}/20)';
+            });
+          }
           continue;
         }
+        if (statusResponse.statusCode < 200 || statusResponse.statusCode >= 300) {
+          consecutiveFetchFailures += 1;
+          if (consecutiveFetchFailures >= 20) {
+            break;
+          }
+          continue;
+        }
+
+        consecutiveFetchFailures = 0;
         final statusData = jsonDecode(statusResponse.body) as Map<String, dynamic>;
         lastStatus = statusData;
         final progress = (statusData['progress'] as num?)?.toDouble();
         final status = (statusData['status'] as String? ?? '').trim();
+        final progressText = progress == null ? '--' : '${(progress * 100).toStringAsFixed(1)}%';
         if (mounted) {
           setState(() {
             _exportProgress = progress == null ? _exportProgress : progress.clamp(0.0, 1.0).toDouble();
-            _exportStatusMessage = '最終書き出し中... status=${status.isEmpty ? 'running' : status}';
+            _exportStatusMessage =
+                '最終書き出し中... status=${status.isEmpty ? 'running' : status} / progress=$progressText';
           });
         }
         if (status == 'completed' || status == 'error') {
@@ -5160,7 +5186,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
 
       final status = (lastStatus?['status'] as String? ?? '').trim();
       if (status != 'completed') {
-        final error = (lastStatus?['error'] ?? 'タイムアウトまたは状態取得失敗').toString();
+        final error = (lastStatus?['error'] ?? 'タイムアウトまたは状態取得失敗（ジョブ状態の取得が継続できませんでした）').toString();
         if (!mounted) return;
         setState(() {
           _exportProgress = 0.0;
@@ -5873,6 +5899,10 @@ class _VideoEditFormState extends State<VideoEditForm> {
           ),
           const SizedBox(height: 12),
           Text('進捗: $_exportStatusMessage'),
+          Text(
+            '進捗率: ${((_exportProgress ?? 0.0) * 100).toStringAsFixed(1)}%',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           if (_exportJobId != null && _exportJobId!.isNotEmpty)
             SelectableText('最終書き出し Job ID: $_exportJobId'),
           const SizedBox(height: 8),
