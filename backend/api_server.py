@@ -604,6 +604,7 @@ def _build_final_export_ffmpeg_args(
             "copy",
             "-movflags",
             "+faststart",
+            "-shortest",
             output_path,
         ]
 
@@ -648,6 +649,7 @@ def _build_final_export_ffmpeg_args(
             "copy",
             "-movflags",
             "+faststart",
+            "-shortest",
             output_path,
         ]
     )
@@ -1179,6 +1181,7 @@ def _run_final_video_export(
             encoding="utf-8",
             errors="replace",
         )
+        max_ffmpeg_seconds = 60 * 60
         if process.stderr is not None:
             for raw_line in process.stderr:
                 line = raw_line.strip()
@@ -1210,12 +1213,20 @@ def _run_final_video_export(
                     _progress(progress_value)
                 if len(stderr_lines) % 15 == 0:
                     _log(f"最終編集: ffmpeg進行中 {line}")
+                if (time.time() - ffmpeg_start_at) > max_ffmpeg_seconds:
+                    process.kill()
+                    _log("最終編集: ffmpegをタイムアウト停止しました(60分超)")
+                    raise HTTPException(status_code=500, detail="ffmpeg 実行が60分を超えたため中断しました。")
         # stderr の読み取りが終わってから待機し、長時間化した場合は明示ログを出す
         while True:
             return_code = process.poll()
             if return_code is not None:
                 break
             elapsed = time.time() - ffmpeg_start_at
+            if elapsed > max_ffmpeg_seconds:
+                process.kill()
+                _log("最終編集: ffmpeg終了待機をタイムアウト停止しました(60分超)")
+                raise HTTPException(status_code=500, detail="ffmpeg 終了待機が60分を超えたため中断しました。")
             if elapsed > 600 and int(elapsed) % 20 == 0:
                 _log(f"最終編集: ffmpeg終了待機中 elapsed={int(elapsed)}s")
             time.sleep(0.2)
