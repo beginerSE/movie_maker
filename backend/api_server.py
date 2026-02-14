@@ -1169,10 +1169,11 @@ def _run_final_video_export(
     stderr_lines: List[str] = []
     total_duration_seconds: Optional[float] = None
     progress_value = 0.2
+    ffmpeg_start_at = time.time()
     try:
         process = subprocess.Popen(
             [ffmpeg, *args],
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
@@ -1209,17 +1210,22 @@ def _run_final_video_export(
                     _progress(progress_value)
                 if len(stderr_lines) % 15 == 0:
                     _log(f"最終編集: ffmpeg進行中 {line}")
-        stdout_text = ""
-        if process.stdout is not None:
-            stdout_text = process.stdout.read().strip()
-        return_code = process.wait()
+        # stderr の読み取りが終わってから待機し、長時間化した場合は明示ログを出す
+        while True:
+            return_code = process.poll()
+            if return_code is not None:
+                break
+            elapsed = time.time() - ffmpeg_start_at
+            if elapsed > 600 and int(elapsed) % 20 == 0:
+                _log(f"最終編集: ffmpeg終了待機中 elapsed={int(elapsed)}s")
+            time.sleep(0.2)
     except Exception as exc:
         logger.exception("final export failed to start")
         raise HTTPException(status_code=500, detail=f"ffmpeg 起動失敗: {exc}") from exc
 
     if return_code != 0:
         stderr_text = "\n".join(stderr_lines).strip()
-        detail = stderr_text or stdout_text or "ffmpeg 実行エラー"
+        detail = stderr_text or "ffmpeg 実行エラー"
         logger.error("final export ffmpeg failed code=%s detail=%s", return_code, detail)
         _log(f"最終編集: ffmpeg失敗 exit={return_code}")
         raise HTTPException(status_code=500, detail=f"ffmpeg失敗(exit={return_code}): {detail}")
