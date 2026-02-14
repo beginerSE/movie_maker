@@ -1231,6 +1231,16 @@ def _run_final_video_export(
         _log(f"最終編集: 無効なオーバーレイ行をスキップ skipped={skipped_overlays}")
         logger.warning("final export skipped invalid overlays skipped=%s", skipped_overlays)
 
+    requested_overlay_count = len(payload.overlays)
+    if requested_overlay_count > 0 and not valid_overlays:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "有効なオーバーレイがありません。"
+                "画像パスの存在、start/end 時間、座標/サイズの入力を確認してください。"
+            ),
+        )
+
     _progress(0.05)
     _log("最終編集: 書き出し準備完了")
 

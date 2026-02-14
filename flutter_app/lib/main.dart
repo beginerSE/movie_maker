@@ -4898,6 +4898,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
   final List<Map<String, String>> _linkedPonchiRows = [];
   late final VoidCallback _projectListener;
   VideoPlayerController? _videoPreviewController;
+  String _videoPreviewPath = '';
   bool _videoPreviewInitializing = false;
   String? _videoPreviewError;
   bool _isExporting = false;
@@ -5357,6 +5358,17 @@ class _VideoEditFormState extends State<VideoEditForm> {
   Future<void> _initInputVideoPreview(String videoPath) async {
     final localPath = videoPath.trim();
     AppLogger.info('詳細動画編集: initialize開始 path=$localPath');
+
+    if (localPath.isNotEmpty && _videoPreviewController != null && _videoPreviewPath == localPath) {
+      AppLogger.info('詳細動画編集: 既存プレビューを再利用 path=$localPath');
+      if (!mounted) return;
+      setState(() {
+        _videoPreviewInitializing = false;
+        _videoPreviewError = null;
+      });
+      return;
+    }
+
     final old = _videoPreviewController;
     if (old != null) {
       AppLogger.info('詳細動画編集: 既存プレビュー停止/破棄');
@@ -5364,6 +5376,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
       await old.dispose();
     }
     _videoPreviewController = null;
+    _videoPreviewPath = '';
 
     if (localPath.isEmpty) {
       AppLogger.warn('詳細動画編集: 動画未選択');
@@ -5403,6 +5416,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
       }
       setState(() {
         _videoPreviewController = controller;
+        _videoPreviewPath = localPath;
         _videoPreviewInitializing = false;
         _videoPreviewError = null;
       });
@@ -5414,6 +5428,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
       if (!mounted) return;
       setState(() {
         _videoPreviewController = null;
+        _videoPreviewPath = '';
         _videoPreviewInitializing = false;
         _videoPreviewError = 'プレビュー初期化に失敗しました。PATH: $localPath\nERROR: $e';
       });
@@ -5435,6 +5450,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _inputVideoController.dispose();
     _outputDirController.dispose();
     _videoPreviewController?.dispose();
+    _videoPreviewPath = '';
     ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
     super.dispose();
