@@ -989,15 +989,13 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
 
 @app.get("/video/preview")
 async def video_preview(path: str = Query(..., description="Path to generated video file")) -> FileResponse:
-    target_path = pathlib.Path(path).expanduser()
-    if not target_path.is_absolute():
-        target_path = (ROOT_DIR / target_path).resolve()
-
-    if not target_path.exists() or not target_path.is_file():
-        raise HTTPException(status_code=404, detail=f"動画ファイルが見つかりません: {path}")
-
-    mime_type, _ = mimetypes.guess_type(str(target_path))
-    return FileResponse(str(target_path), media_type=mime_type or "video/mp4")
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Desktop preview now uses local files directly via VideoPlayerController.file. "
+            "HTTP /video/preview is deprecated and must not be used."
+        ),
+    )
 
 
 @app.get("/voicevox/speakers")

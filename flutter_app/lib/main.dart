@@ -2761,10 +2761,14 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   String _chatGptModel = 'gpt-4.1-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   bool _isSubmitting = false;
+  List<String> _titleCandidates = const [];
+  String? _selectedTitle;
 
   bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
 
   String _flowScriptPrefsKey() => 'flow.script_path.${ProjectState.currentProjectId.value}';
+
+  String _selectedTitlePrefsKey() => 'title_generate.selected_title.${ProjectState.currentProjectId.value}';
 
   Future<String?> _resolveScriptPathForTitle() async {
     if (!_isFlowProject) {
@@ -2791,13 +2795,53 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
     final geminiModel = await _persistence.readString('gemini_model');
     final chatGptModel = await _persistence.readString('chatgpt_model');
     final claudeModel = await _persistence.readString('claude_model');
+    final prefs = await SharedPreferences.getInstance();
+    final selectedTitle = (prefs.getString(_selectedTitlePrefsKey()) ?? '').trim();
+    final candidates = _extractTitleCandidates(_outputController.text);
     if (!mounted) return;
     setState(() {
       _provider = provider ?? _provider;
       _geminiModel = geminiModel ?? _geminiModel;
       _chatGptModel = chatGptModel ?? _chatGptModel;
       _claudeModel = claudeModel ?? _claudeModel;
+      _titleCandidates = candidates;
+      _selectedTitle = selectedTitle.isEmpty
+          ? (candidates.isEmpty ? null : candidates.first)
+          : selectedTitle;
     });
+  }
+
+  List<String> _extractTitleCandidates(String raw) {
+    final lines = raw
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .map((line) => line.replaceFirst(RegExp(r'^(\d+[\.)]|[-*•])\s*'), '').trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    return lines.toSet().toList();
+  }
+
+  Future<void> _persistSelectedTitle(String title) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_selectedTitlePrefsKey(), title);
+  }
+
+  void _syncTitleCandidatesFromOutput(String raw) {
+    final candidates = _extractTitleCandidates(raw);
+    String? nextSelected = _selectedTitle;
+    if (candidates.isEmpty) {
+      nextSelected = null;
+    } else if (nextSelected == null || !candidates.contains(nextSelected)) {
+      nextSelected = candidates.first;
+    }
+    setState(() {
+      _titleCandidates = candidates;
+      _selectedTitle = nextSelected;
+    });
+    if (nextSelected != null) {
+      unawaited(_persistSelectedTitle(nextSelected));
+    }
   }
 
   @override
@@ -2912,8 +2956,30 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           TextFormField(
             controller: _outputController,
             maxLines: 10,
+            onChanged: _syncTitleCandidatesFromOutput,
             decoration: const InputDecoration(hintText: '生成結果がここに表示されます。'),
           ),
+          const SizedBox(height: 12),
+          Text('候補から動画タイトルを1つ選択（⑥出力名に使用）', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          if (_titleCandidates.isEmpty)
+            const Text('生成結果からタイトル候補を抽出できません。1行に1候補で記載してください。')
+          else
+            ..._titleCandidates.map(
+              (candidate) => RadioListTile<String>(
+                dense: true,
+                value: candidate,
+                groupValue: _selectedTitle,
+                title: Text(candidate),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _selectedTitle = value;
+                  });
+                  unawaited(_persistSelectedTitle(value));
+                },
+              ),
+            ),
         ],
       ),
     );
@@ -3055,9 +3121,11 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           .timeout(const Duration(seconds: 60));
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final outputText = data['text'] as String? ?? '';
         setState(() {
-          _outputController.text = data['text'] as String? ?? '';
+          _outputController.text = outputText;
         });
+        _syncTitleCandidatesFromOutput(outputText);
         _showSnackBar('タイトル生成が完了しました。');
       } else {
         _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
@@ -3557,6 +3625,11 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               'visual_suggestion': row.visualSuggestion,
               'image_prompt': row.imagePrompt,
               'image_path': row.imagePath,
+              'x': row.x,
+              'y': row.y,
+              'w': row.w,
+              'h': row.h,
+              'opacity': row.opacity,
             })
         .toList();
     await prefs.setString(_sharedOverlayRowsPrefsKey(), jsonEncode(payload));
@@ -3595,6 +3668,11 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             'visual_suggestion': row.visualSuggestion,
             'image_prompt': row.imagePrompt,
             'image_path': row.imagePath,
+            'x': row.x,
+            'y': row.y,
+            'w': row.w,
+            'h': row.h,
+            'opacity': row.opacity,
           },
         )
         .toList();
@@ -3625,6 +3703,11 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                 visualSuggestion: (item['visual_suggestion'] as String? ?? '').trim(),
                 imagePrompt: (item['image_prompt'] as String? ?? '').trim(),
                 imagePath: (item['image_path'] as String? ?? '').trim(),
+                x: (item['x'] as String? ?? '100').trim(),
+                y: (item['y'] as String? ?? '200').trim(),
+                w: (item['w'] as String? ?? '0').trim(),
+                h: (item['h'] as String? ?? '0').trim(),
+                opacity: (item['opacity'] as String? ?? '1.0').trim(),
               ),
             );
           }
@@ -3880,10 +3963,15 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                   1: FixedColumnWidth(90),
                   2: FixedColumnWidth(220),
                   3: FixedColumnWidth(300),
-                  4: FixedColumnWidth(120),
-                  5: FixedColumnWidth(180),
-                  6: FixedColumnWidth(240),
-                  7: FixedColumnWidth(56),
+                  4: FixedColumnWidth(72),
+                  5: FixedColumnWidth(72),
+                  6: FixedColumnWidth(72),
+                  7: FixedColumnWidth(72),
+                  8: FixedColumnWidth(88),
+                  9: FixedColumnWidth(120),
+                  10: FixedColumnWidth(180),
+                  11: FixedColumnWidth(240),
+                  12: FixedColumnWidth(56),
                 },
                 children: [
                   _buildIdeaTableHeaderRow(context),
@@ -3928,6 +4016,11 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         headerCell('終了'),
         headerCell('ポンチ絵内容'),
         headerCell('画像生成プロンプト'),
+        headerCell('X'),
+        headerCell('Y'),
+        headerCell('W'),
+        headerCell('H'),
+        headerCell('透明度'),
         headerCell('画像生成'),
         headerCell('プレビュー'),
         headerCell('画像情報'),
@@ -3989,6 +4082,61 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             onChanged: (v) {
               row.imagePrompt = v;
               _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.x,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: 'X'),
+            onChanged: (v) {
+              row.x = v;
+              _persistPonchiState();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.y,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: 'Y'),
+            onChanged: (v) {
+              row.y = v;
+              _persistPonchiState();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.w,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: 'W'),
+            onChanged: (v) {
+              row.w = v;
+              _persistPonchiState();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.h,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: 'H'),
+            onChanged: (v) {
+              row.h = v;
+              _persistPonchiState();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.opacity,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: '透明度'),
+            onChanged: (v) {
+              row.opacity = v;
+              _persistPonchiState();
             },
           ),
         ),
@@ -4467,6 +4615,11 @@ class _PonchiIdeaRow {
     required this.visualSuggestion,
     required this.imagePrompt,
     this.imagePath = '',
+    this.x = '100',
+    this.y = '200',
+    this.w = '0',
+    this.h = '0',
+    this.opacity = '1.0',
   });
 
   String id;
@@ -4475,6 +4628,11 @@ class _PonchiIdeaRow {
   String visualSuggestion;
   String imagePrompt;
   String imagePath;
+  String x;
+  String y;
+  String w;
+  String h;
+  String opacity;
 }
 
 class _PonchiPreviewItem {
@@ -4502,15 +4660,7 @@ class VideoEditForm extends StatefulWidget {
 class _VideoEditFormState extends State<VideoEditForm> {
   final _formKey = GlobalKey<FormState>();
   final _inputVideoController = TextEditingController();
-  final _outputVideoController = TextEditingController();
-  final _overlayImageController = TextEditingController();
-  final _startController = TextEditingController(text: '00:00');
-  final _endController = TextEditingController(text: '00:10');
-  final _xController = TextEditingController(text: '100');
-  final _yController = TextEditingController(text: '200');
-  final _widthController = TextEditingController(text: '0');
-  final _heightController = TextEditingController(text: '0');
-  final _opacityController = TextEditingController(text: '1.0');
+  final _outputDirController = TextEditingController();
   final _srtController = TextEditingController();
   final _imageOutputController =
       TextEditingController(text: '${Directory.current.path}/srt_images');
@@ -4524,8 +4674,11 @@ class _VideoEditFormState extends State<VideoEditForm> {
   String _searchProvider = 'Google';
   double _previewX = 0;
   double _previewY = 0;
-  double _previewScale = 100;
-  final List<Map<String, String>> _overlays = [];
+  double _previewOverlayW = 0;
+  double _previewOverlayH = 0;
+  double _previewOpacity = 1.0;
+  String _previewOverlayPath = '';
+  String? _selectedTitle;
   final List<Map<String, String>> _linkedPonchiRows = [];
   late final VoidCallback _projectListener;
   VideoPlayerController? _videoPreviewController;
@@ -4537,15 +4690,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     super.initState();
     _persistence = InputPersistence('video_edit.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_inputVideoController, 'input_video');
-    _persistence.registerController(_outputVideoController, 'output_video');
-    _persistence.registerController(_overlayImageController, 'overlay_image');
-    _persistence.registerController(_startController, 'overlay_start');
-    _persistence.registerController(_endController, 'overlay_end');
-    _persistence.registerController(_xController, 'overlay_x');
-    _persistence.registerController(_yController, 'overlay_y');
-    _persistence.registerController(_widthController, 'overlay_w');
-    _persistence.registerController(_heightController, 'overlay_h');
-    _persistence.registerController(_opacityController, 'overlay_opacity');
+    _persistence.registerController(_outputDirController, 'output_dir');
     _persistence.registerController(_srtController, 'srt_path');
     _persistence.registerController(_imageOutputController, 'image_output');
     _persistence.registerController(_searchApiKeyController, 'search_api_key');
@@ -4566,16 +4711,70 @@ class _VideoEditFormState extends State<VideoEditForm> {
     final searchProvider = await _persistence.readString('search_provider');
     final previewX = await _persistence.readDouble('preview_x');
     final previewY = await _persistence.readDouble('preview_y');
-    final previewScale = await _persistence.readDouble('preview_scale');
+    final previewW = await _persistence.readDouble('preview_w');
+    final previewH = await _persistence.readDouble('preview_h');
+    final previewOpacity = await _persistence.readDouble('preview_opacity');
+    final previewOverlayPath = await _persistence.readString('preview_overlay_path');
+    final prefs = await SharedPreferences.getInstance();
+    final selectedTitle = (prefs.getString(_selectedTitlePrefsKey()) ?? '').trim();
     if (!mounted) return;
     setState(() {
       _searchProvider = searchProvider ?? _searchProvider;
       _previewX = previewX ?? _previewX;
       _previewY = previewY ?? _previewY;
-      _previewScale = previewScale ?? _previewScale;
+      _previewOverlayW = previewW ?? _previewOverlayW;
+      _previewOverlayH = previewH ?? _previewOverlayH;
+      _previewOpacity = previewOpacity ?? _previewOpacity;
+      _previewOverlayPath = previewOverlayPath ?? _previewOverlayPath;
+      _selectedTitle = selectedTitle.isEmpty ? null : selectedTitle;
     });
     await _loadLinkedPonchiRows();
     await _initInputVideoPreview(_inputVideoController.text);
+  }
+
+  String _selectedTitlePrefsKey() => 'title_generate.selected_title.${ProjectState.currentProjectId.value}';
+
+  String _sanitizeFileName(String raw) {
+    final replaced = raw.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+    return replaced.isEmpty ? 'output' : replaced;
+  }
+
+  String _resolvedOutputFileName() {
+    final title = (_selectedTitle ?? '').trim();
+    return '${_sanitizeFileName(title.isEmpty ? 'output' : title)}.mp4';
+  }
+
+  String _resolvedOutputPath() {
+    final dir = _outputDirController.text.trim().isEmpty
+        ? Directory.current.path
+        : _outputDirController.text.trim();
+    return '$dir${Platform.pathSeparator}${_resolvedOutputFileName()}';
+  }
+
+  Future<void> _persistLinkedPonchiRows() async {
+    final prefs = await SharedPreferences.getInstance();
+    final payload = _linkedPonchiRows
+        .map(
+          (row) => {
+            'id': (row['id'] ?? '').trim(),
+            'start': (row['start'] ?? '').trim(),
+            'end': (row['end'] ?? '').trim(),
+            'visual_suggestion': (row['visual'] ?? '').trim(),
+            'image_path': (row['image'] ?? '').trim(),
+            'x': (row['x'] ?? '').trim(),
+            'y': (row['y'] ?? '').trim(),
+            'w': (row['w'] ?? '').trim(),
+            'h': (row['h'] ?? '').trim(),
+            'opacity': (row['opacity'] ?? '').trim(),
+          },
+        )
+        .toList();
+    await prefs.setString(_sharedOverlayRowsPrefsKey(), jsonEncode(payload));
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _sharedOverlayRowsPrefsKey() => 'ponchi.overlay_rows.${ProjectState.currentProjectId.value}';
@@ -4598,6 +4797,11 @@ class _VideoEditFormState extends State<VideoEditForm> {
               'end': (item['end'] as String? ?? '').trim(),
               'visual': (item['visual_suggestion'] as String? ?? '').trim(),
               'image': (item['image_path'] as String? ?? '').trim(),
+              'x': (item['x'] as String? ?? _defaultXController.text).trim(),
+              'y': (item['y'] as String? ?? _defaultYController.text).trim(),
+              'w': (item['w'] as String? ?? _defaultWController.text).trim(),
+              'h': (item['h'] as String? ?? _defaultHController.text).trim(),
+              'opacity': (item['opacity'] as String? ?? _defaultOpacityController.text).trim(),
             });
           }
         }
@@ -4610,75 +4814,54 @@ class _VideoEditFormState extends State<VideoEditForm> {
       _linkedPonchiRows
         ..clear()
         ..addAll(rows);
-      _syncOverlayLinksWithPonchiRows();
     });
   }
 
-  void _syncOverlayLinksWithPonchiRows() {
-    for (final overlay in _overlays) {
-      final linkId = (overlay['ponchi_id'] ?? '').trim();
-      if (linkId.isEmpty) {
-        continue;
-      }
-      final linked = _linkedPonchiRows.where((row) => (row['id'] ?? '') == linkId).toList();
-      if (linked.isEmpty) {
-        continue;
-      }
-      final row = linked.first;
-      overlay['image'] = row['image'] ?? overlay['image'] ?? '';
-      overlay['start'] = row['start'] ?? overlay['start'] ?? '';
-      overlay['end'] = row['end'] ?? overlay['end'] ?? '';
-      overlay['source'] = 'ポンチ絵';
-      overlay['visual'] = row['visual'] ?? '';
-    }
+  double _parseDouble(String? value, double fallback) {
+    return double.tryParse((value ?? '').trim()) ?? fallback;
   }
 
-  void _applyLinkedRowToInput(Map<String, String> row) {
+  void _previewLinkedRow(Map<String, String> row) {
     setState(() {
-      _overlayImageController.text = row['image'] ?? '';
-      _startController.text = row['start'] ?? '';
-      _endController.text = row['end'] ?? '';
+      _previewOverlayPath = row['image'] ?? '';
+      _previewX = _parseDouble(row['x'], _previewX);
+      _previewY = _parseDouble(row['y'], _previewY);
+      _previewOverlayW = _parseDouble(row['w'], _previewOverlayW);
+      _previewOverlayH = _parseDouble(row['h'], _previewOverlayH);
+      _previewOpacity = _parseDouble(row['opacity'], _previewOpacity).clamp(0, 1).toDouble();
     });
-  }
-
-  void _addOverlayFromLinkedRow(Map<String, String> row) {
-    setState(() {
-      _overlays.add({
-        'ponchi_id': row['id'] ?? '',
-        'image': row['image'] ?? '',
-        'start': row['start'] ?? '',
-        'end': row['end'] ?? '',
-        'x': _xController.text,
-        'y': _yController.text,
-        'w': _widthController.text,
-        'h': _heightController.text,
-        'opacity': _opacityController.text,
-        'source': 'ポンチ絵',
-        'visual': row['visual'] ?? '',
-      });
-      _syncOverlayLinksWithPonchiRows();
-    });
+    _persistence.setDouble('preview_x', _previewX);
+    _persistence.setDouble('preview_y', _previewY);
+    _persistence.setDouble('preview_w', _previewOverlayW);
+    _persistence.setDouble('preview_h', _previewOverlayH);
+    _persistence.setDouble('preview_opacity', _previewOpacity);
+    _persistence.setString('preview_overlay_path', _previewOverlayPath);
   }
 
   Future<void> _initInputVideoPreview(String videoPath) async {
-    final trimmedPath = videoPath.trim();
-    if (trimmedPath.isEmpty) {
-      final old = _videoPreviewController;
-      _videoPreviewController = null;
-      _videoPreviewError = null;
-      await old?.dispose();
-      if (mounted) {
-        setState(() {});
-      }
+    final localPath = videoPath.trim();
+    final old = _videoPreviewController;
+    if (old != null) {
+      await old.pause();
+      await old.dispose();
+    }
+    _videoPreviewController = null;
+
+    if (localPath.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _videoPreviewInitializing = false;
+        _videoPreviewError = '動画未選択';
+      });
       return;
     }
 
-    final file = File(trimmedPath);
-    if (!await file.exists()) {
+    final file = File(localPath);
+    if (!file.existsSync()) {
       if (!mounted) return;
       setState(() {
-        _videoPreviewError = '動画ファイルが見つかりません: $trimmedPath';
-        _videoPreviewController = null;
+        _videoPreviewInitializing = false;
+        _videoPreviewError = '動画ファイルが見つかりません。PATH: $localPath';
       });
       return;
     }
@@ -4689,34 +4872,30 @@ class _VideoEditFormState extends State<VideoEditForm> {
       _videoPreviewError = null;
     });
 
-    final old = _videoPreviewController;
-    final previewUri = ApiConfig.httpUri('/video/preview').replace(
-      queryParameters: {'path': file.absolute.path},
-    );
     VideoPlayerController? controller;
-
     try {
-      controller = VideoPlayerController.networkUrl(previewUri);
+      controller = VideoPlayerController.file(File(localPath));
       await controller.initialize();
-    } catch (_) {
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _videoPreviewController = controller;
+        _videoPreviewInitializing = false;
+        _videoPreviewError = null;
+      });
+    } catch (e, st) {
+      debugPrint(e.toString());
+      debugPrint(st.toString());
       await controller?.dispose();
-      controller = null;
+      if (!mounted) return;
+      setState(() {
+        _videoPreviewController = null;
+        _videoPreviewInitializing = false;
+        _videoPreviewError = 'プレビュー初期化に失敗しました。PATH: $localPath\nERROR: $e';
+      });
     }
-
-    await old?.dispose();
-
-    if (!mounted) {
-      await controller?.dispose();
-      return;
-    }
-
-    setState(() {
-      _videoPreviewInitializing = false;
-      _videoPreviewController = controller;
-      _videoPreviewError = controller == null
-          ? 'プレビュー初期化に失敗しました。PATH: ${previewUri.path}'
-          : null;
-    });
   }
 
   Future<void> _selectInputVideo() async {
@@ -4730,15 +4909,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
   @override
   void dispose() {
     _inputVideoController.dispose();
-    _outputVideoController.dispose();
-    _overlayImageController.dispose();
-    _startController.dispose();
-    _endController.dispose();
-    _xController.dispose();
-    _yController.dispose();
-    _widthController.dispose();
-    _heightController.dispose();
-    _opacityController.dispose();
+    _outputDirController.dispose();
     _srtController.dispose();
     _imageOutputController.dispose();
     _searchApiKeyController.dispose();
@@ -4751,6 +4922,23 @@ class _VideoEditFormState extends State<VideoEditForm> {
     ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
     super.dispose();
+  }
+
+  DataCell _editableOverlayCell(Map<String, String> row, String key, {double width = 80}) {
+    return DataCell(
+      SizedBox(
+        width: width,
+        child: TextFormField(
+          key: ValueKey('${row['id'] ?? ''}:$key:${row[key] ?? ''}'),
+          initialValue: row[key] ?? '',
+          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+          onChanged: (value) {
+            row[key] = value;
+            _persistLinkedPonchiRows();
+          },
+        ),
+      ),
+    );
   }
 
   @override
@@ -4865,18 +5053,49 @@ class _VideoEditFormState extends State<VideoEditForm> {
                     displayValue: _previewY.toStringAsFixed(0),
                   ),
                   _buildSliderRow(
-                    label: '画像スケール(%)',
-                    value: _previewScale,
-                    min: 10,
-                    max: 300,
+                    label: '画像W',
+                    value: _previewOverlayW,
+                    min: 0,
+                    max: 1920,
                     onChanged: (value) {
                       setState(() {
-                        _previewScale = value;
+                        _previewOverlayW = value;
                       });
-                      _persistence.setDouble('preview_scale', value);
+                      _persistence.setDouble('preview_w', value);
                     },
-                    displayValue: '${_previewScale.toStringAsFixed(0)}%',
+                    displayValue: _previewOverlayW.toStringAsFixed(0),
                   ),
+                  _buildSliderRow(
+                    label: '画像H',
+                    value: _previewOverlayH,
+                    min: 0,
+                    max: 1080,
+                    onChanged: (value) {
+                      setState(() {
+                        _previewOverlayH = value;
+                      });
+                      _persistence.setDouble('preview_h', value);
+                    },
+                    displayValue: _previewOverlayH.toStringAsFixed(0),
+                  ),
+                  _buildSliderRow(
+                    label: '透明度',
+                    value: _previewOpacity,
+                    min: 0,
+                    max: 1,
+                    onChanged: (value) {
+                      setState(() {
+                        _previewOpacity = value;
+                      });
+                      _persistence.setDouble('preview_opacity', value);
+                    },
+                    displayValue: _previewOpacity.toStringAsFixed(2),
+                  ),
+                  if (_previewOverlayPath.trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: SelectableText('プレビュー対象画像: $_previewOverlayPath'),
+                    ),
                 ],
               ),
             ),
@@ -4906,140 +5125,20 @@ class _VideoEditFormState extends State<VideoEditForm> {
           ),
           const SizedBox(height: 12),
           TextFormField(
-            controller: _outputVideoController,
+            controller: _outputDirController,
             decoration: InputDecoration(
-              labelText: '出力動画',
+              labelText: '出力先ディレクトリ',
               suffixIcon: IconButton(
-                icon: const Icon(Icons.save_alt),
-                onPressed: () => _selectSavePath(
-                  _outputVideoController,
-                  const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
-                ),
+                icon: const Icon(Icons.folder),
+                onPressed: () => _selectDirectory(_outputDirController),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'オーバーレイ設定（1件ずつ追加）',
-            style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
-          Text(
-            '時間は mm:ss / hh:mm:ss で指定。例: 00:12〜00:18',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _overlayImageController,
-            decoration: InputDecoration(
-              labelText: 'オーバーレイ画像',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.image_outlined),
-                onPressed: () => _selectFile(
-                  _overlayImageController,
-                  const XTypeGroup(label: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp']),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _startController,
-                  decoration: const InputDecoration(labelText: '開始'),
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _endController,
-                  decoration: const InputDecoration(labelText: '終了'),
-                ),
-              ),
-              SizedBox(
-                width: 100,
-                child: TextFormField(
-                  controller: _xController,
-                  decoration: const InputDecoration(labelText: 'X'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 100,
-                child: TextFormField(
-                  controller: _yController,
-                  decoration: const InputDecoration(labelText: 'Y'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 100,
-                child: TextFormField(
-                  controller: _widthController,
-                  decoration: const InputDecoration(labelText: 'W'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 100,
-                child: TextFormField(
-                  controller: _heightController,
-                  decoration: const InputDecoration(labelText: 'H'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextFormField(
-                  controller: _opacityController,
-                  decoration: const InputDecoration(labelText: '不透明度'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              ElevatedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _overlays.add({
-                      'image': _overlayImageController.text,
-                      'start': _startController.text,
-                      'end': _endController.text,
-                      'x': _xController.text,
-                      'y': _yController.text,
-                      'w': _widthController.text,
-                      'h': _heightController.text,
-                      'opacity': _opacityController.text,
-                      'source': '手動',
-                      'visual': '',
-                    });
-                  });
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('オーバーレイ追加'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.upload_file),
-                label: const Text('JSONインポート'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.search),
-                label: const Text('SRT検索'),
-              ),
-            ],
-          ),
+          if ((_selectedTitle ?? '').trim().isEmpty)
+            const Text('③でタイトル候補を1つ選択すると、ファイル名が「{タイトル}.mp4」になります。')
+          else
+            SelectableText('出力ファイル名: ${_resolvedOutputFileName()}\n出力パス: ${_resolvedOutputPath()}'),
           const SizedBox(height: 16),
           Text('ポンチ絵提案テーブルとの共有データ', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
@@ -5054,8 +5153,12 @@ class _VideoEditFormState extends State<VideoEditForm> {
                   DataColumn(label: Text('終了')),
                   DataColumn(label: Text('画像情報')),
                   DataColumn(label: Text('内容')),
-                  DataColumn(label: Text('入力反映')),
-                  DataColumn(label: Text('追加')),
+                  DataColumn(label: Text('X')),
+                  DataColumn(label: Text('Y')),
+                  DataColumn(label: Text('W')),
+                  DataColumn(label: Text('H')),
+                  DataColumn(label: Text('透明度')),
+                  DataColumn(label: Text('プレビュー反映')),
                 ],
                 rows: _linkedPonchiRows
                     .map(
@@ -5065,16 +5168,15 @@ class _VideoEditFormState extends State<VideoEditForm> {
                           DataCell(Text(row['end'] ?? '')),
                           DataCell(SelectableText((row['image'] ?? '').isEmpty ? '未生成' : (row['image'] ?? ''))),
                           DataCell(SizedBox(width: 220, child: Text(row['visual'] ?? ''))),
+                          _editableOverlayCell(row, 'x'),
+                          _editableOverlayCell(row, 'y'),
+                          _editableOverlayCell(row, 'w'),
+                          _editableOverlayCell(row, 'h'),
+                          _editableOverlayCell(row, 'opacity', width: 96),
                           DataCell(
                             TextButton(
-                              onPressed: () => _applyLinkedRowToInput(row),
+                              onPressed: () => _previewLinkedRow(row),
                               child: const Text('反映'),
-                            ),
-                          ),
-                          DataCell(
-                            TextButton(
-                              onPressed: () => _addOverlayFromLinkedRow(row),
-                              child: const Text('追加'),
                             ),
                           ),
                         ],
@@ -5101,7 +5203,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
                 DataColumn(label: Text('source')),
                 DataColumn(label: Text('内容')),
               ],
-              rows: _overlays
+              rows: _linkedPonchiRows
                   .map(
                     (overlay) => DataRow(
                       cells: [
@@ -5241,7 +5343,14 @@ class _VideoEditFormState extends State<VideoEditForm> {
           ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
-            onPressed: () {},
+            onPressed: () {
+              final selectedTitle = (_selectedTitle ?? '').trim();
+              if (selectedTitle.isEmpty) {
+                _showSnackBar('③タイトル・説明文作成で動画タイトルを1つ選択してください。');
+                return;
+              }
+              _showSnackBar('書き出し先: ${_resolvedOutputPath()}');
+            },
             icon: const Icon(Icons.movie),
             label: const Text('書き出し'),
           ),
@@ -5913,56 +6022,66 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   }
 
   Future<void> _initVideoPreview(String videoPath) async {
-    final file = File(videoPath);
-    if (!await file.exists()) {
+    final localPath = videoPath.trim();
+    final old = _previewController;
+    if (old != null) {
+      await old.pause();
+      await old.dispose();
+    }
+    _previewController = null;
+
+    if (localPath.isEmpty) {
       if (!mounted) return;
       setState(() {
-        _previewErrorMessage = '動画ファイルが見つかりません: $videoPath';
-        _previewController = null;
+        _previewInitializing = false;
+        _generatedVideoPath = null;
+        _previewErrorMessage = '動画未選択';
       });
       return;
     }
-    setState(() {
-      _previewInitializing = true;
-      _generatedVideoPath = videoPath;
-      _previewErrorMessage = null;
-    });
 
-    final old = _previewController;
-    final previewUri = ApiConfig.httpUri('/video/preview').replace(
-      queryParameters: {'path': file.absolute.path},
-    );
-    VideoPlayerController? controller;
-
-    try {
-      controller = VideoPlayerController.networkUrl(previewUri);
-      await controller.initialize();
-    } catch (error) {
-      await controller?.dispose();
-      controller = null;
-    }
-
-    await old?.dispose();
-
-    if (!mounted) {
-      await controller?.dispose();
-      return;
-    }
-
-    if (controller == null) {
+    final file = File(localPath);
+    if (!file.existsSync()) {
+      if (!mounted) return;
       setState(() {
         _previewInitializing = false;
-        _previewController = null;
-        _previewErrorMessage = 'プレビュー初期化に失敗しました。PATH: ${previewUri.path}';
+        _generatedVideoPath = localPath;
+        _previewErrorMessage = '動画ファイルが見つかりません。PATH: $localPath';
       });
       return;
     }
 
+    if (!mounted) return;
     setState(() {
-      _previewController = controller;
-      _previewInitializing = false;
+      _previewInitializing = true;
+      _generatedVideoPath = localPath;
       _previewErrorMessage = null;
     });
+
+    VideoPlayerController? controller;
+    try {
+      controller = VideoPlayerController.file(File(localPath));
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _previewController = controller;
+        _previewInitializing = false;
+        _previewErrorMessage = null;
+      });
+    } catch (e, st) {
+      debugPrint(e.toString());
+      debugPrint(st.toString());
+      await controller?.dispose();
+      if (!mounted) return;
+      setState(() {
+        _previewController = null;
+        _previewInitializing = false;
+        _previewErrorMessage = 'プレビュー初期化に失敗しました。PATH: $localPath\nERROR: $e';
+      });
+    }
   }
 
 
