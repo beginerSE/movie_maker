@@ -17,7 +17,7 @@ import 'config/input_persistence.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (!kIsWeb && Platform.isWindows) {
-    VideoPlayerPlatformWindows.registerWith();
+    WindowsVideoPlayer.registerWith();
   }
   await ApiSettingsBootstrap.load();
   runApp(const MovieMakerApp());
