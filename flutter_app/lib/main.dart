@@ -3759,6 +3759,37 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               ),
             ),
           const SizedBox(height: 16),
+          Text('画像生成操作（再表示）', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              ElevatedButton.icon(
+                onPressed: _isSubmittingIdeas ? null : _submitPonchiIdeas,
+                icon: const Icon(Icons.lightbulb),
+                label: Text(_isSubmittingIdeas ? '生成中...' : '案出し'),
+              ),
+              ElevatedButton.icon(
+                onPressed: _isSubmittingImages ? null : _submitPonchiImages,
+                icon: const Icon(Icons.brush),
+                label: Text(_isSubmittingImages ? '生成中...' : '画像生成（ポンチ絵作成）'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text('画像プレビュー（再表示）', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              border: Border.all(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: _buildPonchiPreviewGrid(),
+          ),
+          const SizedBox(height: 16),
           Align(
             alignment: Alignment.centerRight,
             child: ElevatedButton.icon(
