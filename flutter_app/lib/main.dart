@@ -3108,7 +3108,14 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   Uint8List? _generatedImageBytes;
   String? _generatedImageMimeType;
   late final InputPersistence _persistence;
+  late final VoidCallback _projectListener;
   bool _isSubmitting = false;
+
+  String _generatedImagePathPrefsKey() => 'generated_image_path.${ProjectState.currentProjectId.value}';
+
+  String _generatedImageMimePrefsKey() => 'generated_image_mime.${ProjectState.currentProjectId.value}';
+
+  String _generatedImageBase64PrefsKey() => 'generated_image_base64.${ProjectState.currentProjectId.value}';
 
   @override
   void initState() {
@@ -3117,12 +3124,46 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
     _persistence.registerController(_modelController, 'model');
     _persistence.registerController(_promptController, 'prompt');
     _persistence.registerController(_outputController, 'output_dir');
+    _projectListener = () {
+      _loadGeneratedImageState();
+    };
+    ProjectState.currentProjectId.addListener(_projectListener);
     _initPersistence();
   }
 
   Future<void> _initPersistence() async {
     await _persistence.init();
+    await _loadGeneratedImageState();
     await _loadModelConfig();
+  }
+
+  Future<void> _persistGeneratedImageState() async {
+    await _persistence.setString(_generatedImagePathPrefsKey(), _generatedImagePath ?? '');
+    await _persistence.setString(_generatedImageMimePrefsKey(), _generatedImageMimeType ?? '');
+    final imageBase64 = (_generatedImageBytes != null && _generatedImageBytes!.isNotEmpty)
+        ? base64Encode(_generatedImageBytes!)
+        : '';
+    await _persistence.setString(_generatedImageBase64PrefsKey(), imageBase64);
+  }
+
+  Future<void> _loadGeneratedImageState() async {
+    final path = (await _persistence.readString(_generatedImagePathPrefsKey()) ?? '').trim();
+    final mime = (await _persistence.readString(_generatedImageMimePrefsKey()) ?? '').trim();
+    final imageBase64 = (await _persistence.readString(_generatedImageBase64PrefsKey()) ?? '').trim();
+    Uint8List? bytes;
+    if (imageBase64.isNotEmpty) {
+      try {
+        bytes = base64Decode(imageBase64);
+      } catch (_) {
+        bytes = null;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _generatedImagePath = path.isEmpty ? null : path;
+      _generatedImageMimeType = mime.isEmpty ? null : mime;
+      _generatedImageBytes = bytes;
+    });
   }
 
   Future<void> _loadModelConfig() async {
@@ -3160,6 +3201,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
 
   @override
   void dispose() {
+    ProjectState.currentProjectId.removeListener(_projectListener);
     _modelController.dispose();
     _promptController.dispose();
     _outputController.dispose();
@@ -3329,6 +3371,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
               ? base64Decode(imageBase64)
               : null;
         });
+        _persistGeneratedImageState();
         final modelNote = data['model_note'] as String?;
         if (modelNote != null && modelNote.isNotEmpty) {
           _showSnackBar(modelNote);
@@ -3565,6 +3608,68 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     if (_ideaRows.isNotEmpty && _outputTextController.text.trim().isEmpty) {
       _syncMarkdownTableFromRows();
     }
+    await _loadPersistedPonchiPreviews();
+  }
+
+  String _ponchiPreviewItemsPrefsKey() => 'ponchi.preview_items.${ProjectState.currentProjectId.value}';
+
+  Future<void> _persistPonchiPreviewItems() async {
+    final payload = _previewItems
+        .map(
+          (item) => {
+            'title': item.title,
+            'subtitle': item.subtitle,
+            'path': item.path,
+            'bytes': (item.bytes != null && item.bytes!.isNotEmpty) ? base64Encode(item.bytes!) : '',
+          },
+        )
+        .toList();
+    await _persistence.setString(_ponchiPreviewItemsPrefsKey(), jsonEncode(payload));
+  }
+
+  Future<void> _loadPersistedPonchiPreviews() async {
+    final raw = (await _persistence.readString(_ponchiPreviewItemsPrefsKey()) ?? '').trim();
+    if (raw.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _previewItems.clear();
+      });
+      return;
+    }
+    final previews = <_PonchiPreviewItem>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        for (final item in decoded) {
+          if (item is! Map<String, dynamic>) continue;
+          final encoded = (item['bytes'] as String? ?? '').trim();
+          Uint8List? bytes;
+          if (encoded.isNotEmpty) {
+            try {
+              bytes = base64Decode(encoded);
+            } catch (_) {
+              bytes = null;
+            }
+          }
+          previews.add(
+            _PonchiPreviewItem(
+              title: (item['title'] as String? ?? '').trim(),
+              subtitle: (item['subtitle'] as String? ?? '').trim(),
+              path: (item['path'] as String? ?? '').trim(),
+              bytes: bytes,
+            ),
+          );
+        }
+      }
+    } catch (_) {
+      // ignore parse errors.
+    }
+    if (!mounted) return;
+    setState(() {
+      _previewItems
+        ..clear()
+        ..addAll(previews);
+    });
   }
 
   Future<void> _loadPonchiModelConfig() async {
@@ -3705,6 +3810,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                     _ideaRows.clear();
                   });
                   _persistPonchiState();
+                  _persistPonchiPreviewItems();
                 },
                 icon: const Icon(Icons.clear),
                 label: const Text('クリア'),
@@ -4009,6 +4115,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         _previewItems.removeWhere((item) => item.title == generated!.title);
         _previewItems.add(generated!);
       });
+      _persistPonchiPreviewItems();
       await _openPreviewDialog(generated);
       _showSnackBar('行ごとの画像生成が完了しました。');
     } on TimeoutException {
@@ -4309,6 +4416,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             ..clear()
             ..addAll(previews);
         });
+        _persistPonchiPreviewItems();
         _showSnackBar('ポンチ絵作成が完了しました。');
       } else {
         _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
