@@ -6473,7 +6473,16 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _captionBoxEnabled = captionBoxEnabled ?? _captionBoxEnabled;
       _bgOffStyle = bgOffStyle ?? _bgOffStyle;
     });
-    VoicevoxConfig.baseUrl.value = _voicevoxUrlController.text.trim();
+    final persistedVoicevoxUrl = _voicevoxUrlController.text.trim();
+    final globalVoicevoxUrl = VoicevoxConfig.baseUrl.value.trim();
+    final resolvedVoicevoxUrl = persistedVoicevoxUrl.isNotEmpty
+        ? persistedVoicevoxUrl
+        : (globalVoicevoxUrl.isNotEmpty ? globalVoicevoxUrl : 'http://127.0.0.1:50021');
+    if (persistedVoicevoxUrl != resolvedVoicevoxUrl) {
+      _voicevoxUrlController.text = resolvedVoicevoxUrl;
+      await _persistence.setString('vv_url', resolvedVoicevoxUrl);
+    }
+    VoicevoxConfig.baseUrl.value = resolvedVoicevoxUrl;
     await _loadProjectSettings();
     await _loadPersistedVideoArtifacts();
     if (_ttsEngine == 'VOICEVOX') {
@@ -6534,7 +6543,14 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   }
 
   Future<void> _fetchVoicevoxSpeakers() async {
-    final baseUrl = _voicevoxUrlController.text.trim();
+    var baseUrl = _voicevoxUrlController.text.trim();
+    if (baseUrl.isEmpty) {
+      final globalVoicevoxUrl = VoicevoxConfig.baseUrl.value.trim();
+      if (globalVoicevoxUrl.isNotEmpty) {
+        baseUrl = globalVoicevoxUrl;
+        _voicevoxUrlController.text = globalVoicevoxUrl;
+      }
+    }
     if (baseUrl.isEmpty) {
       setState(() {
         _voicevoxSpeakers = [];
