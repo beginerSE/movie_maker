@@ -1151,24 +1151,49 @@ def _run_final_video_export(
     _log(f"最終編集: ffmpeg開始 overlays={len(payload.overlays)}")
     _progress(0.2)
 
+    stderr_lines: List[str] = []
+    progress_value = 0.2
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [ffmpeg, *args],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
+            encoding="utf-8",
+            errors="replace",
         )
+        if process.stderr is not None:
+            for raw_line in process.stderr:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                stderr_lines.append(line)
+                if len(stderr_lines) > 120:
+                    stderr_lines = stderr_lines[-120:]
+                if (
+                    "frame=" in line
+                    or "time=" in line
+                    or "fps=" in line
+                    or "bitrate=" in line
+                ):
+                    progress_value = min(0.9, progress_value + 0.01)
+                    _progress(progress_value)
+                if len(stderr_lines) % 15 == 0:
+                    _log(f"最終編集: ffmpeg進行中 {line}")
+        stdout_text = ""
+        if process.stdout is not None:
+            stdout_text = process.stdout.read().strip()
+        return_code = process.wait()
     except Exception as exc:
         logger.exception("final export failed to start")
         raise HTTPException(status_code=500, detail=f"ffmpeg 起動失敗: {exc}") from exc
 
-    if completed.returncode != 0:
-        stderr_text = (completed.stderr or "").strip()
-        stdout_text = (completed.stdout or "").strip()
+    if return_code != 0:
+        stderr_text = "\n".join(stderr_lines).strip()
         detail = stderr_text or stdout_text or "ffmpeg 実行エラー"
-        logger.error("final export ffmpeg failed code=%s detail=%s", completed.returncode, detail)
-        _log(f"最終編集: ffmpeg失敗 exit={completed.returncode}")
-        raise HTTPException(status_code=500, detail=f"ffmpeg失敗(exit={completed.returncode}): {detail}")
+        logger.error("final export ffmpeg failed code=%s detail=%s", return_code, detail)
+        _log(f"最終編集: ffmpeg失敗 exit={return_code}")
+        raise HTTPException(status_code=500, detail=f"ffmpeg失敗(exit={return_code}): {detail}")
 
     _progress(0.9)
 
