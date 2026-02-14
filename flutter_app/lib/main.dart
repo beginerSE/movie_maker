@@ -7654,8 +7654,19 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 AspectRatio(
-                  aspectRatio: _previewController!.value.aspectRatio,
-                  child: VideoPlayer(_previewController!),
+                  aspectRatio: 1,
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: 1000,
+                        maxHeight: 500,
+                      ),
+                      child: AspectRatio(
+                        aspectRatio: _previewController!.value.aspectRatio,
+                        child: VideoPlayer(_previewController!),
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 8),
                 VideoProgressIndicator(
