@@ -1262,9 +1262,16 @@ async def final_video_export_job(payload: FinalVideoExportRequest) -> JobRespons
     def log_fn(message: str) -> None:
         manager.add_log(job.job_id, message)
 
+    last_progress_log_at = 0.0
+
     def progress_fn(value: float) -> None:
+        nonlocal last_progress_log_at
         manager.update_progress(job.job_id, value, None)
-        logger.info("final export progress job=%s progress=%.1f%%", job.job_id, value * 100)
+        now = time.time()
+        # APIサーバーログは高頻度になりすぎないよう20秒間隔で出力する
+        if (now - last_progress_log_at) >= 20.0 or value >= 0.999:
+            logger.info("final export progress job=%s progress=%.1f%%", job.job_id, value * 100)
+            last_progress_log_at = now
 
     def worker() -> None:
         try:
