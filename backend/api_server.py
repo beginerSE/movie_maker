@@ -19,7 +19,7 @@ from typing import Any, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
 
@@ -985,6 +985,19 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
 
     threading.Thread(target=worker, daemon=True).start()
     return JobResponse(job_id=job.job_id)
+
+
+@app.get("/video/preview")
+async def video_preview(path: str = Query(..., description="Path to generated video file")) -> FileResponse:
+    target_path = pathlib.Path(path).expanduser()
+    if not target_path.is_absolute():
+        target_path = (ROOT_DIR / target_path).resolve()
+
+    if not target_path.exists() or not target_path.is_file():
+        raise HTTPException(status_code=404, detail=f"動画ファイルが見つかりません: {path}")
+
+    mime_type, _ = mimetypes.guess_type(str(target_path))
+    return FileResponse(str(target_path), media_type=mime_type or "video/mp4")
 
 
 @app.get("/voicevox/speakers")

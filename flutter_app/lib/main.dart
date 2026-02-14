@@ -3450,6 +3450,8 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   }
 }
 
+String _newPonchiRowId() => DateTime.now().microsecondsSinceEpoch.toString();
+
 class PonchiGenerateForm extends StatefulWidget {
   const PonchiGenerateForm({
     super.key,
@@ -3490,6 +3492,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   String _ideaRowsPrefsKey() => 'ponchi.idea_rows.${ProjectState.currentProjectId.value}';
 
   String _ponchiOutputPrefsKey() => 'ponchi.output_text.${ProjectState.currentProjectId.value}';
+
+  String _sharedOverlayRowsPrefsKey() => 'ponchi.overlay_rows.${ProjectState.currentProjectId.value}';
 
   Future<void> _loadFlowDefaultSrtPath() async {
     if (!_isFlowProject) {
@@ -3534,6 +3538,30 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _persistPonchiState();
   }
 
+  void _syncIdeaRowsImagePathFromPreviews() {
+    for (final row in _ideaRows) {
+      final preview = _findPreviewForRow(row);
+      if (preview != null && preview.path.trim().isNotEmpty) {
+        row.imagePath = preview.path.trim();
+      }
+    }
+  }
+
+  Future<void> _persistSharedOverlayRows() async {
+    final prefs = await SharedPreferences.getInstance();
+    final payload = _ideaRows
+        .map((row) => {
+              'id': row.id,
+              'start': row.start,
+              'end': row.end,
+              'visual_suggestion': row.visualSuggestion,
+              'image_prompt': row.imagePrompt,
+              'image_path': row.imagePath,
+            })
+        .toList();
+    await prefs.setString(_sharedOverlayRowsPrefsKey(), jsonEncode(payload));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -3561,15 +3589,18 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     final rowsPayload = _ideaRows
         .map(
           (row) => {
+            'id': row.id,
             'start': row.start,
             'end': row.end,
             'visual_suggestion': row.visualSuggestion,
             'image_prompt': row.imagePrompt,
+            'image_path': row.imagePath,
           },
         )
         .toList();
     await _persistence.setString(_ideaRowsPrefsKey(), jsonEncode(rowsPayload));
     await _persistence.setString(_ponchiOutputPrefsKey(), _outputTextController.text);
+    await _persistSharedOverlayRows();
   }
 
   Future<void> _loadPersistedPonchiState() async {
@@ -3586,10 +3617,14 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             }
             rows.add(
               _PonchiIdeaRow(
+                id: (item['id'] as String? ?? '').trim().isEmpty
+                    ? _newPonchiRowId()
+                    : (item['id'] as String).trim(),
                 start: (item['start'] as String? ?? '').trim(),
                 end: (item['end'] as String? ?? '').trim(),
                 visualSuggestion: (item['visual_suggestion'] as String? ?? '').trim(),
                 imagePrompt: (item['image_prompt'] as String? ?? '').trim(),
+                imagePath: (item['image_path'] as String? ?? '').trim(),
               ),
             );
           }
@@ -3609,6 +3644,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
       _syncMarkdownTableFromRows();
     }
     await _loadPersistedPonchiPreviews();
+    _syncIdeaRowsImagePathFromPreviews();
+    await _persistSharedOverlayRows();
   }
 
   String _ponchiPreviewItemsPrefsKey() => 'ponchi.preview_items.${ProjectState.currentProjectId.value}';
@@ -3857,7 +3894,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                   3: FixedColumnWidth(300),
                   4: FixedColumnWidth(120),
                   5: FixedColumnWidth(180),
-                  6: FixedColumnWidth(56),
+                  6: FixedColumnWidth(240),
+                  7: FixedColumnWidth(56),
                 },
                 children: [
                   _buildIdeaTableHeaderRow(context),
@@ -3904,6 +3942,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         headerCell('画像生成プロンプト'),
         headerCell('画像生成'),
         headerCell('プレビュー'),
+        headerCell('画像情報'),
         headerCell('削除'),
       ],
     );
@@ -3982,6 +4021,12 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           ),
         ),
         cell(_buildPreviewCell(row)),
+        cell(
+          SelectableText(
+            row.imagePath.isEmpty ? '未設定' : row.imagePath,
+            style: const TextStyle(fontSize: _compactFontSize),
+          ),
+        ),
         cell(
           IconButton(
             onPressed: () {
@@ -4089,6 +4134,9 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         path: imagePath,
         bytes: bytes,
       );
+      if (imagePath.isNotEmpty) {
+        row.imagePath = imagePath;
+      }
       if (!mounted) return;
       if (generated.path.isEmpty && (generated.bytes == null || generated.bytes!.isEmpty)) {
         _showSnackBar('この行の画像が生成されませんでした。');
@@ -4099,6 +4147,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         _previewItems.add(generated);
       });
       _persistPonchiPreviewItems();
+      await _persistSharedOverlayRows();
       await _openPreviewDialog(generated);
       _showSnackBar('行ごとの画像生成が完了しました。');
     } on TimeoutException {
@@ -4223,6 +4272,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           final map = item as Map<String, dynamic>;
           rows.add(
             _PonchiIdeaRow(
+              id: _newPonchiRowId(),
               start: (map['start'] as String? ?? '').trim(),
               end: (map['end'] as String? ?? '').trim(),
               visualSuggestion: (map['visual_suggestion'] as String? ?? '').trim(),
@@ -4398,8 +4448,10 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           _previewItems
             ..clear()
             ..addAll(previews);
+          _syncIdeaRowsImagePathFromPreviews();
         });
         _persistPonchiPreviewItems();
+        await _persistSharedOverlayRows();
         _showSnackBar('ポンチ絵作成が完了しました。');
       } else {
         _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
@@ -4421,16 +4473,20 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
 
 class _PonchiIdeaRow {
   _PonchiIdeaRow({
+    required this.id,
     required this.start,
     required this.end,
     required this.visualSuggestion,
     required this.imagePrompt,
+    this.imagePath = '',
   });
 
+  String id;
   String start;
   String end;
   String visualSuggestion;
   String imagePrompt;
+  String imagePath;
 }
 
 class _PonchiPreviewItem {
@@ -4482,6 +4538,8 @@ class _VideoEditFormState extends State<VideoEditForm> {
   double _previewY = 0;
   double _previewScale = 100;
   final List<Map<String, String>> _overlays = [];
+  final List<Map<String, String>> _linkedPonchiRows = [];
+  late final VoidCallback _projectListener;
 
   @override
   void initState() {
@@ -4505,6 +4563,10 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _persistence.registerController(_defaultWController, 'default_w');
     _persistence.registerController(_defaultHController, 'default_h');
     _persistence.registerController(_defaultOpacityController, 'default_opacity');
+    _projectListener = () {
+      _loadLinkedPonchiRows();
+    };
+    ProjectState.currentProjectId.addListener(_projectListener);
     _initPersistence();
   }
 
@@ -4520,6 +4582,89 @@ class _VideoEditFormState extends State<VideoEditForm> {
       _previewX = previewX ?? _previewX;
       _previewY = previewY ?? _previewY;
       _previewScale = previewScale ?? _previewScale;
+    });
+    await _loadLinkedPonchiRows();
+  }
+
+  String _sharedOverlayRowsPrefsKey() => 'ponchi.overlay_rows.${ProjectState.currentProjectId.value}';
+
+  Future<void> _loadLinkedPonchiRows() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = (prefs.getString(_sharedOverlayRowsPrefsKey()) ?? '').trim();
+    final rows = <Map<String, String>>[];
+    if (raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is! Map<String, dynamic>) {
+              continue;
+            }
+            rows.add({
+              'id': (item['id'] as String? ?? '').trim(),
+              'start': (item['start'] as String? ?? '').trim(),
+              'end': (item['end'] as String? ?? '').trim(),
+              'visual': (item['visual_suggestion'] as String? ?? '').trim(),
+              'image': (item['image_path'] as String? ?? '').trim(),
+            });
+          }
+        }
+      } catch (_) {
+        // ignore parse errors
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _linkedPonchiRows
+        ..clear()
+        ..addAll(rows);
+      _syncOverlayLinksWithPonchiRows();
+    });
+  }
+
+  void _syncOverlayLinksWithPonchiRows() {
+    for (final overlay in _overlays) {
+      final linkId = (overlay['ponchi_id'] ?? '').trim();
+      if (linkId.isEmpty) {
+        continue;
+      }
+      final linked = _linkedPonchiRows.where((row) => (row['id'] ?? '') == linkId).toList();
+      if (linked.isEmpty) {
+        continue;
+      }
+      final row = linked.first;
+      overlay['image'] = row['image'] ?? overlay['image'] ?? '';
+      overlay['start'] = row['start'] ?? overlay['start'] ?? '';
+      overlay['end'] = row['end'] ?? overlay['end'] ?? '';
+      overlay['source'] = 'ポンチ絵';
+      overlay['visual'] = row['visual'] ?? '';
+    }
+  }
+
+  void _applyLinkedRowToInput(Map<String, String> row) {
+    setState(() {
+      _overlayImageController.text = row['image'] ?? '';
+      _startController.text = row['start'] ?? '';
+      _endController.text = row['end'] ?? '';
+    });
+  }
+
+  void _addOverlayFromLinkedRow(Map<String, String> row) {
+    setState(() {
+      _overlays.add({
+        'ponchi_id': row['id'] ?? '',
+        'image': row['image'] ?? '',
+        'start': row['start'] ?? '',
+        'end': row['end'] ?? '',
+        'x': _xController.text,
+        'y': _yController.text,
+        'w': _widthController.text,
+        'h': _heightController.text,
+        'opacity': _opacityController.text,
+        'source': 'ポンチ絵',
+        'visual': row['visual'] ?? '',
+      });
+      _syncOverlayLinksWithPonchiRows();
     });
   }
 
@@ -4543,6 +4688,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _defaultWController.dispose();
     _defaultHController.dispose();
     _defaultOpacityController.dispose();
+    ProjectState.currentProjectId.removeListener(_projectListener);
     _persistence.dispose();
     super.dispose();
   }
@@ -4752,6 +4898,8 @@ class _VideoEditFormState extends State<VideoEditForm> {
                       'w': _widthController.text,
                       'h': _heightController.text,
                       'opacity': _opacityController.text,
+                      'source': '手動',
+                      'visual': '',
                     });
                   });
                 },
@@ -4770,6 +4918,49 @@ class _VideoEditFormState extends State<VideoEditForm> {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          Text('ポンチ絵提案テーブルとの共有データ', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (_linkedPonchiRows.isEmpty)
+            const Text('ポンチ絵提案テーブルのデータがまだありません。')
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('開始')),
+                  DataColumn(label: Text('終了')),
+                  DataColumn(label: Text('画像情報')),
+                  DataColumn(label: Text('内容')),
+                  DataColumn(label: Text('入力反映')),
+                  DataColumn(label: Text('追加')),
+                ],
+                rows: _linkedPonchiRows
+                    .map(
+                      (row) => DataRow(
+                        cells: [
+                          DataCell(Text(row['start'] ?? '')),
+                          DataCell(Text(row['end'] ?? '')),
+                          DataCell(SelectableText((row['image'] ?? '').isEmpty ? '未生成' : (row['image'] ?? ''))),
+                          DataCell(SizedBox(width: 220, child: Text(row['visual'] ?? ''))),
+                          DataCell(
+                            TextButton(
+                              onPressed: () => _applyLinkedRowToInput(row),
+                              child: const Text('反映'),
+                            ),
+                          ),
+                          DataCell(
+                            TextButton(
+                              onPressed: () => _addOverlayFromLinkedRow(row),
+                              child: const Text('追加'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
           const SizedBox(height: 12),
           Text('オーバーレイ一覧（表）', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
@@ -4785,6 +4976,8 @@ class _VideoEditFormState extends State<VideoEditForm> {
                 DataColumn(label: Text('w')),
                 DataColumn(label: Text('h')),
                 DataColumn(label: Text('opacity')),
+                DataColumn(label: Text('source')),
+                DataColumn(label: Text('内容')),
               ],
               rows: _overlays
                   .map(
@@ -4798,6 +4991,8 @@ class _VideoEditFormState extends State<VideoEditForm> {
                         DataCell(Text(overlay['w'] ?? '')),
                         DataCell(Text(overlay['h'] ?? '')),
                         DataCell(Text(overlay['opacity'] ?? '')),
+                        DataCell(Text(overlay['source'] ?? '')),
+                        DataCell(SizedBox(width: 220, child: Text(overlay['visual'] ?? ''))),
                       ],
                     ),
                   )
@@ -5612,24 +5807,17 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     });
 
     final old = _previewController;
+    final previewUri = ApiConfig.httpUri('/video/preview').replace(
+      queryParameters: {'path': file.absolute.path},
+    );
     VideoPlayerController? controller;
-    final errors = <String>[];
 
     try {
-      controller = VideoPlayerController.file(file);
+      controller = VideoPlayerController.networkUrl(previewUri);
       await controller.initialize();
     } catch (error) {
-      errors.add('file-controller: $error');
       await controller?.dispose();
       controller = null;
-      try {
-        controller = VideoPlayerController.networkUrl(Uri.file(file.path));
-        await controller.initialize();
-      } catch (fallbackError) {
-        errors.add('uri-controller: $fallbackError');
-        await controller?.dispose();
-        controller = null;
-      }
     }
 
     await old?.dispose();
@@ -5643,7 +5831,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       setState(() {
         _previewInitializing = false;
         _previewController = null;
-        _previewErrorMessage = 'プレビュー初期化に失敗しました。${errors.join(' / ')}';
+        _previewErrorMessage = 'プレビュー初期化に失敗しました。PATH: ${previewUri.path}';
       });
       return;
     }
