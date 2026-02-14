@@ -3142,15 +3142,27 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
             decoration: const InputDecoration(hintText: '生成結果がここに表示されます。'),
           ),
           const SizedBox(height: 12),
-          TextFormField(
-            controller: _selectedTitleController,
-            decoration: const InputDecoration(
-              labelText: '採用する動画タイトル（⑥出力名に使用）',
-              hintText: 'ここに最終的なタイトルを入力してください。',
-            ),
-            onChanged: (value) {
-              unawaited(_persistSelectedTitle(value.trim()));
-            },
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _selectedTitleController,
+                  decoration: const InputDecoration(
+                    labelText: '採用する動画タイトル（⑥出力名に使用）',
+                    hintText: 'ここに最終的なタイトルを入力してください。',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: FilledButton(
+                  onPressed: _confirmSelectedTitle,
+                  child: const Text('確定'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -3312,6 +3324,16 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
         });
       }
     }
+  }
+
+  Future<void> _confirmSelectedTitle() async {
+    final title = _selectedTitleController.text.trim();
+    if (title.isEmpty) {
+      _showSnackBar('採用する動画タイトルを入力してください。');
+      return;
+    }
+    await _persistSelectedTitle(title);
+    _showSnackBar('採用タイトルを確定保存しました。');
   }
 
   void _copyOutput() {
@@ -4991,33 +5013,78 @@ class _VideoEditFormState extends State<VideoEditForm> {
       return;
     }
 
-    final stages = <({double progress, String message})>[
-      (progress: 0.15, message: '① 入力内容を確認中...'),
-      (progress: 0.35, message: '② ポンチ絵オーバーレイ情報を整理中...'),
-      (progress: 0.6, message: '③ 書き出し先を確定中...'),
-      (progress: 0.85, message: '④ 書き出しジョブを準備中...'),
-      (progress: 1.0, message: '⑤ 準備完了'),
-    ];
+    final inputPath = _inputVideoController.text.trim();
+    if (inputPath.isEmpty || !File(inputPath).existsSync()) {
+      _showSnackBar('入力動画が見つかりません。');
+      return;
+    }
+
+    final outputPath = _resolvedOutputPath();
+    final outputDir = Directory(File(outputPath).parent.path);
+    if (!outputDir.existsSync()) {
+      outputDir.createSync(recursive: true);
+    }
+
+    final overlays = _buildExportOverlays();
 
     setState(() {
       _isExporting = true;
-      _exportProgress = 0.0;
-      _exportStatusMessage = '書き出し準備を開始しました...';
+      _exportProgress = 0.05;
+      _exportStatusMessage = '書き出し準備中...';
     });
-    AppLogger.info('最終編集: 書き出し準備開始');
+    AppLogger.info('最終編集: 書き出し準備開始 overlays=${overlays.length}');
 
     try {
-      for (final stage in stages) {
-        await Future<void>.delayed(const Duration(milliseconds: 220));
+      setState(() {
+        _exportProgress = 0.2;
+        _exportStatusMessage = 'FFmpeg コマンドを構築中...';
+      });
+      final args = _buildFfmpegArgs(
+        inputPath: inputPath,
+        outputPath: outputPath,
+        overlays: overlays,
+      );
+
+      setState(() {
+        _exportProgress = 0.35;
+        _exportStatusMessage = '最終動画を書き出し中...';
+      });
+      final result = await Process.run('ffmpeg', args);
+      final stderrText = (result.stderr ?? '').toString();
+      final stdoutText = (result.stdout ?? '').toString();
+
+      if (result.exitCode != 0) {
+        AppLogger.error(
+          '最終編集: ffmpeg失敗',
+          error: 'exit=${result.exitCode}',
+          stackTrace: StackTrace.current,
+        );
+        AppLogger.warn(stderrText.isEmpty ? stdoutText : stderrText);
         if (!mounted) return;
         setState(() {
-          _exportProgress = stage.progress;
-          _exportStatusMessage = stage.message;
+          _exportProgress = 0.0;
+          _exportStatusMessage = '失敗: ffmpeg 実行エラー';
         });
-        AppLogger.info('最終編集: ${stage.message}');
+        _showSnackBar('書き出しに失敗しました。ffmpeg がインストール済みか確認してください。');
+        return;
       }
-      _showSnackBar('書き出し先: ${_resolvedOutputPath()}');
-      AppLogger.info('最終編集: 書き出し先 ${_resolvedOutputPath()}');
+
+      setState(() {
+        _exportProgress = 1.0;
+        _exportStatusMessage = '書き出し完了';
+      });
+      _showSnackBar('書き出し完了: $outputPath');
+      await _initInputVideoPreview(outputPath);
+      _inputVideoController.text = outputPath;
+      await _persistence.setString('input_video', outputPath);
+    } catch (e, st) {
+      AppLogger.error('最終編集: 書き出し失敗', error: e, stackTrace: st);
+      if (!mounted) return;
+      setState(() {
+        _exportProgress = 0.0;
+        _exportStatusMessage = '失敗: $e';
+      });
+      _showSnackBar('書き出しに失敗しました: $e');
     } finally {
       if (!mounted) return;
       setState(() {
@@ -5028,6 +5095,118 @@ class _VideoEditFormState extends State<VideoEditForm> {
 
   double _parseDouble(String? value, double fallback) {
     return double.tryParse((value ?? '').trim()) ?? fallback;
+  }
+
+  double _parseTimeSeconds(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) {
+      return 0.0;
+    }
+    final normalized = raw.replaceAll(',', '.');
+    final parts = normalized.split(':');
+    if (parts.length == 1) {
+      return double.tryParse(parts[0]) ?? 0.0;
+    }
+    if (parts.length == 2) {
+      final m = int.tryParse(parts[0]) ?? 0;
+      final s = double.tryParse(parts[1]) ?? 0.0;
+      return m * 60 + s;
+    }
+    final h = int.tryParse(parts[parts.length - 3]) ?? 0;
+    final m = int.tryParse(parts[parts.length - 2]) ?? 0;
+    final s = double.tryParse(parts[parts.length - 1]) ?? 0.0;
+    return h * 3600 + m * 60 + s;
+  }
+
+  List<Map<String, dynamic>> _buildExportOverlays() {
+    final overlays = <Map<String, dynamic>>[];
+    for (final row in _linkedPonchiRows) {
+      final imagePath = (row['image'] ?? '').trim();
+      if (imagePath.isEmpty || !File(imagePath).existsSync()) {
+        continue;
+      }
+      final start = _parseTimeSeconds(row['start']);
+      final end = _parseTimeSeconds(row['end']);
+      if (end <= start) {
+        continue;
+      }
+      overlays.add({
+        'image': imagePath,
+        'start': start,
+        'end': end,
+        'x': _parseDouble(row['x'], 0).round(),
+        'y': _parseDouble(row['y'], 0).round(),
+        'w': _parseDouble(row['w'], 0).round(),
+        'h': _parseDouble(row['h'], 0).round(),
+        'opacity': _parseDouble(row['opacity'], 1.0).clamp(0.0, 1.0),
+      });
+    }
+    return overlays;
+  }
+
+  List<String> _buildFfmpegArgs({
+    required String inputPath,
+    required String outputPath,
+    required List<Map<String, dynamic>> overlays,
+  }) {
+    final args = <String>['-y', '-i', inputPath];
+    if (overlays.isEmpty) {
+      args.addAll(['-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-c:a', 'copy', outputPath]);
+      return args;
+    }
+
+    for (final overlay in overlays) {
+      args.addAll(['-loop', '1', '-i', overlay['image'] as String]);
+    }
+
+    final filters = <String>['[0:v]setpts=PTS-STARTPTS[v0]'];
+    var prevLabel = 'v0';
+    for (var i = 0; i < overlays.length; i += 1) {
+      final overlay = overlays[i];
+      final inputIndex = i + 1;
+      final imgLabel = 'ov$i';
+      final outLabel = 'v${i + 1}';
+      final opacity = (overlay['opacity'] as double).toStringAsFixed(3);
+      final w = overlay['w'] as int;
+      final h = overlay['h'] as int;
+      final start = (overlay['start'] as double).toStringAsFixed(3);
+      final end = (overlay['end'] as double).toStringAsFixed(3);
+      final x = overlay['x'] as int;
+      final y = overlay['y'] as int;
+
+      var imageFilter = '[$inputIndex:v]format=rgba,colorchannelmixer=aa=$opacity';
+      if (w > 0 && h > 0) {
+        imageFilter += ',scale=$w:$h';
+      }
+      imageFilter += '[$imgLabel]';
+      filters.add(imageFilter);
+
+      filters.add(
+        '[$prevLabel][$imgLabel]overlay=x=$x:y=$y:enable=between(t\\,$start\\,$end)[$outLabel]',
+      );
+      prevLabel = outLabel;
+    }
+
+    args.addAll([
+      '-filter_complex',
+      filters.join(';'),
+      '-map',
+      '[$prevLabel]',
+      '-map',
+      '0:a?',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'medium',
+      '-crf',
+      '18',
+      '-c:a',
+      'copy',
+      '-movflags',
+      '+faststart',
+      outputPath,
+    ]);
+    return args;
   }
 
   void _previewLinkedRow(Map<String, String> row) {
@@ -5202,7 +5381,46 @@ class _VideoEditFormState extends State<VideoEditForm> {
                           const SizedBox(height: 8),
                           AspectRatio(
                             aspectRatio: _videoPreviewController!.value.aspectRatio,
-                            child: VideoPlayer(_videoPreviewController!),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final videoSize = _videoPreviewController!.value.size;
+                                final scaleX = videoSize.width > 0
+                                    ? constraints.maxWidth / videoSize.width
+                                    : 1.0;
+                                final scaleY = videoSize.height > 0
+                                    ? constraints.maxHeight / videoSize.height
+                                    : 1.0;
+                                final overlayPath = _previewOverlayPath.trim();
+                                final overlayExists =
+                                    overlayPath.isNotEmpty && File(overlayPath).existsSync();
+                                final overlayWidth = _previewOverlayW > 0 ? _previewOverlayW * scaleX : null;
+                                final overlayHeight = _previewOverlayH > 0 ? _previewOverlayH * scaleY : null;
+
+                                return Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    VideoPlayer(_videoPreviewController!),
+                                    if (overlayExists)
+                                      Positioned(
+                                        left: _previewX * scaleX,
+                                        top: _previewY * scaleY,
+                                        width: overlayWidth,
+                                        height: overlayHeight,
+                                        child: IgnorePointer(
+                                          child: Opacity(
+                                            opacity: _previewOpacity.clamp(0.0, 1.0),
+                                            child: Image.file(
+                                              File(overlayPath),
+                                              fit: BoxFit.contain,
+                                              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              },
+                            ),
                           ),
                           const SizedBox(height: 8),
                           Wrap(
