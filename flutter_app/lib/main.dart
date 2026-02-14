@@ -1442,6 +1442,11 @@ class _StudioShellState extends State<StudioShell> {
           description: 'SRTをもとに提案を作成し、開始/終了時間や画像・サイズ・位置は必ず手動で調整します。',
           child: PonchiGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
+            onNext: () {
+              setState(() {
+                _selectedIndex = 6;
+              });
+            },
           ),
         );
       case 6:
@@ -3103,7 +3108,14 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   Uint8List? _generatedImageBytes;
   String? _generatedImageMimeType;
   late final InputPersistence _persistence;
+  late final VoidCallback _projectListener;
   bool _isSubmitting = false;
+
+  String _generatedImagePathPrefsKey() => 'generated_image_path.${ProjectState.currentProjectId.value}';
+
+  String _generatedImageMimePrefsKey() => 'generated_image_mime.${ProjectState.currentProjectId.value}';
+
+  String _generatedImageBase64PrefsKey() => 'generated_image_base64.${ProjectState.currentProjectId.value}';
 
   @override
   void initState() {
@@ -3112,12 +3124,46 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
     _persistence.registerController(_modelController, 'model');
     _persistence.registerController(_promptController, 'prompt');
     _persistence.registerController(_outputController, 'output_dir');
+    _projectListener = () {
+      _loadGeneratedImageState();
+    };
+    ProjectState.currentProjectId.addListener(_projectListener);
     _initPersistence();
   }
 
   Future<void> _initPersistence() async {
     await _persistence.init();
+    await _loadGeneratedImageState();
     await _loadModelConfig();
+  }
+
+  Future<void> _persistGeneratedImageState() async {
+    await _persistence.setString(_generatedImagePathPrefsKey(), _generatedImagePath ?? '');
+    await _persistence.setString(_generatedImageMimePrefsKey(), _generatedImageMimeType ?? '');
+    final imageBase64 = (_generatedImageBytes != null && _generatedImageBytes!.isNotEmpty)
+        ? base64Encode(_generatedImageBytes!)
+        : '';
+    await _persistence.setString(_generatedImageBase64PrefsKey(), imageBase64);
+  }
+
+  Future<void> _loadGeneratedImageState() async {
+    final path = (await _persistence.readString(_generatedImagePathPrefsKey()) ?? '').trim();
+    final mime = (await _persistence.readString(_generatedImageMimePrefsKey()) ?? '').trim();
+    final imageBase64 = (await _persistence.readString(_generatedImageBase64PrefsKey()) ?? '').trim();
+    Uint8List? bytes;
+    if (imageBase64.isNotEmpty) {
+      try {
+        bytes = base64Decode(imageBase64);
+      } catch (_) {
+        bytes = null;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _generatedImagePath = path.isEmpty ? null : path;
+      _generatedImageMimeType = mime.isEmpty ? null : mime;
+      _generatedImageBytes = bytes;
+    });
   }
 
   Future<void> _loadModelConfig() async {
@@ -3155,6 +3201,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
 
   @override
   void dispose() {
+    ProjectState.currentProjectId.removeListener(_projectListener);
     _modelController.dispose();
     _promptController.dispose();
     _outputController.dispose();
@@ -3324,6 +3371,7 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
               ? base64Decode(imageBase64)
               : null;
         });
+        _persistGeneratedImageState();
         final modelNote = data['model_note'] as String?;
         if (modelNote != null && modelNote.isNotEmpty) {
           _showSnackBar(modelNote);
@@ -3406,15 +3454,18 @@ class PonchiGenerateForm extends StatefulWidget {
   const PonchiGenerateForm({
     super.key,
     required this.checkApiHealth,
+    required this.onNext,
   });
 
   final ApiHealthCheck checkApiHealth;
+  final VoidCallback onNext;
 
   @override
   State<PonchiGenerateForm> createState() => _PonchiGenerateFormState();
 }
 
 class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
+  static const double _compactFontSize = 12;
   final _formKey = GlobalKey<FormState>();
   final _srtController = TextEditingController();
   final _outputController = TextEditingController(text: 'ponchi_images');
@@ -3422,6 +3473,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _outputTextController = TextEditingController();
   final List<_PonchiPreviewItem> _previewItems = [];
   final List<_PonchiIdeaRow> _ideaRows = [];
+  final Set<String> _rowGeneratingKeys = <String>{};
   late final InputPersistence _persistence;
   String _engine = 'Gemini';
   List<String> _ponchiModels = const ['gemini-2.0-flash'];
@@ -3434,6 +3486,10 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   String _lastSrtPathPrefsKey() => 'video_generate.last_srt_path.${ProjectState.currentProjectId.value}';
 
   String _lastVideoPathPrefsKey() => 'video_generate.last_video_path.${ProjectState.currentProjectId.value}';
+
+  String _ideaRowsPrefsKey() => 'ponchi.idea_rows.${ProjectState.currentProjectId.value}';
+
+  String _ponchiOutputPrefsKey() => 'ponchi.output_text.${ProjectState.currentProjectId.value}';
 
   Future<void> _loadFlowDefaultSrtPath() async {
     if (!_isFlowProject) {
@@ -3475,6 +3531,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
       buffer.writeln('| ${row.start} | ${row.end} | $visual | $prompt |');
     }
     _outputTextController.text = buffer.toString();
+    _persistPonchiState();
   }
 
   @override
@@ -3486,6 +3543,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     _persistence.registerController(_geminiModelController, 'gemini_model');
     _projectListener = () {
       _loadFlowDefaultSrtPath();
+      _loadPersistedPonchiState();
     };
     ProjectState.currentProjectId.addListener(_projectListener);
     _initPersistence();
@@ -3495,6 +3553,123 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     await _persistence.init();
     await _loadPonchiModelConfig();
     await _loadFlowDefaultSrtPath();
+    await _loadPersistedPonchiState();
+  }
+
+
+  Future<void> _persistPonchiState() async {
+    final rowsPayload = _ideaRows
+        .map(
+          (row) => {
+            'start': row.start,
+            'end': row.end,
+            'visual_suggestion': row.visualSuggestion,
+            'image_prompt': row.imagePrompt,
+          },
+        )
+        .toList();
+    await _persistence.setString(_ideaRowsPrefsKey(), jsonEncode(rowsPayload));
+    await _persistence.setString(_ponchiOutputPrefsKey(), _outputTextController.text);
+  }
+
+  Future<void> _loadPersistedPonchiState() async {
+    final rawRows = (await _persistence.readString(_ideaRowsPrefsKey()) ?? '').trim();
+    final rawOutput = await _persistence.readString(_ponchiOutputPrefsKey());
+    final rows = <_PonchiIdeaRow>[];
+    if (rawRows.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawRows);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is! Map<String, dynamic>) {
+              continue;
+            }
+            rows.add(
+              _PonchiIdeaRow(
+                start: (item['start'] as String? ?? '').trim(),
+                end: (item['end'] as String? ?? '').trim(),
+                visualSuggestion: (item['visual_suggestion'] as String? ?? '').trim(),
+                imagePrompt: (item['image_prompt'] as String? ?? '').trim(),
+              ),
+            );
+          }
+        }
+      } catch (_) {
+        // ignore persisted parse errors.
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _ideaRows
+        ..clear()
+        ..addAll(rows);
+      _outputTextController.text = rawOutput ?? '';
+    });
+    if (_ideaRows.isNotEmpty && _outputTextController.text.trim().isEmpty) {
+      _syncMarkdownTableFromRows();
+    }
+    await _loadPersistedPonchiPreviews();
+  }
+
+  String _ponchiPreviewItemsPrefsKey() => 'ponchi.preview_items.${ProjectState.currentProjectId.value}';
+
+  Future<void> _persistPonchiPreviewItems() async {
+    final payload = _previewItems
+        .map(
+          (item) => {
+            'title': item.title,
+            'subtitle': item.subtitle,
+            'path': item.path,
+            'bytes': (item.bytes != null && item.bytes!.isNotEmpty) ? base64Encode(item.bytes!) : '',
+          },
+        )
+        .toList();
+    await _persistence.setString(_ponchiPreviewItemsPrefsKey(), jsonEncode(payload));
+  }
+
+  Future<void> _loadPersistedPonchiPreviews() async {
+    final raw = (await _persistence.readString(_ponchiPreviewItemsPrefsKey()) ?? '').trim();
+    if (raw.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _previewItems.clear();
+      });
+      return;
+    }
+    final previews = <_PonchiPreviewItem>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        for (final item in decoded) {
+          if (item is! Map<String, dynamic>) continue;
+          final encoded = (item['bytes'] as String? ?? '').trim();
+          Uint8List? bytes;
+          if (encoded.isNotEmpty) {
+            try {
+              bytes = base64Decode(encoded);
+            } catch (_) {
+              bytes = null;
+            }
+          }
+          previews.add(
+            _PonchiPreviewItem(
+              title: (item['title'] as String? ?? '').trim(),
+              subtitle: (item['subtitle'] as String? ?? '').trim(),
+              path: (item['path'] as String? ?? '').trim(),
+              bytes: bytes,
+            ),
+          );
+        }
+      }
+    } catch (_) {
+      // ignore parse errors.
+    }
+    if (!mounted) return;
+    setState(() {
+      _previewItems
+        ..clear()
+        ..addAll(previews);
+    });
   }
 
   Future<void> _loadPonchiModelConfig() async {
@@ -3625,7 +3800,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               ElevatedButton.icon(
                 onPressed: _isSubmittingImages ? null : _submitPonchiImages,
                 icon: const Icon(Icons.brush),
-                label: Text(_isSubmittingImages ? '生成中...' : 'ポンチ絵作成'),
+                label: Text(_isSubmittingImages ? '生成中...' : '画像生成（ポンチ絵作成）'),
               ),
               OutlinedButton.icon(
                 onPressed: () {
@@ -3634,6 +3809,8 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                     _previewItems.clear();
                     _ideaRows.clear();
                   });
+                  _persistPonchiState();
+                  _persistPonchiPreviewItems();
                 },
                 icon: const Icon(Icons.clear),
                 label: const Text('クリア'),
@@ -3641,9 +3818,19 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             ],
           ),
           const SizedBox(height: 16),
-          Text('生成結果', style: Theme.of(context).textTheme.titleMedium),
+          Text('画像プレビュー', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          _buildPonchiPreviewGrid(),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              border: Border.all(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: _buildPonchiPreviewGrid(),
+          ),
+          const SizedBox(height: 12),
+          Text('生成結果', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           TextFormField(
             controller: _outputTextController,
@@ -3658,79 +3845,273 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           if (_ideaRows.isEmpty)
             const Text('案出しを実行すると編集可能な表が表示されます。')
           else
-            ..._ideaRows.asMap().entries.map(
-              (entry) {
-                final index = entry.key;
-                final row = entry.value;
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                initialValue: row.start,
-                                decoration: const InputDecoration(labelText: '開始'),
-                                onChanged: (v) {
-                                  row.start = v;
-                                  _syncMarkdownTableFromRows();
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: TextFormField(
-                                initialValue: row.end,
-                                decoration: const InputDecoration(labelText: '終了'),
-                                onChanged: (v) {
-                                  row.end = v;
-                                  _syncMarkdownTableFromRows();
-                                },
-                              ),
-                            ),
-                            IconButton(
-                              onPressed: () {
-                                setState(() {
-                                  _ideaRows.removeAt(index);
-                                });
-                                _syncMarkdownTableFromRows();
-                              },
-                              icon: const Icon(Icons.delete_outline),
-                              tooltip: '行削除',
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          initialValue: row.visualSuggestion,
-                          maxLines: 2,
-                          decoration: const InputDecoration(labelText: 'ポンチ絵内容'),
-                          onChanged: (v) {
-                            row.visualSuggestion = v;
-                            _syncMarkdownTableFromRows();
-                          },
-                        ),
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          initialValue: row.imagePrompt,
-                          maxLines: 2,
-                          decoration: const InputDecoration(labelText: '画像生成プロンプト'),
-                          onChanged: (v) {
-                            row.imagePrompt = v;
-                            _syncMarkdownTableFromRows();
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Table(
+                border: TableBorder.all(color: Theme.of(context).dividerColor),
+                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                columnWidths: const {
+                  0: FixedColumnWidth(90),
+                  1: FixedColumnWidth(90),
+                  2: FixedColumnWidth(220),
+                  3: FixedColumnWidth(300),
+                  4: FixedColumnWidth(120),
+                  5: FixedColumnWidth(180),
+                  6: FixedColumnWidth(56),
+                },
+                children: [
+                  _buildIdeaTableHeaderRow(context),
+                  ..._ideaRows.map(_buildIdeaTableDataRow),
+                ],
+              ),
             ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerRight,
+            child: ElevatedButton.icon(
+              onPressed: widget.onNext,
+              icon: const Icon(Icons.arrow_forward),
+              label: const Text('次へ（最終編集へ）'),
+            ),
+          ),
         ],
       ),
     );
+  }
+
+
+  TableRow _buildIdeaTableHeaderRow(BuildContext context) {
+    final headerStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontSize: _compactFontSize,
+          fontWeight: FontWeight.w700,
+        );
+
+    Widget headerCell(String text) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Text(text, style: headerStyle),
+      );
+    }
+
+    return TableRow(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant,
+      ),
+      children: [
+        headerCell('開始'),
+        headerCell('終了'),
+        headerCell('ポンチ絵内容'),
+        headerCell('画像生成プロンプト'),
+        headerCell('画像生成'),
+        headerCell('プレビュー'),
+        headerCell('削除'),
+      ],
+    );
+  }
+
+  TableRow _buildIdeaTableDataRow(_PonchiIdeaRow row) {
+    Widget cell(Widget child) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: child,
+      );
+    }
+
+    return TableRow(
+      children: [
+        cell(
+          TextFormField(
+            initialValue: row.start,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: '開始'),
+            onChanged: (v) {
+              row.start = v;
+              _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.end,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: '終了'),
+            onChanged: (v) {
+              row.end = v;
+              _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.visualSuggestion,
+            maxLines: 2,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: '内容'),
+            onChanged: (v) {
+              row.visualSuggestion = v;
+              _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.imagePrompt,
+            maxLines: 2,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: 'プロンプト'),
+            onChanged: (v) {
+              row.imagePrompt = v;
+              _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          SizedBox(
+            height: 36,
+            child: ElevatedButton(
+              onPressed: _isSubmittingImages || _rowGeneratingKeys.contains(_rowKey(row))
+                  ? null
+                  : () => _generateImageForRow(row),
+              child: Text(
+                (_isSubmittingImages || _rowGeneratingKeys.contains(_rowKey(row)))
+                    ? '生成中'
+                    : '生成',
+                style: const TextStyle(fontSize: _compactFontSize),
+              ),
+            ),
+          ),
+        ),
+        cell(_buildPreviewCell(row)),
+        cell(
+          IconButton(
+            onPressed: () {
+              setState(() {
+                _ideaRows.remove(row);
+              });
+              _syncMarkdownTableFromRows();
+              _persistPonchiPreviewItems();
+            },
+            icon: const Icon(Icons.delete_outline),
+            tooltip: '行削除',
+          ),
+        ),
+      ],
+    );
+  }
+
+  _PonchiPreviewItem? _findPreviewForRow(_PonchiIdeaRow row) {
+    final rowTitle = '${row.start}〜${row.end}'.trim();
+    for (final item in _previewItems) {
+      if (item.title.trim() == rowTitle) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  String _rowKey(_PonchiIdeaRow row) => '${row.start}|${row.end}|${row.imagePrompt}';
+
+  Widget _buildPreviewCell(_PonchiIdeaRow row) {
+    final preview = _findPreviewForRow(row);
+    if (preview == null) {
+      return const SizedBox(
+        height: 72,
+        child: Center(
+          child: Text('未生成', style: TextStyle(fontSize: _compactFontSize)),
+        ),
+      );
+    }
+    final image = preview.bytes != null
+        ? Image.memory(preview.bytes!, fit: BoxFit.cover)
+        : Image.file(
+            File(preview.path),
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const Center(child: Text('読込失敗')),
+          );
+    return GestureDetector(
+      onTap: () => _openPreviewDialog(preview),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(height: 72, child: image),
+      ),
+    );
+  }
+
+  Future<void> _generateImageForRow(_PonchiIdeaRow row) async {
+    final apiKey = ApiKeys.gemini.value;
+    if (apiKey.isEmpty) {
+      _showSnackBar('Gemini APIキーが未設定です。設定タブで入力してください。');
+      return;
+    }
+    if (_outputController.text.trim().isEmpty) {
+      _showSnackBar('出力フォルダを指定してください。');
+      return;
+    }
+    final rowKey = _rowKey(row);
+    setState(() {
+      _rowGeneratingKeys.add(rowKey);
+    });
+    try {
+      final healthy = await widget.checkApiHealth();
+      if (!healthy) {
+        _showSnackBar('API サーバーに接続できません。');
+        return;
+      }
+      final payload = {
+        'api_key': apiKey,
+        'prompt': row.imagePrompt.trim().isEmpty
+            ? row.visualSuggestion
+            : row.imagePrompt.trim(),
+        'output_dir': _outputController.text.trim(),
+        'project_id': ProjectState.currentProjectId.value,
+      };
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/materials/generate'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 180));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _showSnackBar('行画像の生成に失敗しました: ${response.statusCode} ${response.body}');
+        return;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final imagePath = (data['image_path'] as String? ?? '').trim();
+      final imageBase64 = (data['image_base64'] as String? ?? '').trim();
+      Uint8List? bytes;
+      if (imageBase64.isNotEmpty) {
+        bytes = base64Decode(imageBase64);
+      }
+      final generated = _PonchiPreviewItem(
+        title: '${row.start}〜${row.end}',
+        subtitle: row.visualSuggestion,
+        path: imagePath,
+        bytes: bytes,
+      );
+      if (!mounted) return;
+      if (generated.path.isEmpty && (generated.bytes == null || generated.bytes!.isEmpty)) {
+        _showSnackBar('この行の画像が生成されませんでした。');
+        return;
+      }
+      setState(() {
+        _previewItems.removeWhere((item) => item.title == generated.title);
+        _previewItems.add(generated);
+      });
+      _persistPonchiPreviewItems();
+      await _openPreviewDialog(generated);
+      _showSnackBar('行ごとの画像生成が完了しました。');
+    } on TimeoutException {
+      _showSnackBar('行画像生成リクエストがタイムアウトしました。');
+    } catch (error) {
+      _showSnackBar('行画像生成エラー: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _rowGeneratingKeys.remove(rowKey);
+        });
+      }
+    }
   }
 
   void _showSnackBar(String message) {
@@ -3742,6 +4123,55 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
 
   String _resolvePonchiApiKey() {
     return ApiKeys.gemini.value;
+  }
+
+  InputDecoration _compactInputDecoration({String? label, String? hint}) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      labelStyle: const TextStyle(fontSize: _compactFontSize),
+    );
+  }
+
+  Future<void> _openPreviewDialog(_PonchiPreviewItem item) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final image = item.bytes != null
+            ? Image.memory(item.bytes!, fit: BoxFit.contain)
+            : Image.file(
+                File(item.path),
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Text('画像を読み込めませんでした。'),
+              );
+        return Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(item.title, style: Theme.of(context).textTheme.titleMedium),
+                if (item.subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(item.subtitle, style: Theme.of(context).textTheme.bodySmall),
+                ],
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 560),
+                    child: image,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _submitPonchiIdeas() async {
@@ -3809,6 +4239,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
         if (jsonPath != null && jsonPath.trim().isNotEmpty) {
           _outputTextController.text =
               '${_outputTextController.text}\n\n<!-- source_json: ${jsonPath.trim()} -->';
+          _persistPonchiState();
         }
         _showSnackBar('ポンチ絵の案出しが完了しました。');
       } else {
@@ -3859,15 +4290,27 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                     Text(item.subtitle, style: Theme.of(context).textTheme.bodySmall),
                   ],
                   const SizedBox(height: 8),
-                  SizedBox(
-                    height: 180,
-                    child: item.bytes != null
-                        ? Image.memory(item.bytes!, fit: BoxFit.contain)
-                        : Image.file(
-                            File(item.path),
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const Text('画像を読み込めませんでした。'),
-                          ),
+                  GestureDetector(
+                    onTap: () => _openPreviewDialog(item),
+                    child: SizedBox(
+                      height: 180,
+                      child: item.bytes != null
+                          ? Image.memory(item.bytes!, fit: BoxFit.contain)
+                          : Image.file(
+                              File(item.path),
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => const Text('画像を読み込めませんでした。'),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () => _openPreviewDialog(item),
+                      icon: const Icon(Icons.zoom_in),
+                      label: const Text('拡大プレビュー'),
+                    ),
                   ),
                 ],
               ),
@@ -3956,6 +4399,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
             ..clear()
             ..addAll(previews);
         });
+        _persistPonchiPreviewItems();
         _showSnackBar('ポンチ絵作成が完了しました。');
       } else {
         _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
