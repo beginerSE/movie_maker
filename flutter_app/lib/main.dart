@@ -364,6 +364,7 @@ class MovieMakerApp extends StatelessWidget {
       surface: const Color(0xFFFFFFFF),
       background: const Color(0xFFF6F4FF),
     );
+    final baseTextTheme = ThemeData(useMaterial3: true).textTheme.apply(fontSizeFactor: 0.92);
     return MaterialApp(
       title: appTitle,
       theme: ThemeData(
@@ -391,11 +392,11 @@ class MovieMakerApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: colorScheme.primary, width: 1.6),
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             backgroundColor: colorScheme.primary,
             foregroundColor: Colors.white,
             elevation: 2,
@@ -404,7 +405,7 @@ class MovieMakerApp extends StatelessWidget {
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             side: BorderSide(color: colorScheme.primary.withOpacity(0.6)),
           ),
@@ -420,9 +421,9 @@ class MovieMakerApp extends StatelessWidget {
           unselectedLabelTextStyle: const TextStyle(color: Color(0xFF768098)),
           unselectedIconTheme: const IconThemeData(color: Color(0xFF7C8BA1)),
         ),
-        textTheme: const TextTheme(
-          headlineSmall: TextStyle(fontWeight: FontWeight.w700),
-          titleMedium: TextStyle(fontWeight: FontWeight.w600),
+        textTheme: baseTextTheme.copyWith(
+          headlineSmall: baseTextTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+          titleMedium: baseTextTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
         snackBarTheme: SnackBarThemeData(
           behavior: SnackBarBehavior.floating,
@@ -1058,6 +1059,42 @@ class _StudioShellState extends State<StudioShell> {
     );
   }
 
+  int? _nextMenuIndexForFlowStep(String stepKey) {
+    switch (stepKey) {
+      case 'script':
+        return 2;
+      case 'base_video':
+        return 3;
+      case 'title_description':
+        return 4;
+      case 'thumbnail':
+        return 5;
+      case 'ponchi':
+        return 6;
+      default:
+        return null;
+    }
+  }
+
+  Widget _buildFlowNextButton(String stepKey) {
+    final nextIndex = _nextMenuIndexForFlowStep(stepKey);
+    if (nextIndex == null) {
+      return const SizedBox.shrink();
+    }
+    return Align(
+      alignment: Alignment.bottomRight,
+      child: FilledButton.icon(
+        onPressed: () {
+          setState(() {
+            _selectedIndex = nextIndex;
+          });
+        },
+        icon: const Icon(Icons.arrow_forward),
+        label: Text('次へ（${_pageLabel(nextIndex)}）'),
+      ),
+    );
+  }
+
   Widget _wrapFlowStep({
     required String stepKey,
     required String description,
@@ -1088,6 +1125,8 @@ class _StudioShellState extends State<StudioShell> {
             child: child,
           ),
         ),
+        const SizedBox(height: 12),
+        _buildFlowNextButton(stepKey),
       ],
     );
   }
@@ -1623,11 +1662,6 @@ class _StudioShellState extends State<StudioShell> {
           description: 'SRTをもとに提案を作成し、開始/終了時間や画像・サイズ・位置は必ず手動で調整します。',
           child: PonchiGenerateForm(
             checkApiHealth: _checkApiHealthAndUpdate,
-            onNext: () {
-              setState(() {
-                _selectedIndex = 6;
-              });
-            },
           ),
         );
       case 6:
@@ -2941,8 +2975,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   String _chatGptModel = 'gpt-4.1-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   bool _isSubmitting = false;
-  List<String> _titleCandidates = const [];
-  String? _selectedTitle;
+  final _selectedTitleController = TextEditingController();
 
   bool get _isFlowProject => ProjectState.currentProjectType.value == 'flow';
 
@@ -2977,51 +3010,19 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
     final claudeModel = await _persistence.readString('claude_model');
     final prefs = await SharedPreferences.getInstance();
     final selectedTitle = (prefs.getString(_selectedTitlePrefsKey()) ?? '').trim();
-    final candidates = _extractTitleCandidates(_outputController.text);
     if (!mounted) return;
     setState(() {
       _provider = provider ?? _provider;
       _geminiModel = geminiModel ?? _geminiModel;
       _chatGptModel = chatGptModel ?? _chatGptModel;
       _claudeModel = claudeModel ?? _claudeModel;
-      _titleCandidates = candidates;
-      _selectedTitle = selectedTitle.isEmpty
-          ? (candidates.isEmpty ? null : candidates.first)
-          : selectedTitle;
+      _selectedTitleController.text = selectedTitle;
     });
-  }
-
-  List<String> _extractTitleCandidates(String raw) {
-    final lines = raw
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .map((line) => line.replaceFirst(RegExp(r'^(\d+[\.)]|[-*•])\s*'), '').trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    return lines.toSet().toList();
   }
 
   Future<void> _persistSelectedTitle(String title) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_selectedTitlePrefsKey(), title);
-  }
-
-  void _syncTitleCandidatesFromOutput(String raw) {
-    final candidates = _extractTitleCandidates(raw);
-    String? nextSelected = _selectedTitle;
-    if (candidates.isEmpty) {
-      nextSelected = null;
-    } else if (nextSelected == null || !candidates.contains(nextSelected)) {
-      nextSelected = candidates.first;
-    }
-    setState(() {
-      _titleCandidates = candidates;
-      _selectedTitle = nextSelected;
-    });
-    if (nextSelected != null) {
-      unawaited(_persistSelectedTitle(nextSelected));
-    }
   }
 
   @override
@@ -3030,6 +3031,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
     _countController.dispose();
     _instructionsController.dispose();
     _outputController.dispose();
+    _selectedTitleController.dispose();
     _persistence.dispose();
     super.dispose();
   }
@@ -3136,30 +3138,19 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           TextFormField(
             controller: _outputController,
             maxLines: 10,
-            onChanged: _syncTitleCandidatesFromOutput,
             decoration: const InputDecoration(hintText: '生成結果がここに表示されます。'),
           ),
           const SizedBox(height: 12),
-          Text('候補から動画タイトルを1つ選択（⑥出力名に使用）', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          if (_titleCandidates.isEmpty)
-            const Text('生成結果からタイトル候補を抽出できません。1行に1候補で記載してください。')
-          else
-            ..._titleCandidates.map(
-              (candidate) => RadioListTile<String>(
-                dense: true,
-                value: candidate,
-                groupValue: _selectedTitle,
-                title: Text(candidate),
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() {
-                    _selectedTitle = value;
-                  });
-                  unawaited(_persistSelectedTitle(value));
-                },
-              ),
+          TextFormField(
+            controller: _selectedTitleController,
+            decoration: const InputDecoration(
+              labelText: '採用する動画タイトル（⑥出力名に使用）',
+              hintText: 'ここに最終的なタイトルを入力してください。',
             ),
+            onChanged: (value) {
+              unawaited(_persistSelectedTitle(value.trim()));
+            },
+          ),
         ],
       ),
     );
@@ -3305,7 +3296,6 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
         setState(() {
           _outputController.text = outputText;
         });
-        _syncTitleCandidatesFromOutput(outputText);
         _showSnackBar('タイトル生成が完了しました。');
       } else {
         _showSnackBar('生成に失敗しました: ${response.statusCode} ${response.body}');
@@ -3704,11 +3694,9 @@ class PonchiGenerateForm extends StatefulWidget {
   const PonchiGenerateForm({
     super.key,
     required this.checkApiHealth,
-    required this.onNext,
   });
 
   final ApiHealthCheck checkApiHealth;
-  final VoidCallback onNext;
 
   @override
   State<PonchiGenerateForm> createState() => _PonchiGenerateFormState();
@@ -4160,14 +4148,6 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               ),
             ),
           const SizedBox(height: 16),
-          Align(
-            alignment: Alignment.centerRight,
-            child: ElevatedButton.icon(
-              onPressed: widget.onNext,
-              icon: const Icon(Icons.arrow_forward),
-              label: const Text('次へ（最終編集へ）'),
-            ),
-          ),
         ],
       ),
     );
@@ -5006,7 +4986,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     }
     final selectedTitle = (_selectedTitle ?? '').trim();
     if (selectedTitle.isEmpty) {
-      _showSnackBar('③タイトル・説明文作成で動画タイトルを1つ選択してください。');
+      _showSnackBar('③タイトル・説明文作成で動画タイトルを入力してください。');
       return;
     }
 
@@ -5374,7 +5354,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
           ),
           const SizedBox(height: 8),
           if ((_selectedTitle ?? '').trim().isEmpty)
-            const Text('③でタイトル候補を1つ選択すると、ファイル名が「{タイトル}.mp4」になります。')
+            const Text('③でタイトルを入力すると、ファイル名が「{タイトル}.mp4」になります。')
           else
             SelectableText('出力ファイル名: ${_resolvedOutputFileName()}\n出力パス: ${_resolvedOutputPath()}'),
           const SizedBox(height: 16),
