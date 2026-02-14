@@ -3659,85 +3659,128 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
           if (_ideaRows.isEmpty)
             const Text('案出しを実行すると編集可能な表が表示されます。')
           else
-            ..._ideaRows.asMap().entries.map(
-              (entry) {
-                final index = entry.key;
-                final row = entry.value;
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: 110,
-                              child: TextFormField(
-                                initialValue: row.start,
-                                style: const TextStyle(fontSize: _compactFontSize),
-                                decoration: _compactInputDecoration('開始'),
-                                onChanged: (v) {
-                                  row.start = v;
-                                  _syncMarkdownTableFromRows();
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 110,
-                              child: TextFormField(
-                                initialValue: row.end,
-                                style: const TextStyle(fontSize: _compactFontSize),
-                                decoration: _compactInputDecoration('終了'),
-                                onChanged: (v) {
-                                  row.end = v;
-                                  _syncMarkdownTableFromRows();
-                                },
-                              ),
-                            ),
-                            const Spacer(),
-                            IconButton(
-                              onPressed: () {
-                                setState(() {
-                                  _ideaRows.removeAt(index);
-                                });
-                                _syncMarkdownTableFromRows();
-                              },
-                              icon: const Icon(Icons.delete_outline),
-                              tooltip: '行削除',
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          initialValue: row.visualSuggestion,
-                          maxLines: 2,
-                          style: const TextStyle(fontSize: _compactFontSize),
-                          decoration: _compactInputDecoration('ポンチ絵内容'),
-                          onChanged: (v) {
-                            row.visualSuggestion = v;
-                            _syncMarkdownTableFromRows();
-                          },
-                        ),
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          initialValue: row.imagePrompt,
-                          maxLines: 2,
-                          style: const TextStyle(fontSize: _compactFontSize),
-                          decoration: _compactInputDecoration('画像生成プロンプト'),
-                          onChanged: (v) {
-                            row.imagePrompt = v;
-                            _syncMarkdownTableFromRows();
-                          },
-                        ),
-                      ],
-                    ),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Table(
+                border: TableBorder.all(color: Theme.of(context).dividerColor),
+                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                columnWidths: const {
+                  0: FixedColumnWidth(90),
+                  1: FixedColumnWidth(90),
+                  2: FixedColumnWidth(240),
+                  3: FixedColumnWidth(340),
+                  4: FixedColumnWidth(56),
+                },
+                children: [
+                  _buildIdeaTableHeaderRow(context),
+                  ..._ideaRows.asMap().entries.map(
+                    (entry) => _buildIdeaTableDataRow(entry.key, entry.value),
                   ),
-                );
-              },
+                ],
+              ),
             ),
         ],
       ),
+    );
+  }
+
+
+  TableRow _buildIdeaTableHeaderRow(BuildContext context) {
+    final headerStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontSize: _compactFontSize,
+          fontWeight: FontWeight.w700,
+        );
+
+    Widget headerCell(String text) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Text(text, style: headerStyle),
+      );
+    }
+
+    return TableRow(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant,
+      ),
+      children: [
+        headerCell('開始'),
+        headerCell('終了'),
+        headerCell('ポンチ絵内容'),
+        headerCell('画像生成プロンプト'),
+        headerCell('削除'),
+      ],
+    );
+  }
+
+  TableRow _buildIdeaTableDataRow(int index, _PonchiIdeaRow row) {
+    Widget cell(Widget child) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: child,
+      );
+    }
+
+    return TableRow(
+      children: [
+        cell(
+          TextFormField(
+            initialValue: row.start,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: '開始'),
+            onChanged: (v) {
+              row.start = v;
+              _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.end,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: '終了'),
+            onChanged: (v) {
+              row.end = v;
+              _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.visualSuggestion,
+            maxLines: 2,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: '内容'),
+            onChanged: (v) {
+              row.visualSuggestion = v;
+              _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          TextFormField(
+            initialValue: row.imagePrompt,
+            maxLines: 2,
+            style: const TextStyle(fontSize: _compactFontSize),
+            decoration: _compactInputDecoration(hint: 'プロンプト'),
+            onChanged: (v) {
+              row.imagePrompt = v;
+              _syncMarkdownTableFromRows();
+            },
+          ),
+        ),
+        cell(
+          IconButton(
+            onPressed: () {
+              setState(() {
+                _ideaRows.removeAt(index);
+              });
+              _syncMarkdownTableFromRows();
+            },
+            icon: const Icon(Icons.delete_outline),
+            tooltip: '行削除',
+          ),
+        ),
+      ],
     );
   }
 
@@ -3752,9 +3795,10 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
     return ApiKeys.gemini.value;
   }
 
-  InputDecoration _compactInputDecoration(String label) {
+  InputDecoration _compactInputDecoration({String? label, String? hint}) {
     return InputDecoration(
       labelText: label,
+      hintText: hint,
       isDense: true,
       contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       labelStyle: const TextStyle(fontSize: _compactFontSize),
