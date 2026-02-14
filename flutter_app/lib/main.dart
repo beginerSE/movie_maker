@@ -364,7 +364,7 @@ class MovieMakerApp extends StatelessWidget {
       surface: const Color(0xFFFFFFFF),
       background: const Color(0xFFF6F4FF),
     );
-    final baseTextTheme = ThemeData(useMaterial3: true).textTheme.apply(fontSizeFactor: 0.88);
+    final baseTextTheme = ThemeData(useMaterial3: true).textTheme.apply(fontSizeFactor: 0.85);
     return MaterialApp(
       title: appTitle,
       theme: ThemeData(
@@ -380,7 +380,22 @@ class MovieMakerApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
+          isDense: true,
           fillColor: Colors.white,
+          hintStyle: TextStyle(
+            fontSize: 12,
+            height: 1.2,
+            color: Colors.grey.shade600,
+          ),
+          labelStyle: const TextStyle(
+            fontSize: 12,
+            height: 1.2,
+          ),
+          floatingLabelStyle: const TextStyle(
+            fontSize: 12,
+            height: 1.1,
+            fontWeight: FontWeight.w600,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: Colors.grey.shade300),
@@ -393,7 +408,7 @@ class MovieMakerApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: colorScheme.primary, width: 1.6),
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
@@ -425,6 +440,9 @@ class MovieMakerApp extends StatelessWidget {
         textTheme: baseTextTheme.copyWith(
           headlineSmall: baseTextTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
           titleMedium: baseTextTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          bodyLarge: baseTextTheme.bodyLarge?.copyWith(fontSize: 13, height: 1.2),
+          bodyMedium: baseTextTheme.bodyMedium?.copyWith(fontSize: 12, height: 1.2),
+          bodySmall: baseTextTheme.bodySmall?.copyWith(fontSize: 11, height: 1.15),
         ),
         snackBarTheme: SnackBarThemeData(
           behavior: SnackBarBehavior.floating,
