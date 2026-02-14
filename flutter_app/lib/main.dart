@@ -428,6 +428,12 @@ class MovieMakerApp extends StatelessWidget {
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
+        scrollbarTheme: const ScrollbarThemeData(
+          thumbVisibility: MaterialStatePropertyAll(true),
+          trackVisibility: MaterialStatePropertyAll(true),
+          thickness: MaterialStatePropertyAll(10),
+          radius: Radius.circular(8),
+        ),
       ),
       home: const StudioShell(),
     );
@@ -996,6 +1002,23 @@ class _StudioShellState extends State<StudioShell> {
     }
   }
 
+  Widget _flowStepStatusBadge(String status) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withOpacity(0.35),
+        ),
+      ),
+      child: Text(
+        '状態: $status',
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
   Widget _wrapFlowStep({
     required String stepKey,
     required String stepTitle,
@@ -1006,45 +1029,58 @@ class _StudioShellState extends State<StudioShell> {
       return child;
     }
     final currentStatus = _currentFlowState[stepKey] ?? '未着手';
-    return ListView(
-      children: [
-        Text(stepTitle, style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 8),
-        Text(description),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                value: kFlowStatuses.contains(currentStatus) ? currentStatus : '未着手',
-                decoration: const InputDecoration(labelText: 'この工程の状態'),
-                items: kFlowStatuses
-                    .map((status) => DropdownMenuItem(value: status, child: Text(status)))
-                    .toList(),
-                onChanged: _flowStateLoading
-                    ? null
-                    : (value) {
-                        if (value == null || value == currentStatus) return;
-                        _updateCurrentProjectFlowStep(stepKey, value);
-                      },
+    return Scrollbar(
+      thumbVisibility: true,
+      trackVisibility: true,
+      child: ListView(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(stepTitle, style: Theme.of(context).textTheme.headlineSmall),
               ),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: _flowStateLoading ? null : _loadCurrentProjectFlowState,
-              icon: const Icon(Icons.refresh),
-              label: const Text('再読込'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        if (_flowStateLoading) const LinearProgressIndicator(),
-        const SizedBox(height: 16),
-        SizedBox(
-          height: 560,
-          child: child,
-        ),
-      ],
+              const SizedBox(width: 8),
+              _flowStepStatusBadge(currentStatus),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(description),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: kFlowStatuses.contains(currentStatus) ? currentStatus : '未着手',
+                  decoration: const InputDecoration(labelText: 'この工程の状態'),
+                  items: kFlowStatuses
+                      .map((status) => DropdownMenuItem(value: status, child: Text(status)))
+                      .toList(),
+                  onChanged: _flowStateLoading
+                      ? null
+                      : (value) {
+                          if (value == null || value == currentStatus) return;
+                          _updateCurrentProjectFlowStep(stepKey, value);
+                        },
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _flowStateLoading ? null : _loadCurrentProjectFlowState,
+                icon: const Icon(Icons.refresh),
+                label: const Text('再読込'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_flowStateLoading) const LinearProgressIndicator(),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 560,
+            child: child,
+          ),
+        ],
+      ),
     );
   }
 
