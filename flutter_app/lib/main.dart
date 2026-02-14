@@ -5057,7 +5057,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
         _exportProgress = 0.2;
         _exportStatusMessage = 'FFmpeg コマンドを構築中...';
       });
-      final ffmpegExecutable = await _resolveFfmpegExecutable();
       final args = _buildFfmpegArgs(
         inputPath: inputPath,
         outputPath: outputPath,
@@ -5068,7 +5067,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
         _exportProgress = 0.35;
         _exportStatusMessage = '最終動画を書き出し中...';
       });
-      final result = await Process.run(ffmpegExecutable, args);
+      final result = await _runFfmpeg(args);
       final stderrText = (result.stderr ?? '').toString();
       final stdoutText = (result.stdout ?? '').toString();
 
@@ -5373,7 +5372,30 @@ class _VideoEditFormState extends State<VideoEditForm> {
     );
   }
 
-  Future<String> _resolveFfmpegExecutable() async {
+  Future<ProcessResult> _runFfmpeg(List<String> args) async {
+    final resolved = await _resolveFfmpegExecutable();
+    final commandCandidates = <String>[
+      if (resolved != null && resolved.trim().isNotEmpty) resolved.trim(),
+      'ffmpeg',
+      if (Platform.isWindows) 'ffmpeg.exe',
+    ];
+
+    ProcessException? lastProcessException;
+    for (final command in commandCandidates.toSet()) {
+      final runInShell = !command.contains(Platform.pathSeparator);
+      try {
+        return await Process.run(command, args, runInShell: runInShell);
+      } on ProcessException catch (e) {
+        lastProcessException = e;
+        AppLogger.warn('最終編集: ffmpeg起動失敗 command=$command error=$e');
+      }
+    }
+
+    throw lastProcessException ??
+        ProcessException('ffmpeg', args, 'ffmpeg 実行ファイルの起動に失敗しました。');
+  }
+
+  Future<String?> _resolveFfmpegExecutable() async {
     final executableName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
     final candidates = <String>[];
     final envPath = (Platform.environment['FFMPEG_PATH'] ?? '').trim();
@@ -5408,6 +5430,12 @@ class _VideoEditFormState extends State<VideoEditForm> {
       if (normalized.isEmpty) {
         continue;
       }
+      if (normalized.startsWith('"') && normalized.endsWith('"') && normalized.length >= 2) {
+        final unquoted = normalized.substring(1, normalized.length - 1);
+        if (File(unquoted).existsSync()) {
+          return unquoted;
+        }
+      }
       if (File(normalized).existsSync()) {
         return normalized;
       }
@@ -5440,7 +5468,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
       // 探索補助の失敗時はコマンド名での実行にフォールバックする
     }
 
-    return 'ffmpeg';
+    return null;
   }
 
   @override
