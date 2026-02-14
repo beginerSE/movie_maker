@@ -319,12 +319,12 @@ class AppLogger {
 }
 
 const List<ProjectFlowStep> kFlowSteps = [
-  ProjectFlowStep(key: 'script', label: '① 台本作成（AI + 人間修正）'),
-  ProjectFlowStep(key: 'base_video', label: '② 動画作成（ベース動画生成）'),
-  ProjectFlowStep(key: 'title_description', label: '③ 動画タイトル・説明文作成（AI）'),
-  ProjectFlowStep(key: 'thumbnail', label: '④ サムネイル作成（AI）'),
-  ProjectFlowStep(key: 'ponchi', label: '⑤ ポンチ絵（補足ビジュアル）案の作成'),
-  ProjectFlowStep(key: 'final_edit', label: '⑥ 動画編集（最終編集）'),
+  ProjectFlowStep(key: 'script', label: '台本作成（AI + 人間修正）'),
+  ProjectFlowStep(key: 'base_video', label: '動画作成（ベース動画生成）'),
+  ProjectFlowStep(key: 'title_description', label: '動画タイトル・説明文作成（AI）'),
+  ProjectFlowStep(key: 'thumbnail', label: 'サムネイル作成（AI）'),
+  ProjectFlowStep(key: 'ponchi', label: 'ポンチ絵（補足ビジュアル）案の作成'),
+  ProjectFlowStep(key: 'final_edit', label: '動画編集（最終編集）'),
 ];
 
 const List<String> kFlowStatuses = ['未着手', '編集中', '完了'];
@@ -933,17 +933,17 @@ class _StudioShellState extends State<StudioShell> {
     }
     switch (index) {
       case 1:
-        return '① 台本作成';
+        return '台本作成';
       case 2:
-        return '② ベース動画作成';
+        return 'ベース動画作成';
       case 3:
-        return '③ タイトル・説明';
+        return 'タイトル・説明';
       case 4:
-        return '④ サムネイル';
+        return 'サムネイル';
       case 5:
-        return '⑤ ポンチ絵案';
+        return 'ポンチ絵案';
       case 6:
-        return '⑥ 最終編集';
+        return '最終編集';
       case 11:
         return 'AIフロー進捗';
       default:
