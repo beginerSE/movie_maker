@@ -1111,12 +1111,24 @@ async def final_video_export(payload: FinalVideoExportRequest) -> dict:
         raise HTTPException(status_code=400, detail=detail)
 
     ffmpeg = _resolve_ffmpeg_executable_for_backend()
+    ffmpeg_output_path = output_path
+    output_text = str(output_path)
+    if any(ord(ch) > 127 for ch in output_text):
+        suffix = output_path.suffix or ".mp4"
+        ffmpeg_output_path = output_path.parent / f"final_export_{int(time.time() * 1000)}{suffix}"
+
     args = _build_final_export_ffmpeg_args(
         input_path=str(input_path),
-        output_path=str(output_path),
+        output_path=str(ffmpeg_output_path),
         overlays=payload.overlays,
     )
-    logger.info("final export start ffmpeg=%s output=%s overlays=%s", ffmpeg, str(output_path), len(payload.overlays))
+    logger.info(
+        "final export start ffmpeg=%s output=%s actual_output=%s overlays=%s",
+        ffmpeg,
+        str(output_path),
+        str(ffmpeg_output_path),
+        len(payload.overlays),
+    )
 
     try:
         completed = subprocess.run(
@@ -1135,6 +1147,18 @@ async def final_video_export(payload: FinalVideoExportRequest) -> dict:
         detail = stderr_text or stdout_text or "ffmpeg 実行エラー"
         logger.error("final export ffmpeg failed code=%s detail=%s", completed.returncode, detail)
         raise HTTPException(status_code=500, detail=f"ffmpeg失敗(exit={completed.returncode}): {detail}")
+
+    if ffmpeg_output_path != output_path:
+        try:
+            if output_path.exists():
+                output_path.unlink()
+            ffmpeg_output_path.replace(output_path)
+        except Exception as exc:
+            logger.exception("final export rename failed temp=%s target=%s", str(ffmpeg_output_path), str(output_path))
+            raise HTTPException(
+                status_code=500,
+                detail=f"書き出し後のファイル名変更に失敗しました: {exc}",
+            ) from exc
 
     return {"output_path": str(output_path)}
 
