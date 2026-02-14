@@ -17,7 +17,7 @@ import threading
 import time
 import traceback
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -570,6 +570,10 @@ class FinalVideoExportRequest(BaseModel):
     overlays: List[FinalOverlayItem] = Field(default_factory=list)
 
 
+class FinalVideoExportResponse(BaseModel):
+    output_path: str
+
+
 def _resolve_ffmpeg_executable_for_backend() -> str:
     if imageio_ffmpeg is not None:
         try:
@@ -1094,8 +1098,20 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
     return JobResponse(job_id=job.job_id)
 
 
-@app.post("/video/final-export")
-async def final_video_export(payload: FinalVideoExportRequest) -> dict:
+def _run_final_video_export(
+    payload: FinalVideoExportRequest,
+    *,
+    log_fn: Optional[Callable[[str], None]] = None,
+    progress_fn: Optional[Callable[[float], None]] = None,
+) -> str:
+    def _log(message: str) -> None:
+        if log_fn is not None:
+            log_fn(message)
+
+    def _progress(value: float) -> None:
+        if progress_fn is not None:
+            progress_fn(value)
+
     input_path = Path(payload.input_path)
     if not input_path.exists():
         raise HTTPException(status_code=400, detail=f"input_path が見つかりません: {payload.input_path}")
@@ -1109,6 +1125,9 @@ async def final_video_export(payload: FinalVideoExportRequest) -> dict:
         if len(missing) > 5:
             detail += " ..."
         raise HTTPException(status_code=400, detail=detail)
+
+    _progress(0.05)
+    _log("最終編集: 書き出し準備完了")
 
     ffmpeg = _resolve_ffmpeg_executable_for_backend()
     ffmpeg_output_path = output_path
@@ -1129,6 +1148,8 @@ async def final_video_export(payload: FinalVideoExportRequest) -> dict:
         str(ffmpeg_output_path),
         len(payload.overlays),
     )
+    _log(f"最終編集: ffmpeg開始 overlays={len(payload.overlays)}")
+    _progress(0.2)
 
     try:
         completed = subprocess.run(
@@ -1146,7 +1167,10 @@ async def final_video_export(payload: FinalVideoExportRequest) -> dict:
         stdout_text = (completed.stdout or "").strip()
         detail = stderr_text or stdout_text or "ffmpeg 実行エラー"
         logger.error("final export ffmpeg failed code=%s detail=%s", completed.returncode, detail)
+        _log(f"最終編集: ffmpeg失敗 exit={completed.returncode}")
         raise HTTPException(status_code=500, detail=f"ffmpeg失敗(exit={completed.returncode}): {detail}")
+
+    _progress(0.9)
 
     if ffmpeg_output_path != output_path:
         try:
@@ -1160,7 +1184,45 @@ async def final_video_export(payload: FinalVideoExportRequest) -> dict:
                 detail=f"書き出し後のファイル名変更に失敗しました: {exc}",
             ) from exc
 
-    return {"output_path": str(output_path)}
+    _progress(1.0)
+    _log(f"最終編集: 書き出し完了 output={str(output_path)}")
+
+    return str(output_path)
+
+
+@app.post("/video/final-export", response_model=FinalVideoExportResponse)
+async def final_video_export(payload: FinalVideoExportRequest) -> FinalVideoExportResponse:
+    output_path = _run_final_video_export(payload)
+    return FinalVideoExportResponse(output_path=output_path)
+
+
+@app.post("/video/final-export-job", response_model=JobResponse)
+async def final_video_export_job(payload: FinalVideoExportRequest) -> JobResponse:
+    try:
+        job = manager.create_job()
+        manager.update_status(job.job_id, "running")
+    except Exception as exc:
+        logger.exception("Failed to create final export job")
+        raise HTTPException(status_code=500, detail=f"ジョブ作成に失敗しました: {exc}") from exc
+
+    def log_fn(message: str) -> None:
+        manager.add_log(job.job_id, message)
+
+    def progress_fn(value: float) -> None:
+        manager.update_progress(job.job_id, value, None)
+
+    def worker() -> None:
+        try:
+            output_path = _run_final_video_export(payload, log_fn=log_fn, progress_fn=progress_fn)
+            manager.set_result(job.job_id, {"message": "completed", "output_path": output_path})
+        except Exception as exc:
+            error_message = f"{type(exc).__name__}: {exc}"
+            logger.exception("Final export failed: %s", error_message)
+            log_fn(f"[error] {error_message}")
+            manager.set_error(job.job_id, error_message)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return JobResponse(job_id=job.job_id)
 
 
 @app.get("/video/preview")

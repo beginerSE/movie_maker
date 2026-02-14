@@ -4910,6 +4910,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
   bool _isExporting = false;
   double? _exportProgress;
   String _exportStatusMessage = '待機中';
+  String? _exportJobId;
 
   @override
   void initState() {
@@ -5081,11 +5082,11 @@ class _VideoEditFormState extends State<VideoEditForm> {
       });
       setState(() {
         _exportProgress = 0.35;
-        _exportStatusMessage = '最終動画を書き出し中...';
+        _exportStatusMessage = '最終書き出しジョブを開始中...';
       });
       final response = await http
           .post(
-            ApiConfig.httpUri('/video/final-export'),
+            ApiConfig.httpUri('/video/final-export-job'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'input_path': inputPath,
@@ -5114,10 +5115,65 @@ class _VideoEditFormState extends State<VideoEditForm> {
         return;
       }
 
-      String finalOutputPath = outputPath;
+      String? jobId;
       try {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
-        finalOutputPath = (body['output_path'] as String? ?? outputPath).trim();
+        jobId = (body['job_id'] as String?)?.trim();
+      } catch (_) {}
+      if (jobId == null || jobId.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _exportProgress = 0.0;
+          _exportStatusMessage = '失敗: job_id が取得できませんでした';
+        });
+        _showSnackBar('書き出しに失敗しました: job_id が取得できませんでした');
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _exportJobId = jobId;
+        _exportStatusMessage = '最終書き出し中... (job: $jobId)';
+      });
+
+      Map<String, dynamic>? lastStatus;
+      for (var i = 0; i < 1200; i += 1) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        final statusResponse = await http.get(ApiConfig.httpUri('/jobs/$jobId'));
+        if (statusResponse.statusCode < 200 || statusResponse.statusCode >= 300) {
+          continue;
+        }
+        final statusData = jsonDecode(statusResponse.body) as Map<String, dynamic>;
+        lastStatus = statusData;
+        final progress = (statusData['progress'] as num?)?.toDouble();
+        final status = (statusData['status'] as String? ?? '').trim();
+        if (mounted) {
+          setState(() {
+            _exportProgress = progress == null ? _exportProgress : progress.clamp(0.0, 1.0).toDouble();
+            _exportStatusMessage = '最終書き出し中... status=${status.isEmpty ? 'running' : status}';
+          });
+        }
+        if (status == 'completed' || status == 'error') {
+          break;
+        }
+      }
+
+      final status = (lastStatus?['status'] as String? ?? '').trim();
+      if (status != 'completed') {
+        final error = (lastStatus?['error'] ?? 'タイムアウトまたは状態取得失敗').toString();
+        if (!mounted) return;
+        setState(() {
+          _exportProgress = 0.0;
+          _exportStatusMessage = '失敗: $error';
+        });
+        _showSnackBar('書き出しに失敗しました: $error');
+        return;
+      }
+
+      String finalOutputPath = outputPath;
+      try {
+        final result = (lastStatus?['result'] as Map<String, dynamic>?);
+        finalOutputPath = (result?['output_path'] as String? ?? outputPath).trim();
       } catch (_) {}
 
       setState(() {
@@ -5140,6 +5196,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
       if (!mounted) return;
       setState(() {
         _isExporting = false;
+        _exportJobId = null;
       });
     }
   }
@@ -5816,6 +5873,8 @@ class _VideoEditFormState extends State<VideoEditForm> {
           ),
           const SizedBox(height: 12),
           Text('進捗: $_exportStatusMessage'),
+          if (_exportJobId != null && _exportJobId!.isNotEmpty)
+            SelectableText('最終書き出し Job ID: $_exportJobId'),
           const SizedBox(height: 8),
           LinearProgressIndicator(value: _exportProgress),
         ],
