@@ -7467,14 +7467,6 @@ class _LogPanelState extends State<LogPanel> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: ElevatedButton.icon(
-            onPressed: _connectLatestJob,
-            icon: const Icon(Icons.auto_graph),
-            label: const Text('最新ジョブに自動接続'),
-          ),
-        ),
         if (widget.collapsed) const SizedBox.shrink() else ...[
         if (_currentJobId != null) ...[
           Padding(
@@ -7561,15 +7553,6 @@ class _LogPanelState extends State<LogPanel> {
   void _handleLatestJobIdChanged() {
     final jobId = widget.latestJobId?.value;
     if (jobId == null || jobId.isEmpty || jobId == _currentJobId) {
-      return;
-    }
-    _connectWebSocket(jobId);
-  }
-
-  void _connectLatestJob() {
-    final jobId = widget.latestJobId?.value;
-    if (jobId == null || jobId.isEmpty) {
-      AppLogger.warn('まだジョブが送信されていません。動画生成を開始してください。');
       return;
     }
     _connectWebSocket(jobId);

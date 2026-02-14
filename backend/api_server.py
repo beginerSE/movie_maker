@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import traceback
+from datetime import datetime
 from typing import Any, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
@@ -911,6 +912,11 @@ async def generate_ponchi_images(payload: PonchiImagesRequest) -> PonchiImagesRe
     )
 
 
+def _build_base_video_output_stem() -> str:
+    now = datetime.now()
+    return f"{now.strftime('%Y%m%d%H%M')}{int(time.time() * 1000)}"
+
+
 @app.post("/video/generate", response_model=JobResponse)
 async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
     project_id = _resolve_project_id(payload.project_id)
@@ -929,6 +935,8 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
 
     def progress_fn(value: float, eta_seconds: Optional[float] = None) -> None:
         manager.update_progress(job.job_id, value, eta_seconds)
+
+    output_stem = _build_base_video_output_stem()
 
     def worker() -> None:
         try:
@@ -962,11 +970,11 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
                 caption_box_height=payload.caption_box_height,
                 bg_off_style=payload.bg_off_style,
                 caption_text_color=payload.caption_text_color,
+                output_stem=output_stem,
             )
-            stem = pathlib.Path(payload.script_path).stem
             output_dir = pathlib.Path(payload.output_dir)
-            video_path = str(output_dir / f"{stem}.mp4")
-            srt_path = str(output_dir / f"{stem}.srt")
+            video_path = str(output_dir / f"{output_stem}.mp4")
+            srt_path = str(output_dir / f"{output_stem}.srt")
             manager.set_result(
                 job.job_id,
                 {
