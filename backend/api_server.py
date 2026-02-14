@@ -1104,13 +1104,28 @@ def _run_final_video_export(
     log_fn: Optional[Callable[[str], None]] = None,
     progress_fn: Optional[Callable[[float], None]] = None,
 ) -> str:
+    progress_step = 0.002
+
+    def _quantize_progress(value: float) -> float:
+        clamped = max(0.0, min(1.0, value))
+        return round(clamped / progress_step) * progress_step
+
+    def _parse_hhmmss_time(text: str) -> Optional[float]:
+        m = re.search(r"(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)", text)
+        if m is None:
+            return None
+        hh = int(m.group(1))
+        mm = int(m.group(2))
+        ss = float(m.group(3))
+        return hh * 3600 + mm * 60 + ss
+
     def _log(message: str) -> None:
         if log_fn is not None:
             log_fn(message)
 
     def _progress(value: float) -> None:
         if progress_fn is not None:
-            progress_fn(value)
+            progress_fn(_quantize_progress(value))
 
     input_path = Path(payload.input_path)
     if not input_path.exists():
@@ -1152,6 +1167,7 @@ def _run_final_video_export(
     _progress(0.2)
 
     stderr_lines: List[str] = []
+    total_duration_seconds: Optional[float] = None
     progress_value = 0.2
     try:
         process = subprocess.Popen(
@@ -1170,13 +1186,26 @@ def _run_final_video_export(
                 stderr_lines.append(line)
                 if len(stderr_lines) > 120:
                     stderr_lines = stderr_lines[-120:]
+
+                if total_duration_seconds is None and "Duration:" in line:
+                    total_duration_seconds = _parse_hhmmss_time(line)
+
                 if (
                     "frame=" in line
                     or "time=" in line
                     or "fps=" in line
                     or "bitrate=" in line
                 ):
-                    progress_value = min(0.9, progress_value + 0.01)
+                    encoded_seconds = None
+                    if "time=" in line:
+                        time_match = re.search(r"time=\s*([0-9:.]+)", line)
+                        if time_match is not None:
+                            encoded_seconds = _parse_hhmmss_time(time_match.group(1))
+                    if total_duration_seconds and encoded_seconds is not None and total_duration_seconds > 0:
+                        ratio = max(0.0, min(1.0, encoded_seconds / total_duration_seconds))
+                        progress_value = 0.2 + (0.7 * ratio)
+                    else:
+                        progress_value = min(0.9, progress_value + progress_step)
                     _progress(progress_value)
                 if len(stderr_lines) % 15 == 0:
                     _log(f"最終編集: ffmpeg進行中 {line}")
