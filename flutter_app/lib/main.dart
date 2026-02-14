@@ -6882,12 +6882,11 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               ],
             ),
           const SizedBox(height: 12),
-          Text(
-            'TTS エンジン',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
+          ExpansionTile(
+            title: const Text('TTS エンジン設定'),
+            initiallyExpanded: true,
+            children: [
+              DropdownButtonFormField<String>(
             value: _ttsEngine,
             decoration: const InputDecoration(labelText: '音声合成エンジン'),
             items: const [
@@ -7011,13 +7010,13 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               ],
             ),
           ],
-          const SizedBox(height: 12),
-          Text(
-            '字幕設定',
-            style: Theme.of(context).textTheme.titleMedium,
           ),
-          const SizedBox(height: 8),
-          Row(
+          const SizedBox(height: 12),
+          ExpansionTile(
+            title: const Text('字幕設定'),
+            initiallyExpanded: true,
+            children: [
+              Row(
             children: [
               Expanded(
                 child: TextFormField(
@@ -7098,10 +7097,12 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
               _persistence.setBool('caption_box_enabled', value);
             },
           ),
-          TextFormField(
-            controller: _captionBoxHeightController,
-            decoration: const InputDecoration(labelText: '字幕背景の高さ(px, 固定)'),
-            keyboardType: TextInputType.number,
+              TextFormField(
+                controller: _captionBoxHeightController,
+                decoration: const InputDecoration(labelText: '字幕背景の高さ(px, 固定)'),
+                keyboardType: TextInputType.number,
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           ValueListenableBuilder<bool>(
