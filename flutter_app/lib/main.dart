@@ -5057,44 +5057,55 @@ class _VideoEditFormState extends State<VideoEditForm> {
         _exportProgress = 0.2;
         _exportStatusMessage = 'FFmpeg コマンドを構築中...';
       });
-      final args = _buildFfmpegArgs(
-        inputPath: inputPath,
-        outputPath: outputPath,
-        overlays: overlays,
-      );
-
       setState(() {
         _exportProgress = 0.35;
         _exportStatusMessage = '最終動画を書き出し中...';
       });
-      final result = await _runFfmpeg(args);
-      final stderrText = (result.stderr ?? '').toString();
-      final stdoutText = (result.stdout ?? '').toString();
+      final response = await http
+          .post(
+            ApiConfig.httpUri('/video/final-export'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'input_path': inputPath,
+              'output_path': outputPath,
+              'overlays': overlays,
+            }),
+          )
+          .timeout(const Duration(minutes: 10));
 
-      if (result.exitCode != 0) {
-        AppLogger.error(
-          '最終編集: ffmpeg失敗',
-          error: 'exit=${result.exitCode}',
-          stackTrace: StackTrace.current,
-        );
-        AppLogger.warn(stderrText.isEmpty ? stdoutText : stderrText);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final detail = (() {
+          try {
+            final data = jsonDecode(response.body) as Map<String, dynamic>;
+            return (data['detail'] ?? response.body).toString();
+          } catch (_) {
+            return response.body;
+          }
+        })();
+        AppLogger.error('最終編集: 書き出し失敗', error: 'status=${response.statusCode} detail=$detail');
         if (!mounted) return;
         setState(() {
           _exportProgress = 0.0;
-          _exportStatusMessage = '失敗: ffmpeg 実行エラー';
+          _exportStatusMessage = '失敗: $detail';
         });
-        _showSnackBar('書き出しに失敗しました。ffmpeg がインストール済みか確認してください。');
+        _showSnackBar('書き出しに失敗しました: $detail');
         return;
       }
+
+      String finalOutputPath = outputPath;
+      try {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        finalOutputPath = (body['output_path'] as String? ?? outputPath).trim();
+      } catch (_) {}
 
       setState(() {
         _exportProgress = 1.0;
         _exportStatusMessage = '書き出し完了';
       });
-      _showSnackBar('書き出し完了: $outputPath');
-      await _initInputVideoPreview(outputPath);
-      _inputVideoController.text = outputPath;
-      await _persistence.setString('input_video', outputPath);
+      _showSnackBar('書き出し完了: $finalOutputPath');
+      await _initInputVideoPreview(finalOutputPath);
+      _inputVideoController.text = finalOutputPath;
+      await _persistence.setString('input_video', finalOutputPath);
     } catch (e, st) {
       AppLogger.error('最終編集: 書き出し失敗', error: e, stackTrace: st);
       if (!mounted) return;
@@ -5370,105 +5381,6 @@ class _VideoEditFormState extends State<VideoEditForm> {
         ),
       ),
     );
-  }
-
-  Future<ProcessResult> _runFfmpeg(List<String> args) async {
-    final resolved = await _resolveFfmpegExecutable();
-    final commandCandidates = <String>[
-      if (resolved != null && resolved.trim().isNotEmpty) resolved.trim(),
-      'ffmpeg',
-      if (Platform.isWindows) 'ffmpeg.exe',
-    ];
-
-    ProcessException? lastProcessException;
-    for (final command in commandCandidates.toSet()) {
-      final runInShell = !command.contains(Platform.pathSeparator);
-      try {
-        return await Process.run(command, args, runInShell: runInShell);
-      } on ProcessException catch (e) {
-        lastProcessException = e;
-        AppLogger.warn('最終編集: ffmpeg起動失敗 command=$command error=$e');
-      }
-    }
-
-    throw lastProcessException ??
-        ProcessException('ffmpeg', args, 'ffmpeg 実行ファイルの起動に失敗しました。');
-  }
-
-  Future<String?> _resolveFfmpegExecutable() async {
-    final executableName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
-    final candidates = <String>[];
-    final envPath = (Platform.environment['FFMPEG_PATH'] ?? '').trim();
-    if (envPath.isNotEmpty) {
-      candidates.add(envPath);
-    }
-
-    final pathValue = Platform.environment['PATH'] ?? '';
-    final delimiter = Platform.isWindows ? ';' : ':';
-    for (final dirPath in pathValue.split(delimiter)) {
-      final trimmed = dirPath.trim();
-      if (trimmed.isEmpty) {
-        continue;
-      }
-      candidates.add('$trimmed${Platform.pathSeparator}$executableName');
-    }
-
-    if (Platform.isWindows) {
-      final userProfile = (Platform.environment['USERPROFILE'] ?? '').trim();
-      if (userProfile.isNotEmpty) {
-        candidates.add('$userProfile\\scoop\\shims\\ffmpeg.exe');
-      }
-      candidates.addAll(const [
-        r'C:\ffmpeg\bin\ffmpeg.exe',
-        r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
-        r'C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe',
-      ]);
-    }
-
-    for (final candidate in candidates) {
-      final normalized = candidate.trim();
-      if (normalized.isEmpty) {
-        continue;
-      }
-      if (normalized.startsWith('"') && normalized.endsWith('"') && normalized.length >= 2) {
-        final unquoted = normalized.substring(1, normalized.length - 1);
-        if (File(unquoted).existsSync()) {
-          return unquoted;
-        }
-      }
-      if (File(normalized).existsSync()) {
-        return normalized;
-      }
-    }
-
-    try {
-      if (Platform.isWindows) {
-        final whereResult = await Process.run('where', ['ffmpeg']);
-        if (whereResult.exitCode == 0) {
-          final lines = (whereResult.stdout ?? '')
-              .toString()
-              .split(RegExp(r'\r?\n'))
-              .map((line) => line.trim())
-              .where((line) => line.isNotEmpty)
-              .toList();
-          if (lines.isNotEmpty) {
-            return lines.first;
-          }
-        }
-      } else {
-        final whichResult = await Process.run('which', ['ffmpeg']);
-        if (whichResult.exitCode == 0) {
-          final resolved = (whichResult.stdout ?? '').toString().trim();
-          if (resolved.isNotEmpty) {
-            return resolved;
-          }
-        }
-      }
-    } catch (_) {
-      // 探索補助の失敗時はコマンド名での実行にフォールバックする
-    }
-
-    return null;
   }
 
   @override

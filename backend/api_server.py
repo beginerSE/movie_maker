@@ -11,6 +11,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -24,8 +25,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
 
+try:
+    import imageio_ffmpeg  # type: ignore
+except Exception:  # pragma: no cover
+    imageio_ffmpeg = None
 
-from pathlib import Path
+
 
 def app_root() -> Path:
     # PyInstaller exe で動いているときは exe のあるフォルダ
@@ -548,6 +553,103 @@ class JobStatusResponse(BaseModel):
     result: dict
 
 
+class FinalOverlayItem(BaseModel):
+    image: str
+    start: float
+    end: float
+    x: int
+    y: int
+    w: int = 0
+    h: int = 0
+    opacity: float = 1.0
+
+
+class FinalVideoExportRequest(BaseModel):
+    input_path: str
+    output_path: str
+    overlays: List[FinalOverlayItem] = Field(default_factory=list)
+
+
+def _resolve_ffmpeg_executable_for_backend() -> str:
+    if imageio_ffmpeg is not None:
+        try:
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if exe and Path(exe).exists():
+                return exe
+        except Exception:
+            pass
+    return "ffmpeg"
+
+
+def _build_final_export_ffmpeg_args(
+    input_path: str,
+    output_path: str,
+    overlays: List[FinalOverlayItem],
+) -> List[str]:
+    args: List[str] = ["-y", "-i", input_path]
+    if not overlays:
+        return [
+            *args,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
+            output_path,
+        ]
+
+    for ov in overlays:
+        args.extend(["-loop", "1", "-i", ov.image])
+
+    filters = ["[0:v]setpts=PTS-STARTPTS[v0]"]
+    prev_label = "v0"
+    for i, ov in enumerate(overlays):
+        input_index = i + 1
+        img_label = f"ov{i}"
+        out_label = f"v{i + 1}"
+        opacity = f"{max(0.0, min(1.0, ov.opacity)):.3f}"
+        start = f"{ov.start:.3f}"
+        end = f"{ov.end:.3f}"
+
+        image_filter = f"[{input_index}:v]format=rgba,colorchannelmixer=aa={opacity}"
+        if ov.w > 0 and ov.h > 0:
+            image_filter += f",scale={ov.w}:{ov.h}"
+        image_filter += f"[{img_label}]"
+        filters.append(image_filter)
+        filters.append(
+            f"[{prev_label}][{img_label}]overlay=x={ov.x}:y={ov.y}:enable=between(t\\,{start}\\,{end})[{out_label}]"
+        )
+        prev_label = out_label
+
+    args.extend(
+        [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            f"[{prev_label}]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
+            output_path,
+        ]
+    )
+    return args
+
+
 @app.get("/health")
 async def health() -> dict:
     _ensure_default_project()
@@ -990,6 +1092,51 @@ async def generate_video_job(payload: VideoGenerateRequest) -> JobResponse:
 
     threading.Thread(target=worker, daemon=True).start()
     return JobResponse(job_id=job.job_id)
+
+
+@app.post("/video/final-export")
+async def final_video_export(payload: FinalVideoExportRequest) -> dict:
+    input_path = Path(payload.input_path)
+    if not input_path.exists():
+        raise HTTPException(status_code=400, detail=f"input_path が見つかりません: {payload.input_path}")
+
+    output_path = Path(payload.output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    missing = [ov.image for ov in payload.overlays if not Path(ov.image).exists()]
+    if missing:
+        detail = "overlays.image が見つかりません: " + ", ".join(missing[:5])
+        if len(missing) > 5:
+            detail += " ..."
+        raise HTTPException(status_code=400, detail=detail)
+
+    ffmpeg = _resolve_ffmpeg_executable_for_backend()
+    args = _build_final_export_ffmpeg_args(
+        input_path=str(input_path),
+        output_path=str(output_path),
+        overlays=payload.overlays,
+    )
+    logger.info("final export start ffmpeg=%s output=%s overlays=%s", ffmpeg, str(output_path), len(payload.overlays))
+
+    try:
+        completed = subprocess.run(
+            [ffmpeg, *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as exc:
+        logger.exception("final export failed to start")
+        raise HTTPException(status_code=500, detail=f"ffmpeg 起動失敗: {exc}") from exc
+
+    if completed.returncode != 0:
+        stderr_text = (completed.stderr or "").strip()
+        stdout_text = (completed.stdout or "").strip()
+        detail = stderr_text or stdout_text or "ffmpeg 実行エラー"
+        logger.error("final export ffmpeg failed code=%s detail=%s", completed.returncode, detail)
+        raise HTTPException(status_code=500, detail=f"ffmpeg失敗(exit={completed.returncode}): {detail}")
+
+    return {"output_path": str(output_path)}
 
 
 @app.get("/video/preview")
