@@ -892,6 +892,7 @@ async def generate_script(payload: ScriptGenerateRequest) -> ScriptGenerateRespo
                 api_key=payload.api_key,
                 prompt=payload.prompt,
                 model=model,
+                max_tokens=payload.max_tokens,
             )
         elif provider == "chatgpt":
             text = generate_script_with_openai(
@@ -933,6 +934,7 @@ async def generate_title(payload: TitleGenerateRequest) -> TitleGenerateResponse
                 api_key=payload.api_key,
                 prompt=prompt,
                 model=model,
+                max_tokens=payload.max_tokens or DEFAULT_TITLE_MAX_TOKENS,
             )
         elif provider == "chatgpt":
             text = generate_script_with_openai(

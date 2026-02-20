@@ -2554,6 +2554,9 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
           value: _chatGptModel,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
+            DropdownMenuItem(value: 'gpt-5-mini', child: Text('gpt-5-mini')),
+            DropdownMenuItem(value: 'gpt-5', child: Text('gpt-5')),
+            DropdownMenuItem(value: 'gpt-5-nano', child: Text('gpt-5-nano')),
             DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
             DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
             DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
@@ -3224,6 +3227,9 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           value: _chatGptModel,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
+            DropdownMenuItem(value: 'gpt-5-mini', child: Text('gpt-5-mini')),
+            DropdownMenuItem(value: 'gpt-5', child: Text('gpt-5')),
+            DropdownMenuItem(value: 'gpt-5-nano', child: Text('gpt-5-nano')),
             DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
             DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
             DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
