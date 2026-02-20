@@ -2353,9 +2353,41 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   bool _isSubmitting = false;
   static const Map<String, String> _defaultTemplates = {
     '（テンプレなし）': '',
-    'ニュース原稿': '',
-    '要約': '',
-    'YouTube Shorts': '',
+    'ニュース原稿': '''
+あなたはニュース番組の構成作家です。
+以下のテーマについて、キャスターとアナリストの2名が会話する短尺ニュース台本を日本語で作成してください。
+
+【要件】
+- 12〜16セリフ程度
+- 1セリフは1〜2文で簡潔に
+- 冒頭で話題の要点を提示
+- 中盤で背景・数字・具体例を入れる
+- 最後は視聴者向けに一言で締める
+- 誇張表現は避け、事実ベースで自然な口調にする
+''',
+    '要約': '''
+次の文章を、動画ナレーション向けにわかりやすく要約してください。
+
+【要件】
+- 箇条書きではなく自然な話し言葉
+- 重要ポイントを3〜5点に整理
+- 専門用語はできるだけ平易に言い換える
+- 全体で300〜500文字程度
+''',
+    'YouTube Shorts': '''
+あなたはYouTube Shortsの台本作家です。
+次のテーマで、冒頭3秒で惹きつける日本語台本を作ってください。
+
+【構成】
+1. フック（驚き・疑問を1文）
+2. 本編（要点をテンポよく3〜4文）
+3. まとめ（学び/結論を1文）
+
+【要件】
+- 全体で250〜400文字
+- 1文を短く、テンポ重視
+- 読み上げやすい自然な文体
+''',
   };
   late Map<String, String> _templateContents =
       Map<String, String>.from(_defaultTemplates);
@@ -2623,7 +2655,10 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
             final name = entry['name'] as String?;
             final content = entry['content'] as String?;
             if (name != null) {
-              result[name] = content ?? '';
+              final normalized = (content ?? '').trim();
+              final fallback = _defaultTemplates[name] ?? '';
+              // 既存データが空の場合は、初期テンプレート追加時のデフォルト本文を優先して補完する。
+              result[name] = normalized.isNotEmpty ? content ?? '' : fallback;
             }
           }
         }
