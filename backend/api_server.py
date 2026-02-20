@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import traceback
+import webbrowser
 from datetime import datetime
 from typing import Any, Callable, List, Optional
 
@@ -120,6 +121,14 @@ def user_data_root() -> Path:
 
 DATA_ROOT = user_data_root()
 PROJECTS_ROOT = DATA_ROOT / "projects"
+YOUTUBE_SECRETS_DIR = ROOT_DIR / "backend" / ".secrets"
+YOUTUBE_CLIENT_SECRET_PATH = YOUTUBE_SECRETS_DIR / "client_secret.json"
+YOUTUBE_TOKEN_PATH = YOUTUBE_SECRETS_DIR / "youtube_token.json"
+YOUTUBE_OAUTH_STATE_PATH = YOUTUBE_SECRETS_DIR / "youtube_oauth_state.json"
+YOUTUBE_SETTINGS_PATH = YOUTUBE_SECRETS_DIR / "youtube_settings.json"
+YOUTUBE_SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+]
 
 
 def _slugify_project_id(name: str) -> str:
@@ -575,6 +584,29 @@ class FinalVideoExportResponse(BaseModel):
     output_path: str
 
 
+class YouTubeSettingsRequest(BaseModel):
+    client_secret_json: str
+    redirect_uri: str = "http://127.0.0.1:8000/youtube/auth/callback"
+
+
+class YouTubeSettingsResponse(BaseModel):
+    configured: bool
+    authenticated: bool
+    redirect_uri: str
+
+
+class YouTubeAuthStartResponse(BaseModel):
+    auth_url: str
+
+
+class YouTubeUploadRequest(BaseModel):
+    video_path: str
+    thumbnail_path: Optional[str] = None
+    title: str
+    description: str = ""
+    privacyStatus: str = "private"
+
+
 def _resolve_ffmpeg_executable_for_backend() -> str:
     if imageio_ffmpeg is not None:
         try:
@@ -880,6 +912,56 @@ async def get_ai_models() -> dict:
             "default_model": MODEL_CONFIG["ponchi_default"],
         },
     }
+
+
+def _ensure_youtube_secret_dir() -> None:
+    YOUTUBE_SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _load_youtube_settings() -> dict[str, Any]:
+    if not YOUTUBE_SETTINGS_PATH.exists():
+        return {"redirect_uri": "http://127.0.0.1:8000/youtube/auth/callback"}
+    try:
+        data = json.loads(YOUTUBE_SETTINGS_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {"redirect_uri": "http://127.0.0.1:8000/youtube/auth/callback"}
+
+
+def _save_youtube_settings(data: dict[str, Any]) -> None:
+    _ensure_youtube_secret_dir()
+    YOUTUBE_SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _youtube_is_authenticated() -> bool:
+    return YOUTUBE_TOKEN_PATH.exists()
+
+
+def _youtube_is_configured() -> bool:
+    return YOUTUBE_CLIENT_SECRET_PATH.exists()
+
+
+def _load_youtube_credentials():
+    try:
+        from google.oauth2.credentials import Credentials  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(
+            "Google API クライアントが未インストールです。google-auth-oauthlib / google-api-python-client を導入してください。"
+        ) from exc
+    if not YOUTUBE_TOKEN_PATH.exists():
+        raise RuntimeError("YouTube 認証トークンがありません。先に OAuth 認証を実行してください。")
+    return Credentials.from_authorized_user_file(str(YOUTUBE_TOKEN_PATH), scopes=YOUTUBE_SCOPES)
+
+
+def _create_youtube_service():
+    creds = _load_youtube_credentials()
+    try:
+        from googleapiclient.discovery import build  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("google-api-python-client が未インストールです。") from exc
+    return build("youtube", "v3", credentials=creds)
 
 
 @app.post("/script/generate", response_model=ScriptGenerateResponse)
@@ -1507,6 +1589,180 @@ async def video_preview(path: str = Query(..., description="Path to generated vi
             "HTTP /video/preview is deprecated and must not be used."
         ),
     )
+
+
+@app.get("/youtube/settings", response_model=YouTubeSettingsResponse)
+async def get_youtube_settings() -> YouTubeSettingsResponse:
+    data = _load_youtube_settings()
+    redirect_uri = str(data.get("redirect_uri") or "http://127.0.0.1:8000/youtube/auth/callback").strip()
+    return YouTubeSettingsResponse(
+        configured=_youtube_is_configured(),
+        authenticated=_youtube_is_authenticated(),
+        redirect_uri=redirect_uri,
+    )
+
+
+@app.put("/youtube/settings", response_model=YouTubeSettingsResponse)
+async def put_youtube_settings(payload: YouTubeSettingsRequest) -> YouTubeSettingsResponse:
+    if not payload.client_secret_json.strip():
+        raise HTTPException(status_code=400, detail="client_secret_json が空です。")
+    try:
+        parsed = json.loads(payload.client_secret_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"client_secret_json のJSON解析に失敗しました: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="client_secret_json はJSONオブジェクト形式で指定してください。")
+
+    _ensure_youtube_secret_dir()
+    YOUTUBE_CLIENT_SECRET_PATH.write_text(
+        json.dumps(parsed, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    settings = {"redirect_uri": payload.redirect_uri.strip() or "http://127.0.0.1:8000/youtube/auth/callback"}
+    _save_youtube_settings(settings)
+    return YouTubeSettingsResponse(
+        configured=True,
+        authenticated=_youtube_is_authenticated(),
+        redirect_uri=settings["redirect_uri"],
+    )
+
+
+@app.get("/youtube/auth/start", response_model=YouTubeAuthStartResponse)
+async def youtube_auth_start(open_browser: bool = Query(False)) -> YouTubeAuthStartResponse:
+    if not _youtube_is_configured():
+        raise HTTPException(status_code=400, detail="YouTube OAuth 設定が未登録です。設定画面から client_secret_json を保存してください。")
+    settings = _load_youtube_settings()
+    redirect_uri = str(settings.get("redirect_uri") or "http://127.0.0.1:8000/youtube/auth/callback").strip()
+    try:
+        from google_auth_oauthlib.flow import Flow  # type: ignore
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="google-auth-oauthlib が未インストールです。") from exc
+
+    flow = Flow.from_client_secrets_file(str(YOUTUBE_CLIENT_SECRET_PATH), scopes=YOUTUBE_SCOPES)
+    flow.redirect_uri = redirect_uri
+    auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
+
+    _ensure_youtube_secret_dir()
+    YOUTUBE_OAUTH_STATE_PATH.write_text(
+        json.dumps({"state": state, "redirect_uri": redirect_uri}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    if open_browser:
+        try:
+            webbrowser.open(auth_url)
+        except Exception:
+            pass
+    return YouTubeAuthStartResponse(auth_url=auth_url)
+
+
+@app.get("/youtube/auth/callback")
+async def youtube_auth_callback(code: str = Query(...), state: Optional[str] = Query(None)) -> dict:
+    if not _youtube_is_configured():
+        raise HTTPException(status_code=400, detail="YouTube OAuth 設定が未登録です。")
+    saved = {}
+    if YOUTUBE_OAUTH_STATE_PATH.exists():
+        try:
+            saved = json.loads(YOUTUBE_OAUTH_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            saved = {}
+    saved_state = str(saved.get("state") or "").strip()
+    redirect_uri = str(saved.get("redirect_uri") or "http://127.0.0.1:8000/youtube/auth/callback").strip()
+    if saved_state and state and saved_state != state:
+        raise HTTPException(status_code=400, detail="OAuth state が一致しません。")
+    try:
+        from google_auth_oauthlib.flow import Flow  # type: ignore
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="google-auth-oauthlib が未インストールです。") from exc
+
+    flow = Flow.from_client_secrets_file(str(YOUTUBE_CLIENT_SECRET_PATH), scopes=YOUTUBE_SCOPES)
+    flow.redirect_uri = redirect_uri
+    try:
+        flow.fetch_token(code=code)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"トークン取得に失敗しました: {exc}") from exc
+
+    _ensure_youtube_secret_dir()
+    YOUTUBE_TOKEN_PATH.write_text(flow.credentials.to_json(), encoding="utf-8")
+    return {"message": "YouTube OAuth 認証が完了しました。", "authenticated": True}
+
+
+@app.post("/youtube/upload", response_model=JobResponse)
+async def youtube_upload(payload: YouTubeUploadRequest) -> JobResponse:
+    if not _youtube_is_authenticated():
+        raise HTTPException(status_code=401, detail="YouTube 未認証です。先に OAuth 認証を完了してください。")
+    video_path = Path(payload.video_path).expanduser()
+    if not video_path.exists() or not video_path.is_file():
+        raise HTTPException(status_code=400, detail=f"video_path が見つかりません: {payload.video_path}")
+    thumbnail_path: Optional[Path] = None
+    if payload.thumbnail_path and payload.thumbnail_path.strip():
+        thumbnail_path = Path(payload.thumbnail_path).expanduser()
+        if not thumbnail_path.exists() or not thumbnail_path.is_file():
+            raise HTTPException(status_code=400, detail=f"thumbnail_path が見つかりません: {payload.thumbnail_path}")
+
+    allowed_privacy = {"private", "public", "unlisted"}
+    privacy = payload.privacyStatus.strip().lower()
+    if privacy not in allowed_privacy:
+        raise HTTPException(status_code=400, detail="privacyStatus は private/public/unlisted のいずれかを指定してください。")
+
+    job = manager.create_job()
+    manager.update_status(job.job_id, "running")
+
+    def _log(msg: str) -> None:
+        manager.add_log(job.job_id, msg)
+
+    def worker() -> None:
+        try:
+            from googleapiclient.http import MediaFileUpload  # type: ignore
+
+            _log("YouTube: 認証情報を読み込み中")
+            manager.update_progress(job.job_id, 0.05, None)
+            youtube = _create_youtube_service()
+
+            body = {
+                "snippet": {
+                    "title": payload.title,
+                    "description": payload.description,
+                },
+                "status": {"privacyStatus": privacy},
+            }
+            media = MediaFileUpload(str(video_path), chunksize=1024 * 1024 * 8, resumable=True)
+            request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+
+            _log("YouTube: 動画アップロードを開始")
+            response = None
+            while response is None:
+                status, response = request.next_chunk()
+                if status is not None:
+                    progress = 0.1 + 0.75 * float(status.progress())
+                    manager.update_progress(job.job_id, progress, None)
+                    _log(f"YouTube: アップロード進捗 {(status.progress() * 100):.1f}%")
+
+            video_id = str((response or {}).get("id") or "").strip()
+            if not video_id:
+                raise RuntimeError("YouTube から videoId を取得できませんでした。")
+
+            manager.update_progress(job.job_id, 0.9, None)
+            _log(f"YouTube: 動画アップロード完了 videoId={video_id}")
+
+            if thumbnail_path is not None:
+                _log("YouTube: サムネイル設定中")
+                thumb_media = MediaFileUpload(str(thumbnail_path), mimetype="image/png", resumable=False)
+                youtube.thumbnails().set(videoId=video_id, media_body=thumb_media).execute()
+                manager.update_progress(job.job_id, 0.97, None)
+                _log("YouTube: サムネイル設定完了")
+
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            manager.update_progress(job.job_id, 1.0, None)
+            manager.set_result(job.job_id, {"videoId": video_id, "url": url})
+        except Exception as exc:
+            error_message = f"{type(exc).__name__}: {exc}"
+            logger.exception("YouTube upload failed: %s", error_message)
+            _log(f"[error] {error_message}")
+            _log(traceback.format_exc())
+            manager.set_error(job.job_id, error_message)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return JobResponse(job_id=job.job_id)
 
 
 @app.get("/voicevox/speakers")
