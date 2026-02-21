@@ -509,6 +509,8 @@ class _StudioShellState extends State<StudioShell> {
     _loadProjects();
   }
 
+
+
   @override
   void dispose() {
     _apiServerProcess?.kill();
@@ -2353,9 +2355,41 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   bool _isSubmitting = false;
   static const Map<String, String> _defaultTemplates = {
     '（テンプレなし）': '',
-    'ニュース原稿': '',
-    '要約': '',
-    'YouTube Shorts': '',
+    'ニュース原稿': '''
+あなたはニュース番組の構成作家です。
+以下のテーマについて、キャスターとアナリストの2名が会話する短尺ニュース台本を日本語で作成してください。
+
+【要件】
+- 12〜16セリフ程度
+- 1セリフは1〜2文で簡潔に
+- 冒頭で話題の要点を提示
+- 中盤で背景・数字・具体例を入れる
+- 最後は視聴者向けに一言で締める
+- 誇張表現は避け、事実ベースで自然な口調にする
+''',
+    '要約': '''
+次の文章を、動画ナレーション向けにわかりやすく要約してください。
+
+【要件】
+- 箇条書きではなく自然な話し言葉
+- 重要ポイントを3〜5点に整理
+- 専門用語はできるだけ平易に言い換える
+- 全体で300〜500文字程度
+''',
+    'YouTube Shorts': '''
+あなたはYouTube Shortsの台本作家です。
+次のテーマで、冒頭3秒で惹きつける日本語台本を作ってください。
+
+【構成】
+1. フック（驚き・疑問を1文）
+2. 本編（要点をテンポよく3〜4文）
+3. まとめ（学び/結論を1文）
+
+【要件】
+- 全体で250〜400文字
+- 1文を短く、テンポ重視
+- 読み上げやすい自然な文体
+''',
   };
   late Map<String, String> _templateContents =
       Map<String, String>.from(_defaultTemplates);
@@ -2554,6 +2588,9 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
           value: _chatGptModel,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
+            DropdownMenuItem(value: 'gpt-5-mini', child: Text('gpt-5-mini')),
+            DropdownMenuItem(value: 'gpt-5', child: Text('gpt-5')),
+            DropdownMenuItem(value: 'gpt-5-nano', child: Text('gpt-5-nano')),
             DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
             DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
             DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
@@ -2620,7 +2657,10 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
             final name = entry['name'] as String?;
             final content = entry['content'] as String?;
             if (name != null) {
-              result[name] = content ?? '';
+              final normalized = (content ?? '').trim();
+              final fallback = _defaultTemplates[name] ?? '';
+              // 既存データが空の場合は、初期テンプレート追加時のデフォルト本文を優先して補完する。
+              result[name] = normalized.isNotEmpty ? content ?? '' : fallback;
             }
           }
         }
@@ -3224,6 +3264,9 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           value: _chatGptModel,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
+            DropdownMenuItem(value: 'gpt-5-mini', child: Text('gpt-5-mini')),
+            DropdownMenuItem(value: 'gpt-5', child: Text('gpt-5')),
+            DropdownMenuItem(value: 'gpt-5-nano', child: Text('gpt-5-nano')),
             DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
             DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
             DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
@@ -4910,6 +4953,12 @@ class _VideoEditFormState extends State<VideoEditForm> {
   double? _exportProgress;
   String _exportStatusMessage = '待機中';
   String? _exportJobId;
+  final _youtubeTitleController = TextEditingController();
+  final _youtubeDescriptionController = TextEditingController();
+  final _youtubeThumbnailController = TextEditingController();
+  String _youtubePrivacyStatus = 'private';
+  bool _isYoutubeUploading = false;
+  String _youtubeProgressMessage = '未投稿';
 
   @override
   void initState() {
@@ -4917,6 +4966,9 @@ class _VideoEditFormState extends State<VideoEditForm> {
     _persistence = InputPersistence('video_edit.', scopeListenable: ProjectState.currentProjectId);
     _persistence.registerController(_inputVideoController, 'input_video');
     _persistence.registerController(_outputDirController, 'output_dir');
+    _persistence.registerController(_youtubeTitleController, 'youtube_title');
+    _persistence.registerController(_youtubeDescriptionController, 'youtube_description');
+    _persistence.registerController(_youtubeThumbnailController, 'youtube_thumbnail');
     _projectListener = () {
       _loadLinkedPonchiRows();
     };
@@ -4932,6 +4984,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     final previewH = await _persistence.readDouble('preview_h');
     final previewOpacity = await _persistence.readDouble('preview_opacity');
     final previewOverlayPath = await _persistence.readString('preview_overlay_path');
+    final youtubePrivacy = await _persistence.readString('youtube_privacy_status');
     final prefs = await SharedPreferences.getInstance();
     final selectedTitle = (prefs.getString(_selectedTitlePrefsKey()) ?? '').trim();
     if (!mounted) return;
@@ -4943,6 +4996,10 @@ class _VideoEditFormState extends State<VideoEditForm> {
       _previewOpacity = previewOpacity ?? _previewOpacity;
       _previewOverlayPath = previewOverlayPath ?? _previewOverlayPath;
       _selectedTitle = selectedTitle.isEmpty ? null : selectedTitle;
+      _youtubePrivacyStatus = (youtubePrivacy == null || youtubePrivacy.isEmpty) ? _youtubePrivacyStatus : youtubePrivacy;
+      if (_youtubeTitleController.text.trim().isEmpty) {
+        _youtubeTitleController.text = selectedTitle;
+      }
     });
     await _loadLinkedPonchiRows();
     await _initInputVideoPreview(_inputVideoController.text);
@@ -5227,6 +5284,135 @@ class _VideoEditFormState extends State<VideoEditForm> {
     }
   }
 
+
+  Future<void> _selectYoutubeThumbnail() async {
+    final selected = await openFile(acceptedTypeGroups: [
+      const XTypeGroup(label: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'])
+    ]);
+    if (selected == null) return;
+    _youtubeThumbnailController.text = selected.path;
+    _persistence.setString('youtube_thumbnail', selected.path);
+  }
+
+  Future<void> _uploadToYouTube() async {
+    if (_isYoutubeUploading) {
+      return;
+    }
+    final videoPath = _inputVideoController.text.trim();
+    final title = _youtubeTitleController.text.trim().isEmpty
+        ? (_selectedTitle ?? '').trim()
+        : _youtubeTitleController.text.trim();
+    if (videoPath.isEmpty || !File(videoPath).existsSync()) {
+      _showSnackBar('投稿する動画ファイルが見つかりません。');
+      return;
+    }
+    if (title.isEmpty) {
+      _showSnackBar('YouTubeタイトルを入力してください。');
+      return;
+    }
+
+    setState(() {
+      _isYoutubeUploading = true;
+      _youtubeProgressMessage = '認証状態を確認中...';
+    });
+
+    try {
+      final settingsResp = await _getWithApiPrefixFallback('/youtube/settings').timeout(const Duration(seconds: 15));
+      if (settingsResp.statusCode < 200 || settingsResp.statusCode >= 300) {
+        throw Exception('YouTube設定取得失敗: ${settingsResp.statusCode} ${settingsResp.body}');
+      }
+      final settings = jsonDecode(settingsResp.body) as Map<String, dynamic>;
+      final configured = settings['configured'] == true;
+      final authenticated = settings['authenticated'] == true;
+      if (!configured || !authenticated) {
+        final authResp = await _getWithApiPrefixFallback('/youtube/auth/start').timeout(const Duration(seconds: 20));
+        if (authResp.statusCode < 200 || authResp.statusCode >= 300) {
+          throw Exception('YouTube認証開始失敗: ${authResp.statusCode} ${authResp.body}');
+        }
+        final authData = jsonDecode(authResp.body) as Map<String, dynamic>;
+        final authUrl = (authData['auth_url'] as String? ?? '').trim();
+        if (authUrl.isNotEmpty) {
+          await Clipboard.setData(ClipboardData(text: authUrl));
+        }
+        setState(() {
+          _youtubeProgressMessage = '未認証です。認証URLをコピーしました。Googleログイン後に再実行してください。';
+        });
+        _showSnackBar('YouTube未認証です。設定タブでOAuth設定→認証URLを開いて認証してください。');
+        return;
+      }
+
+      setState(() {
+        _youtubeProgressMessage = '投稿ジョブを開始中...';
+      });
+
+      final uploadResp = await _postWithApiPrefixFallback(
+        '/youtube/upload',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'video_path': videoPath,
+          'thumbnail_path': _youtubeThumbnailController.text.trim(),
+          'title': title,
+          'description': _youtubeDescriptionController.text,
+          'privacyStatus': _youtubePrivacyStatus,
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      if (uploadResp.statusCode < 200 || uploadResp.statusCode >= 300) {
+        throw Exception('YouTube投稿開始失敗: ${uploadResp.statusCode} ${uploadResp.body}');
+      }
+      final uploadData = jsonDecode(uploadResp.body) as Map<String, dynamic>;
+      final jobId = (uploadData['job_id'] as String? ?? '').trim();
+      if (jobId.isEmpty) {
+        throw Exception('job_id が取得できませんでした。');
+      }
+
+      Map<String, dynamic>? last;
+      for (var i = 0; i < 1800; i += 1) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        final statusResp = await _getWithApiPrefixFallback('/jobs/$jobId').timeout(const Duration(seconds: 10));
+        if (statusResp.statusCode < 200 || statusResp.statusCode >= 300) {
+          continue;
+        }
+        final statusData = jsonDecode(statusResp.body) as Map<String, dynamic>;
+        last = statusData;
+        final progress = (statusData['progress'] as num?)?.toDouble() ?? 0.0;
+        final status = (statusData['status'] as String? ?? '').trim();
+        if (mounted) {
+          setState(() {
+            _youtubeProgressMessage = '現在${(progress * 100).toStringAsFixed(1)}% (status=${status.isEmpty ? 'running' : status})';
+          });
+        }
+        if (status == 'completed' || status == 'error') {
+          break;
+        }
+      }
+
+      final status = (last?['status'] as String? ?? '').trim();
+      if (status != 'completed') {
+        final err = (last?['error'] ?? '投稿が完了しませんでした').toString();
+        throw Exception(err);
+      }
+      final result = (last?['result'] as Map<String, dynamic>? ?? const {});
+      final url = (result['url'] as String? ?? '').trim();
+      final videoId = (result['videoId'] as String? ?? '').trim();
+      setState(() {
+        _youtubeProgressMessage = '投稿完了: ${url.isEmpty ? videoId : url}';
+      });
+      _showSnackBar('YouTube投稿が完了しました。${url.isNotEmpty ? url : videoId}');
+    } catch (e) {
+      setState(() {
+        _youtubeProgressMessage = '投稿失敗: $e';
+      });
+      _showSnackBar('YouTube投稿に失敗しました: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isYoutubeUploading = false;
+        });
+      }
+    }
+  }
+
   double _parseDouble(String? value, double fallback) {
     return double.tryParse((value ?? '').trim()) ?? fallback;
   }
@@ -5469,6 +5655,9 @@ class _VideoEditFormState extends State<VideoEditForm> {
   void dispose() {
     _inputVideoController.dispose();
     _outputDirController.dispose();
+    _youtubeTitleController.dispose();
+    _youtubeDescriptionController.dispose();
+    _youtubeThumbnailController.dispose();
     _videoPreviewController?.dispose();
     _videoPreviewPath = '';
     ProjectState.currentProjectId.removeListener(_projectListener);
@@ -5822,6 +6011,55 @@ class _VideoEditFormState extends State<VideoEditForm> {
           ),
           const SizedBox(height: 12),
           Text('進捗: $_exportStatusMessage'),
+          const SizedBox(height: 20),
+          Text('YouTubeに投稿', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _youtubeTitleController,
+            decoration: const InputDecoration(labelText: 'YouTubeタイトル'),
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _youtubeDescriptionController,
+            maxLines: 4,
+            decoration: const InputDecoration(labelText: 'YouTube説明文'),
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: _youtubePrivacyStatus,
+            decoration: const InputDecoration(labelText: '公開設定'),
+            items: const [
+              DropdownMenuItem(value: 'private', child: Text('private')),
+              DropdownMenuItem(value: 'unlisted', child: Text('unlisted')),
+              DropdownMenuItem(value: 'public', child: Text('public')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _youtubePrivacyStatus = value;
+              });
+              _persistence.setString('youtube_privacy_status', value);
+            },
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _youtubeThumbnailController,
+            decoration: InputDecoration(
+              labelText: 'サムネイル画像（任意）',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.image),
+                onPressed: _selectYoutubeThumbnail,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ElevatedButton.icon(
+            onPressed: (_isYoutubeUploading || _isExporting) ? null : _uploadToYouTube,
+            icon: const Icon(Icons.upload),
+            label: Text(_isYoutubeUploading ? '投稿中...' : 'YouTubeに投稿'),
+          ),
+          const SizedBox(height: 8),
+          Text(_youtubeProgressMessage),
           Text(
             '進捗率: ${((_exportProgress ?? 0.0) * 100).toStringAsFixed(1)}%',
             style: Theme.of(context).textTheme.bodySmall,
@@ -6494,6 +6732,8 @@ class _SettingsFormState extends State<SettingsForm> {
   final _openAiController = TextEditingController();
   final _claudeController = TextEditingController();
   final _voicevoxUrlController = TextEditingController();
+  final _youtubeClientSecretController = TextEditingController();
+  final _youtubeRedirectUriController = TextEditingController(text: 'http://127.0.0.1:8000/youtube/auth/callback');
   late final InputPersistence _persistence;
   late final InputPersistence _voicevoxPersistence;
 
@@ -6535,6 +6775,8 @@ class _SettingsFormState extends State<SettingsForm> {
     _persistence.registerController(_openAiController, 'openai_key');
     _persistence.registerController(_claudeController, 'claude_key');
     _voicevoxPersistence.registerController(_voicevoxUrlController, 'vv_url');
+    _persistence.registerController(_youtubeClientSecretController, 'youtube_client_secret_json');
+    _persistence.registerController(_youtubeRedirectUriController, 'youtube_redirect_uri');
     _initPersistence();
   }
 
@@ -6548,6 +6790,58 @@ class _SettingsFormState extends State<SettingsForm> {
     VoicevoxConfig.baseUrl.value = _voicevoxUrlController.text.trim();
   }
 
+  Future<void> _saveYouTubeSettings() async {
+    final jsonText = _youtubeClientSecretController.text.trim();
+    final redirectUri = _youtubeRedirectUriController.text.trim();
+    if (jsonText.isEmpty) {
+      _showSnackBar('YouTube client_secret.json の内容を入力してください。');
+      return;
+    }
+    try {
+      final response = await http
+          .put(
+            ApiConfig.httpUri('/youtube/settings'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'client_secret_json': jsonText,
+              'redirect_uri': redirectUri.isEmpty
+                  ? 'http://127.0.0.1:8000/youtube/auth/callback'
+                  : redirectUri,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        _showSnackBar('YouTube OAuth設定を保存しました。');
+      } else {
+        _showSnackBar('YouTube設定保存に失敗しました: ${response.statusCode} ${response.body}');
+      }
+    } on TimeoutException {
+      _showSnackBar('YouTube設定保存がタイムアウトしました。');
+    } catch (e) {
+      _showSnackBar('YouTube設定保存に失敗しました: $e');
+    }
+  }
+
+  Future<void> _startYouTubeAuth() async {
+    try {
+      final response = await _getWithApiPrefixFallback('/youtube/auth/start').timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _showSnackBar('YouTube認証開始に失敗しました: ${response.statusCode} ${response.body}');
+        return;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final authUrl = (data['auth_url'] as String? ?? '').trim();
+      if (authUrl.isEmpty) {
+        _showSnackBar('認証URLが取得できませんでした。');
+        return;
+      }
+      await Clipboard.setData(ClipboardData(text: authUrl));
+      _showSnackBar('認証URLをコピーしました。ブラウザで開いてログインしてください。');
+    } catch (e) {
+      _showSnackBar('YouTube認証開始に失敗しました: $e');
+    }
+  }
+
   @override
   void dispose() {
     _backendController.dispose();
@@ -6555,6 +6849,8 @@ class _SettingsFormState extends State<SettingsForm> {
     _openAiController.dispose();
     _claudeController.dispose();
     _voicevoxUrlController.dispose();
+    _youtubeClientSecretController.dispose();
+    _youtubeRedirectUriController.dispose();
     _persistence.dispose();
     _voicevoxPersistence.dispose();
     super.dispose();
@@ -6601,6 +6897,40 @@ class _SettingsFormState extends State<SettingsForm> {
             labelText: 'VOICEVOX エンジンURL',
             helperText: '例: http://127.0.0.1:50021',
           ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _youtubeRedirectUriController,
+          decoration: const InputDecoration(
+            labelText: 'YouTube OAuth Redirect URI',
+            helperText: '例: http://127.0.0.1:8000/youtube/auth/callback',
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _youtubeClientSecretController,
+          maxLines: 8,
+          decoration: const InputDecoration(
+            labelText: 'YouTube client_secret.json (JSON本文)',
+            helperText: 'Google Cloud で発行した OAuth client_secret.json の内容を貼り付け',
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            ElevatedButton.icon(
+              onPressed: _saveYouTubeSettings,
+              icon: const Icon(Icons.verified_user),
+              label: const Text('YouTube OAuth設定を保存'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _startYouTubeAuth,
+              icon: const Icon(Icons.login),
+              label: const Text('YouTube認証URLを取得'),
+            ),
+          ],
         ),
         const SizedBox(height: 16),
         ElevatedButton.icon(
