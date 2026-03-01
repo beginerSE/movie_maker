@@ -3264,7 +3264,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
                       Expanded(
                         flex: 3,
                         child: isFlow
-                            ? const TextFormField(
+                            ? TextFormField(
                                 initialValue: 'AIフローで自動設定',
                                 readOnly: true,
                                 decoration: InputDecoration(labelText: 'ファイルパス'),
@@ -4296,7 +4296,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 flex: 2,
                 child: TextFormField(
                   initialValue: 'Gemini',
@@ -7693,7 +7693,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                       Expanded(
                         flex: 3,
                         child: isFlow
-                            ? const TextFormField(
+                            ? TextFormField(
                                 initialValue: 'AIフローで自動設定',
                                 readOnly: true,
                                 decoration: InputDecoration(labelText: '原稿ファイルパス'),
