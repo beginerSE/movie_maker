@@ -968,6 +968,18 @@ def generate_script_with_claude(
 
     client = anthropic.Anthropic(api_key=api_key)
 
+    # Claude 2 系は completions API 形式（max_tokens_to_sample）を使う。
+    if model.strip().lower().startswith(("claude-2", "claude-instant")):
+        response = client.completions.create(
+            model=model,
+            max_tokens_to_sample=int(max_tokens),
+            prompt=f"\n\nHuman: {prompt}\n\nAssistant:",
+        )
+        text = getattr(response, "completion", "") or ""
+        if text.strip():
+            return text.strip()
+        return str(response).strip()
+
     response = client.messages.create(
         model=model,
         max_tokens=int(max_tokens),
@@ -994,6 +1006,7 @@ def generate_script_with_gemini(
     api_key: str,
     prompt: str,
     model: str,
+    max_tokens: int | None = None,
 ) -> str:
     if not api_key:
         raise RuntimeError("Gemini APIキーが空です。")
@@ -1001,10 +1014,21 @@ def generate_script_with_gemini(
         raise RuntimeError("プロンプトが空です。")
 
     client = genai.Client(api_key=api_key)
+    cleaned_model = (model or "").strip().lower()
+    config_kwargs: Dict[str, Any] = {"temperature": 0.7}
+    if max_tokens is not None:
+        # Gemini は世代で推奨値が変わるため、モデル別に明示分岐して設定する。
+        if cleaned_model.startswith("gemini-1.5"):
+            config_kwargs["max_output_tokens"] = int(max_tokens)
+        elif cleaned_model.startswith("gemini-2"):
+            config_kwargs["max_output_tokens"] = int(max_tokens)
+        else:
+            config_kwargs["max_output_tokens"] = int(max_tokens)
+
     resp = client.models.generate_content(
         model=model,
         contents=prompt,
-        config=types.GenerateContentConfig(temperature=0.7),
+        config=types.GenerateContentConfig(**config_kwargs),
     )
     text = getattr(resp, "text", "") or ""
     if not text:
@@ -1099,6 +1123,9 @@ def _clamp_openai_max_tokens(model: str, requested: int) -> int:
         "gpt-4o-mini": 16384,
         "o1": 65536,
         "o1-mini": 65536,
+        "gpt-5": 32768,
+        "gpt-5-mini": 16384,
+        "gpt-5-nano": 8192,
     }
     for prefix, limit in known_limits.items():
         if cleaned.startswith(prefix):
@@ -1114,6 +1141,35 @@ def _openai_max_token_keys_for_model(model: str) -> List[str]:
     return ["max_tokens", "max_completion_tokens"]
 
 
+def _is_openai_responses_model(model: str) -> bool:
+    cleaned = (model or "").strip().lower()
+    return cleaned.startswith("gpt-5")
+
+
+def _extract_openai_text(data: Dict[str, Any]) -> str:
+    # /v1/chat/completions 形式
+    message = data.get("choices", [{}])[0].get("message", {})
+    content = message.get("content", "")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+
+    # /v1/responses 形式
+    output_text = data.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+    if isinstance(output_text, list):
+        merged = "\n".join(str(part) for part in output_text if str(part).strip()).strip()
+        if merged:
+            return merged
+
+    for item in data.get("output", []):
+        for content_part in item.get("content", []):
+            text = content_part.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    return ""
+
+
 def generate_script_with_openai(
     api_key: str,
     prompt: str,
@@ -1125,23 +1181,55 @@ def generate_script_with_openai(
     if not prompt.strip():
         raise RuntimeError("プロンプトが空です。")
 
-    payload = {
-        "model": model,
-        "temperature": 0.7,
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt},
-        ],
-    }
-    token_keys = _openai_max_token_keys_for_model(model)
     bounded_tokens = _clamp_openai_max_tokens(model, max_tokens) if max_tokens is not None else None
-    if bounded_tokens is not None:
-        payload[token_keys[0]] = bounded_tokens
 
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+    if _is_openai_responses_model(model):
+        payload = {
+            "model": model,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": prompt}],
+                }
+            ],
+        }
+        if bounded_tokens is not None:
+            payload["max_output_tokens"] = bounded_tokens
+
+        resp = _post_openai_with_retry(
+            "https://api.openai.com/v1/responses",
+            headers=headers,
+            payload=payload,
+        )
+        if not resp.ok:
+            raise RuntimeError(_format_openai_error(resp))
+        data = resp.json()
+        content = _extract_openai_text(data)
+        if not content:
+            raise RuntimeError("ChatGPTから台本の取得に失敗しました。")
+        return content.strip()
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    cleaned = (model or "").strip().lower()
+    # o1/o3 系は temperature 非対応なケースがあるため送らない。
+    if not cleaned.startswith(("o1", "o3")):
+        payload["temperature"] = 0.7
+
+    token_keys = _openai_max_token_keys_for_model(model)
+    if bounded_tokens is not None:
+        payload[token_keys[0]] = bounded_tokens
+
     resp = _post_openai_with_retry(
         "https://api.openai.com/v1/chat/completions",
         headers=headers,
@@ -1186,16 +1274,16 @@ def generate_script_with_openai(
     if not resp.ok:
         raise RuntimeError(_format_openai_error(resp))
     data = resp.json()
-    message = data.get("choices", [{}])[0].get("message", {})
-    content = message.get("content", "")
+    content = _extract_openai_text(data)
     if not content:
         raise RuntimeError("ChatGPTから台本の取得に失敗しました。")
     return content.strip()
 
 
-GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-2.5-flash-image"
+GEMINI_MATERIAL_DEFAULT_MODEL = "gemini-3-pro-image-preview"
 GEMINI_MATERIAL_MODEL_ALIASES = {
-    "nanobanana": GEMINI_MATERIAL_DEFAULT_MODEL,
+    # nanobanana は Gemini 画像用途では 2.5 flash image 互換として扱う
+    "nanobanana": "gemini-2.5-flash-image",
 }
 
 
@@ -1211,6 +1299,104 @@ def resolve_gemini_material_model(model: str) -> Tuple[str, Optional[str]]:
     return cleaned, None
 
 
+def _gemini_image_request_variants(
+    prompt: str,
+    model: str,
+    original_model: str,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    cleaned = (model or "").strip().lower()
+    original_cleaned = (original_model or "").strip().lower()
+    base_url = "https://generativelanguage.googleapis.com"
+
+    # Gemini 3 の画像 preview 系
+    if cleaned.startswith("gemini-3"):
+        return [
+            (
+                f"{base_url}/v1beta/models/"
+                f"{model}:generateContent",
+                {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseModalities": ["IMAGE"],
+                    },
+                },
+            ),
+            (
+                f"{base_url}/v1beta/models/"
+                f"{model}:generateContent",
+                {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseModalities": ["TEXT", "IMAGE"],
+                    },
+                },
+            ),
+            (
+                f"{base_url}/v1/models/"
+                f"{model}:generateContent",
+                {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseModalities": ["IMAGE"],
+                    },
+                },
+            ),
+        ]
+
+    # Gemini 2.5 画像系 / nanobanana 互換系
+    if cleaned.startswith("gemini-2.5") or original_cleaned == "nanobanana":
+        return [
+            (
+                f"{base_url}/v1beta/models/"
+                f"{model}:generateContent",
+                {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseMimeType": "image/png",
+                    },
+                },
+            ),
+            (
+                f"{base_url}/v1beta/models/"
+                f"{model}:generateContent",
+                {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseModalities": ["IMAGE"],
+                    },
+                },
+            )
+        ]
+
+    # その他の Gemini モデルは安全側で IMAGE モダリティ指定
+    return [
+        (
+            f"{base_url}/v1beta/models/"
+            f"{model}:generateContent",
+            {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"responseModalities": ["IMAGE"]},
+            },
+        )
+    ]
+
+
+def _extract_gemini_image_bytes(data: Dict[str, Any]) -> Tuple[bytes, str]:
+    candidates = data.get("candidates", [])
+    for candidate in candidates:
+        content = candidate.get("content", {})
+        for part in content.get("parts", []):
+            inline = part.get("inlineData")
+            if inline and inline.get("data"):
+                mime_type = inline.get("mimeType", "image/png")
+                return base64.b64decode(inline["data"]), mime_type
+            file_data = part.get("fileData")
+            if file_data and file_data.get("data"):
+                mime_type = file_data.get("mimeType", "image/png")
+                return base64.b64decode(file_data["data"]), mime_type
+    raise RuntimeError("Geminiから画像が取得できませんでした。")
+
+
 def generate_materials_with_gemini(
     api_key: str,
     prompt: str,
@@ -1223,43 +1409,29 @@ def generate_materials_with_gemini(
 
     resolved_model, _ = resolve_gemini_material_model(model)
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{resolved_model}:generateContent"
     headers = {
         "x-goog-api-key": api_key,
         "Content-Type": "application/json",
     }
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseModalities": ["IMAGE"]},
-    }
-    response = requests.post(url, headers=headers, json=payload, timeout=60)
-    if (
-        not response.ok
-        and response.status_code == 400
-        and resolved_model != GEMINI_MATERIAL_DEFAULT_MODEL
-        and "response modalities" in response.text.lower()
-    ):
-        fallback_url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{GEMINI_MATERIAL_DEFAULT_MODEL}:generateContent"
-        )
-        response = requests.post(fallback_url, headers=headers, json=payload, timeout=60)
-    if not response.ok:
-        raise RuntimeError(f"Gemini APIエラー: {response.status_code} {response.text}")
-    data = response.json()
-    if "error" in data:
-        raise RuntimeError(f"Gemini APIエラー: {data['error']}")
 
-    candidates = data.get("candidates", [])
-    for candidate in candidates:
-        content = candidate.get("content", {})
-        for part in content.get("parts", []):
-            inline = part.get("inlineData")
-            if inline and inline.get("data"):
-                mime_type = inline.get("mimeType", "image/png")
-                image_bytes = base64.b64decode(inline["data"])
-                return image_bytes, mime_type
+    last_error = ""
+    for url, payload in _gemini_image_request_variants(prompt, resolved_model, model):
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        if not response.ok:
+            last_error = f"Gemini APIエラー: {response.status_code} {response.text}"
+            continue
+        data = response.json()
+        if "error" in data:
+            last_error = f"Gemini APIエラー: {data['error']}"
+            continue
+        try:
+            return _extract_gemini_image_bytes(data)
+        except Exception as exc:
+            last_error = str(exc)
+            continue
 
+    if last_error:
+        raise RuntimeError(last_error)
     raise RuntimeError("Geminiから画像が取得できませんでした。")
 
 
