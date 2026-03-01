@@ -351,6 +351,17 @@ def _normalize_engine(value: str) -> str:
     return (value or "").strip().lower()
 
 
+def _resolve_script_model(provider: str, requested_model: Optional[str]) -> str:
+    model = (requested_model or "").strip()
+    if model:
+        return model
+    if provider == "chatgpt":
+        return DEFAULT_SCRIPT_OPENAI_MODEL
+    if provider == "claudecode":
+        return DEFAULT_CLAUDE_MODEL
+    return DEFAULT_SCRIPT_GEMINI_MODEL
+
+
 def _build_title_desc_prompt(script_text: str, count: int, extra: str) -> str:
     extra_block = f"\n[追加指示]\n{extra.strip()}\n" if extra.strip() else ""
     return (
@@ -459,7 +470,7 @@ class ScriptGenerateRequest(BaseModel):
     api_key: str
     provider: str = "Gemini"
     prompt: str
-    model: str = DEFAULT_SCRIPT_GEMINI_MODEL
+    model: Optional[str] = None
     max_tokens: Optional[int] = None
     use_web_search: bool = False
 
@@ -474,7 +485,7 @@ class TitleGenerateRequest(BaseModel):
     script_path: str
     count: int = 5
     extra: str = ""
-    model: str = DEFAULT_SCRIPT_GEMINI_MODEL
+    model: Optional[str] = None
     max_tokens: Optional[int] = None
 
 
@@ -968,7 +979,7 @@ def _create_youtube_service():
 @app.post("/script/generate", response_model=ScriptGenerateResponse)
 async def generate_script(payload: ScriptGenerateRequest) -> ScriptGenerateResponse:
     provider = _normalize_engine(payload.provider)
-    model = payload.model or DEFAULT_SCRIPT_GEMINI_MODEL
+    model = _resolve_script_model(provider, payload.model)
     try:
         if provider == "gemini":
             text = generate_script_with_gemini(
@@ -981,7 +992,7 @@ async def generate_script(payload: ScriptGenerateRequest) -> ScriptGenerateRespo
             text = generate_script_with_openai(
                 api_key=payload.api_key,
                 prompt=payload.prompt,
-                model=model or DEFAULT_SCRIPT_OPENAI_MODEL,
+                model=model,
                 max_tokens=payload.max_tokens,
                 use_web_search=payload.use_web_search,
             )
@@ -989,7 +1000,7 @@ async def generate_script(payload: ScriptGenerateRequest) -> ScriptGenerateRespo
             text = generate_script_with_claude(
                 api_key=payload.api_key,
                 prompt=payload.prompt,
-                model=model or DEFAULT_CLAUDE_MODEL,
+                model=model,
                 max_tokens=payload.max_tokens or 20000,
                 use_web_search=payload.use_web_search,
             )
@@ -1013,7 +1024,7 @@ async def generate_title(payload: TitleGenerateRequest) -> TitleGenerateResponse
             count=payload.count,
             extra=payload.extra,
         )
-        model = payload.model or DEFAULT_SCRIPT_GEMINI_MODEL
+        model = _resolve_script_model(provider, payload.model)
         if provider == "gemini":
             text = generate_script_with_gemini(
                 api_key=payload.api_key,
@@ -1025,14 +1036,14 @@ async def generate_title(payload: TitleGenerateRequest) -> TitleGenerateResponse
             text = generate_script_with_openai(
                 api_key=payload.api_key,
                 prompt=prompt,
-                model=model or DEFAULT_SCRIPT_OPENAI_MODEL,
+                model=model,
                 max_tokens=payload.max_tokens or DEFAULT_TITLE_MAX_TOKENS,
             )
         elif provider == "claudecode":
             text = generate_script_with_claude(
                 api_key=payload.api_key,
                 prompt=prompt,
-                model=model or DEFAULT_CLAUDE_MODEL,
+                model=model,
                 max_tokens=payload.max_tokens or DEFAULT_TITLE_MAX_TOKENS,
             )
         else:
