@@ -2360,7 +2360,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   String _provider = 'Gemini';
   String _geminiModel = 'gemini-2.5-flash';
   String _chatGptModel = 'gpt-5-mini';
-  String _claudeModel = 'claude-opus-4-5-20251101';
+  String _claudeModel = 'claude-opus-4-6-latest';
   String _template = '（テンプレなし）';
   bool _useOpenAiWebSearch = false;
   bool _isSubmitting = false;
@@ -2549,10 +2549,10 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                 ],
               ),
               const SizedBox(height: 12),
-              if (_provider == 'ChatGPT')
+              if (_provider == 'ChatGPT' || _provider == 'ClaudeCode')
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Web検索を有効化（OpenAI Responses API）'),
+                  title: const Text('Web検索を有効化（ChatGPT/Claude API）'),
                   subtitle: const Text('最新情報を参照しながら台本を生成します。'),
                   value: _useOpenAiWebSearch,
                   onChanged: (value) {
@@ -2689,10 +2689,18 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
           },
         );
       case 'ClaudeCode':
+        const claudeModels = [
+          'claude-opus-4-6-latest',
+          'claude-opus-4-5-20251101',
+        ];
         return DropdownButtonFormField<String>(
-          value: _claudeModel,
+          value: claudeModels.contains(_claudeModel) ? _claudeModel : claudeModels.first,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
+            DropdownMenuItem(
+              value: 'claude-opus-4-6-latest',
+              child: Text('claude-opus-4-6-latest'),
+            ),
             DropdownMenuItem(
               value: 'claude-opus-4-5-20251101',
               child: Text('claude-opus-4-5-20251101'),
@@ -2978,7 +2986,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
         'prompt': _promptController.text,
         'model': _resolveModel(),
         'max_tokens': maxTokens,
-        'use_web_search': _provider == 'ChatGPT' ? _useOpenAiWebSearch : false,
+        'use_web_search': (_provider == 'ChatGPT' || _provider == 'ClaudeCode') ? _useOpenAiWebSearch : false,
         'project_id': ProjectState.currentProjectId.value,
       };
       final response = await http
@@ -3159,7 +3167,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   String _provider = 'Gemini';
   String _geminiModel = 'gemini-2.5-flash';
   String _chatGptModel = 'gpt-5-mini';
-  String _claudeModel = 'claude-opus-4-5-20251101';
+  String _claudeModel = 'claude-opus-4-6-latest';
   bool _isSubmitting = false;
   final _selectedTitleController = TextEditingController();
 
@@ -3393,10 +3401,18 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           },
         );
       case 'ClaudeCode':
+        const claudeModels = [
+          'claude-opus-4-6-latest',
+          'claude-opus-4-5-20251101',
+        ];
         return DropdownButtonFormField<String>(
-          value: _claudeModel,
+          value: claudeModels.contains(_claudeModel) ? _claudeModel : claudeModels.first,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
+            DropdownMenuItem(
+              value: 'claude-opus-4-6-latest',
+              child: Text('claude-opus-4-6-latest'),
+            ),
             DropdownMenuItem(
               value: 'claude-opus-4-5-20251101',
               child: Text('claude-opus-4-5-20251101'),

@@ -70,7 +70,7 @@ DEFAULT_VV_ANALYST_LABEL = "ずんだもん"
 DEFAULT_VV_SPEED = 1.0  # 話速
 
 # Claude default
-DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101"
+DEFAULT_CLAUDE_MODEL = "claude-opus-4-6-latest"
 DEFAULT_CLAUDE_MAX_TOKENS = 20000
 DEFAULT_SCRIPT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_SCRIPT_OPENAI_MODEL = "gpt-4.1-mini"
@@ -960,11 +960,20 @@ def generate_script_with_claude(
     prompt: str,
     model: str,
     max_tokens: int,
+    use_web_search: bool = False,
 ) -> str:
     if not api_key:
         raise RuntimeError("Claude APIキーが空です。")
     if not prompt.strip():
         raise RuntimeError("プロンプトが空です。")
+
+    if use_web_search:
+        return _generate_script_with_claude_web_search(
+            api_key=api_key,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+        )
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -1000,6 +1009,57 @@ def generate_script_with_claude(
 
     s = str(response)
     return s.strip()
+
+
+def _generate_script_with_claude_web_search(
+    api_key: str,
+    prompt: str,
+    model: str,
+    max_tokens: int,
+) -> str:
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "web-search-2025-03-05",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "max_tokens": int(max_tokens),
+        "messages": [{"role": "user", "content": prompt}],
+        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+    }
+
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers=headers,
+        json=payload,
+        timeout=120,
+    )
+    if not resp.ok:
+        detail = ""
+        try:
+            body = resp.json()
+            detail = body.get("error", {}).get("message") or json.dumps(body, ensure_ascii=False)
+        except Exception:
+            detail = resp.text
+        raise RuntimeError(f"Claude(Web Search) APIエラー: {resp.status_code} {detail}")
+
+    data = resp.json()
+    chunks: List[str] = []
+    for part in data.get("content", []):
+        if part.get("type") == "text":
+            text = (part.get("text") or "").strip()
+            if text:
+                chunks.append(text)
+
+    if chunks:
+        return "\n".join(chunks).strip()
+
+    fallback = json.dumps(data, ensure_ascii=False)
+    if fallback.strip():
+        return fallback.strip()
+    raise RuntimeError("Claude(Web Search)から台本の取得に失敗しました。")
 
 
 def _build_gemini_generate_content_config(
