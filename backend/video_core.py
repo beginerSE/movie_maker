@@ -72,7 +72,7 @@ DEFAULT_VV_SPEED = 1.0  # 話速
 # Claude default
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101"
 DEFAULT_CLAUDE_MAX_TOKENS = 20000
-DEFAULT_SCRIPT_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_SCRIPT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_SCRIPT_OPENAI_MODEL = "gpt-4.1-mini"
 DEFAULT_TITLE_MAX_TOKENS = 2000
 
@@ -1002,6 +1002,25 @@ def generate_script_with_claude(
     return s.strip()
 
 
+def _build_gemini_generate_content_config(
+    model: str,
+    max_tokens: int | None,
+) -> types.GenerateContentConfig:
+    cleaned_model = (model or "").strip().lower()
+    config_kwargs: Dict[str, Any] = {"temperature": 0.7}
+
+    if max_tokens is not None:
+        token_value = int(max_tokens)
+        # Gemini 2.5 系は max_output_tokens を利用。
+        # 旧モデルが入力された場合も後方互換として同じキーにフォールバックする。
+        if cleaned_model.startswith("gemini-2.5"):
+            config_kwargs["max_output_tokens"] = token_value
+        else:
+            config_kwargs["max_output_tokens"] = token_value
+
+    return types.GenerateContentConfig(**config_kwargs)
+
+
 def generate_script_with_gemini(
     api_key: str,
     prompt: str,
@@ -1014,21 +1033,11 @@ def generate_script_with_gemini(
         raise RuntimeError("プロンプトが空です。")
 
     client = genai.Client(api_key=api_key)
-    cleaned_model = (model or "").strip().lower()
-    config_kwargs: Dict[str, Any] = {"temperature": 0.7}
-    if max_tokens is not None:
-        # Gemini は世代で推奨値が変わるため、モデル別に明示分岐して設定する。
-        if cleaned_model.startswith("gemini-1.5"):
-            config_kwargs["max_output_tokens"] = int(max_tokens)
-        elif cleaned_model.startswith("gemini-2"):
-            config_kwargs["max_output_tokens"] = int(max_tokens)
-        else:
-            config_kwargs["max_output_tokens"] = int(max_tokens)
 
     resp = client.models.generate_content(
         model=model,
         contents=prompt,
-        config=types.GenerateContentConfig(**config_kwargs),
+        config=_build_gemini_generate_content_config(model=model, max_tokens=max_tokens),
     )
     text = getattr(resp, "text", "") or ""
     if not text:
