@@ -2472,25 +2472,28 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                value: _provider,
-                decoration: const InputDecoration(labelText: '生成AI'),
-                items: const [
-                  DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
-                  DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
-                  DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() {
-                    _provider = value;
-                  });
-                  _persistence.setString('provider', value);
-                },
-              ),
-              const SizedBox(height: 12),
               Row(
                 children: [
+                  Expanded(
+                    flex: 2,
+                    child: DropdownButtonFormField<String>(
+                      value: _provider,
+                      decoration: const InputDecoration(labelText: '生成AI'),
+                      items: const [
+                        DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+                        DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
+                        DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _provider = value;
+                        });
+                        _persistence.setString('provider', value);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
                   Expanded(
                     flex: 3,
                     child: _buildModelDropdown(),
@@ -3239,65 +3242,77 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           ValueListenableBuilder<String>(
             valueListenable: ProjectState.currentProjectType,
             builder: (context, projectType, _) {
-              if (projectType == 'flow') {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('AIフローでは①で確定した台本を自動利用します。'),
-                    SizedBox(height: 12),
-                  ],
-                );
-              }
+              final isFlow = projectType == 'flow';
               return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextFormField(
-                    controller: _scriptPathController,
-                    decoration: InputDecoration(
-                      labelText: '台本ファイル（SRT/TXT）',
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.folder_open),
-                        onPressed: () => _selectFile(
-                          _scriptPathController,
-                          const XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
+                  if (isFlow)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text('AIフローでは①で確定した台本を自動利用します。'),
+                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: isFlow
+                            ? const TextFormField(
+                                initialValue: 'AIフローで自動設定',
+                                readOnly: true,
+                                decoration: InputDecoration(labelText: 'ファイルパス'),
+                              )
+                            : TextFormField(
+                                controller: _scriptPathController,
+                                decoration: InputDecoration(
+                                  labelText: 'ファイルパス',
+                                  suffixIcon: IconButton(
+                                    icon: const Icon(Icons.folder_open),
+                                    onPressed: () => _selectFile(
+                                      _scriptPathController,
+                                      const XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
+                                    ),
+                                  ),
+                                ),
+                                validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+                              ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: DropdownButtonFormField<String>(
+                          value: _provider,
+                          decoration: const InputDecoration(labelText: '生成AI'),
+                          items: const [
+                            DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+                            DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
+                            DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
+                          ],
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _provider = value;
+                            });
+                            _persistence.setString('provider', value);
+                          },
                         ),
                       ),
-                    ),
-                    validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+                      const SizedBox(width: 12),
+                      Expanded(flex: 3, child: _buildModelDropdown()),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: TextFormField(
+                          controller: _countController,
+                          decoration: const InputDecoration(labelText: 'タイトル案の数'),
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                 ],
               );
             },
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _provider,
-                  decoration: const InputDecoration(labelText: '生成AI'),
-                  items: const [
-                    DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
-                    DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
-                    DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _provider = value;
-                    });
-                    _persistence.setString('provider', value);
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: _buildModelDropdown()),
-            ],
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _countController,
-            decoration: const InputDecoration(labelText: 'タイトル案の数'),
-            keyboardType: TextInputType.number,
           ),
           const SizedBox(height: 12),
           TextFormField(
@@ -4249,38 +4264,51 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
               );
             },
           ),
-          TextFormField(
-            controller: _outputController,
-            decoration: InputDecoration(
-              labelText: '出力フォルダ',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.folder),
-                onPressed: () => _selectDirectory(_outputController),
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: TextFormField(
+                  controller: _outputController,
+                  decoration: InputDecoration(
+                    labelText: '出力ファイルパス',
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.folder),
+                      onPressed: () => _selectDirectory(_outputController),
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            initialValue: 'Gemini',
-            readOnly: true,
-            decoration: const InputDecoration(labelText: '提案生成AI'),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _ponchiModels.contains(_geminiModelController.text)
-                ? _geminiModelController.text
-                : _ponchiModels.first,
-            decoration: const InputDecoration(labelText: 'Gemini 提案モデル'),
-            items: _ponchiModels
-                .map((model) => DropdownMenuItem(value: model, child: Text(model)))
-                .toList(),
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _geminiModelController.text = value;
-              });
-              _persistence.setString('gemini_model', value);
-            },
+              const SizedBox(width: 12),
+              const Expanded(
+                flex: 2,
+                child: TextFormField(
+                  initialValue: 'Gemini',
+                  readOnly: true,
+                  decoration: InputDecoration(labelText: '提案生成AI'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: DropdownButtonFormField<String>(
+                  value: _ponchiModels.contains(_geminiModelController.text)
+                      ? _geminiModelController.text
+                      : _ponchiModels.first,
+                  decoration: const InputDecoration(labelText: '提案モデル'),
+                  items: _ponchiModels
+                      .map((model) => DropdownMenuItem(value: model, child: Text(model)))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _geminiModelController.text = value;
+                    });
+                    _persistence.setString('gemini_model', value);
+                  },
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           Wrap(
@@ -7630,28 +7658,58 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
           ValueListenableBuilder<String>(
             valueListenable: ProjectState.currentProjectType,
             builder: (context, projectType, _) {
-              if (projectType == 'flow') {
-                return const Padding(
-                  padding: EdgeInsets.only(bottom: 12),
-                  child: Text('AIフローでは①で確定した台本を自動利用します（原稿ファイル指定は不要）。'),
-                );
-              }
+              final isFlow = projectType == 'flow';
               return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextFormField(
-                    controller: _scriptController,
-                    decoration: InputDecoration(
-                      labelText: '原稿ファイルパス',
-                      hintText: 'dialogue_input.txt',
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.folder_open),
-                        onPressed: () => _selectFile(
-                          _scriptController,
-                          const XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
+                  if (isFlow)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text('AIフローでは①で確定した台本を自動利用します（原稿ファイル指定は不要）。'),
+                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: isFlow
+                            ? const TextFormField(
+                                initialValue: 'AIフローで自動設定',
+                                readOnly: true,
+                                decoration: InputDecoration(labelText: '原稿ファイルパス'),
+                              )
+                            : TextFormField(
+                                controller: _scriptController,
+                                decoration: InputDecoration(
+                                  labelText: '原稿ファイルパス',
+                                  hintText: 'dialogue_input.txt',
+                                  suffixIcon: IconButton(
+                                    icon: const Icon(Icons.folder_open),
+                                    onPressed: () => _selectFile(
+                                      _scriptController,
+                                      const XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
+                                    ),
+                                  ),
+                                ),
+                                validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+                              ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 3,
+                        child: TextFormField(
+                          controller: _outputController,
+                          decoration: InputDecoration(
+                            labelText: '出力フォルダ',
+                            hintText: 'C:/videos/output',
+                            suffixIcon: IconButton(
+                              icon: const Icon(Icons.folder),
+                              onPressed: () => _selectDirectory(_outputController),
+                            ),
+                          ),
+                          validator: (value) => value == null || value.isEmpty ? '必須です' : null,
                         ),
                       ),
-                    ),
-                    validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+                    ],
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -7720,98 +7778,99 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             ],
           ),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _outputController,
-            decoration: InputDecoration(
-              labelText: '出力フォルダ',
-              hintText: 'C:/videos/output',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.folder),
-                onPressed: () => _selectDirectory(_outputController),
-              ),
-            ),
-            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
+          Row(
             children: [
-              SizedBox(
-                width: 160,
-                child: TextFormField(
-                  controller: _widthController,
-                  decoration: const InputDecoration(labelText: '幅'),
-                  keyboardType: TextInputType.number,
+              Expanded(
+                flex: 2,
+                child: DropdownButtonFormField<String>(
+                  value: '${_widthController.text}x${_heightController.text}' == '1920x1080'
+                      ? '1920x1080'
+                      : '1080x1920',
+                  decoration: const InputDecoration(labelText: '幅×高さ'),
+                  items: const [
+                    DropdownMenuItem(value: '1920x1080', child: Text('1920×1080（横長）')),
+                    DropdownMenuItem(value: '1080x1920', child: Text('1080×1920（縦長）')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    final parts = value.split('x');
+                    if (parts.length != 2) return;
+                    setState(() {
+                      _widthController.text = parts[0];
+                      _heightController.text = parts[1];
+                    });
+                    _persistence.setString('width', parts[0]);
+                    _persistence.setString('height', parts[1]);
+                  },
                 ),
               ),
-              SizedBox(
-                width: 160,
-                child: TextFormField(
-                  controller: _heightController,
-                  decoration: const InputDecoration(labelText: '高さ'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(
-                width: 120,
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 1,
                 child: TextFormField(
                   controller: _fpsController,
                   decoration: const InputDecoration(labelText: 'FPS'),
                   keyboardType: TextInputType.number,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SwitchListTile(
-            value: _useBgm,
-            title: const Text('BGM を使用する'),
-            onChanged: (value) {
-              setState(() {
-                _useBgm = value;
-              });
-              _persistence.setBool('use_bgm', value);
-            },
-          ),
-          if (_useBgm)
-            Column(
-              children: [
-                TextFormField(
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: SwitchListTile(
+                  value: _useBgm,
+                  title: const Text('BGM使用'),
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (value) {
+                    setState(() {
+                      _useBgm = value;
+                    });
+                    _persistence.setBool('use_bgm', value);
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: TextFormField(
                   controller: _bgmController,
+                  enabled: _useBgm,
                   decoration: InputDecoration(
                     labelText: 'BGM ファイルパス',
                     suffixIcon: IconButton(
                       icon: const Icon(Icons.library_music),
-                      onPressed: () => _selectFile(
-                        _bgmController,
-                        const XTypeGroup(label: 'Audio', extensions: ['mp3', 'wav', 'aac']),
-                      ),
+                      onPressed: _useBgm
+                          ? () => _selectFile(
+                                _bgmController,
+                                const XTypeGroup(label: 'Audio', extensions: ['mp3', 'wav', 'aac']),
+                              )
+                          : null,
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'BGM 音量(dB, マイナスで小さく)',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    Slider(
-                      value: _bgmGainDb,
-                      min: -30,
-                      max: 5,
-                      divisions: 35,
-                      label: _bgmGainDb.toStringAsFixed(1),
-                      onChanged: (value) {
-                        setState(() {
-                          _bgmGainDb = value;
-                        });
-                        _persistence.setDouble('bgm_gain_db', value);
-                      },
-                    ),
-                  ],
+              ),
+            ],
+          ),
+          if (_useBgm)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 8),
+                Text(
+                  'BGM 音量(dB, マイナスで小さく)',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                Slider(
+                  value: _bgmGainDb,
+                  min: -30,
+                  max: 5,
+                  divisions: 35,
+                  label: _bgmGainDb.toStringAsFixed(1),
+                  onChanged: (value) {
+                    setState(() {
+                      _bgmGainDb = value;
+                    });
+                    _persistence.setDouble('bgm_gain_db', value);
+                  },
                 ),
               ],
             ),
@@ -7820,36 +7879,32 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
             title: const Text('TTS エンジン設定'),
             initiallyExpanded: true,
             children: [
-              DropdownButtonFormField<String>(
-                value: _ttsEngine,
-                decoration: const InputDecoration(labelText: '音声合成エンジン'),
-                items: const [
-                  DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
-                  DropdownMenuItem(value: 'VOICEVOX', child: Text('VOICEVOX')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() {
-                    _ttsEngine = value;
-                  });
-                  _persistence.setString('tts_engine', value);
-                  if (value == 'VOICEVOX') {
-                    _fetchVoicevoxSpeakers();
-                  }
-                },
-              ),
-              const SizedBox(height: 12),
-              if (_ttsEngine == 'Gemini')
-                TextFormField(
-                  controller: _voiceController,
-                  decoration: const InputDecoration(labelText: 'Gemini 音声'),
-                ),
-              if (_ttsEngine == 'VOICEVOX') ...[
-                Row(
-                  children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _ttsEngine,
+                      decoration: const InputDecoration(labelText: '音声合成エンジン'),
+                      items: const [
+                        DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+                        DropdownMenuItem(value: 'VOICEVOX', child: Text('VOICEVOX')),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _ttsEngine = value;
+                        });
+                        _persistence.setString('tts_engine', value);
+                        if (value == 'VOICEVOX') {
+                          _fetchVoicevoxSpeakers();
+                        }
+                      },
+                    ),
+                  ),
+                  if (_ttsEngine == 'VOICEVOX') ...[
+                    const SizedBox(width: 12),
                     ElevatedButton.icon(
-                      onPressed:
-                          _voicevoxSpeakersLoading ? null : _fetchVoicevoxSpeakers,
+                      onPressed: _voicevoxSpeakersLoading ? null : _fetchVoicevoxSpeakers,
                       icon: const Icon(Icons.refresh),
                       label: const Text('話者一覧を取得'),
                     ),
@@ -7862,7 +7917,15 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                       ),
                     ],
                   ],
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (_ttsEngine == 'Gemini')
+                TextFormField(
+                  controller: _voiceController,
+                  decoration: const InputDecoration(labelText: 'Gemini 音声'),
                 ),
+              if (_ttsEngine == 'VOICEVOX') ...[
                 if (_voicevoxSpeakersError != null) ...[
                   const SizedBox(height: 8),
                   Text(
