@@ -2347,8 +2347,12 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   final _maxTokensController = TextEditingController(text: '20000');
   final _outputTextController = TextEditingController();
   late final InputPersistence _persistence;
+  static const List<String> _geminiModels = [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+  ];
   String _provider = 'Gemini';
-  String _geminiModel = 'gemini-2.0-flash';
+  String _geminiModel = 'gemini-2.5-flash';
   String _chatGptModel = 'gpt-4.1-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   String _template = '（テンプレなし）';
@@ -2418,7 +2422,10 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     if (!mounted) return;
     setState(() {
       _provider = provider ?? _provider;
-      _geminiModel = geminiModel ?? _geminiModel;
+      final persistedGeminiModel = geminiModel?.trim() ?? '';
+      _geminiModel = _geminiModels.contains(persistedGeminiModel)
+          ? persistedGeminiModel
+          : _geminiModel;
       _chatGptModel = chatGptModel ?? _chatGptModel;
       _claudeModel = claudeModel ?? _claudeModel;
       _templateContents = templateContents;
@@ -2444,138 +2451,190 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   Widget build(BuildContext context) {
     return Form(
       key: _formKey,
-      child: ListView(
+      child: Stack(
         children: [
-          Text(
-            '台本生成',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 16),
-          Row(
+          ListView(
             children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _provider,
-                  decoration: const InputDecoration(labelText: '生成AI'),
-                  items: const [
-                    DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
-                    DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
-                    DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
+              Text(
+                '台本生成',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: _provider,
+                decoration: const InputDecoration(labelText: '生成AI'),
+                items: const [
+                  DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+                  DropdownMenuItem(value: 'ChatGPT', child: Text('ChatGPT')),
+                  DropdownMenuItem(value: 'ClaudeCode', child: Text('ClaudeCode')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _provider = value;
+                  });
+                  _persistence.setString('provider', value);
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: _buildModelDropdown(),
+                  ),
+                  if (_shouldShowMaxTokensField) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: TextFormField(
+                        controller: _maxTokensController,
+                        decoration: const InputDecoration(labelText: 'max_tokens'),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
                   ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _provider = value;
-                    });
-                    _persistence.setString('provider', value);
-                  },
+                ],
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _template,
+                decoration: const InputDecoration(labelText: 'プロンプトテンプレ'),
+                items: _templates
+                    .map((value) => DropdownMenuItem(value: value, child: Text(value)))
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _template = value;
+                  });
+                  _persistence.setString('template', value);
+                },
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _applySelectedTemplate,
+                    icon: const Icon(Icons.download),
+                    label: const Text('呼び出し'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _openSaveTemplateDialog,
+                    icon: const Icon(Icons.save),
+                    label: const Text('保存'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _openEditTemplateDialog,
+                    icon: const Icon(Icons.edit),
+                    label: const Text('編集'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _promptController,
+                maxLines: 8,
+                decoration: const InputDecoration(labelText: 'プロンプト'),
+                validator: (value) => value == null || value.isEmpty ? '必須です' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _outputController,
+                decoration: InputDecoration(
+                  labelText: '保存ファイル',
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.file_present),
+                    onPressed: () => _selectSavePath(
+                      _outputController,
+                      const XTypeGroup(label: 'Text', extensions: ['txt']),
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(child: _buildModelDropdown()),
-            ],
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _maxTokensController,
-            decoration: const InputDecoration(labelText: 'Claude max_tokens'),
-            keyboardType: TextInputType.number,
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _template,
-            decoration: const InputDecoration(labelText: 'プロンプトテンプレ'),
-            items: _templates
-                .map((value) => DropdownMenuItem(value: value, child: Text(value)))
-                .toList(),
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                _template = value;
-              });
-              _persistence.setString('template', value);
-            },
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _applySelectedTemplate,
-                icon: const Icon(Icons.download),
-                label: const Text('呼び出し'),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _isSubmitting ? null : _submitScriptGenerate,
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text(_isSubmitting ? '送信中...' : '$_provider で台本生成'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _copyOutputText,
+                    icon: const Icon(Icons.copy),
+                    label: const Text('コピー'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _saveOutputToFile,
+                    icon: const Icon(Icons.save),
+                    label: const Text('保存'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _openLargeEditorDialog,
+                    icon: const Icon(Icons.open_in_full),
+                    label: const Text('大画面で編集'),
+                  ),
+                ],
               ),
-              OutlinedButton.icon(
-                onPressed: _openSaveTemplateDialog,
-                icon: const Icon(Icons.save),
-                label: const Text('保存'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _openEditTemplateDialog,
-                icon: const Icon(Icons.edit),
-                label: const Text('編集'),
+              const SizedBox(height: 16),
+              Text('生成結果', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _outputTextController,
+                maxLines: 10,
+                decoration: const InputDecoration(
+                  hintText: '生成結果がここに表示されます。',
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _promptController,
-            maxLines: 8,
-            decoration: const InputDecoration(labelText: 'プロンプト'),
-            validator: (value) => value == null || value.isEmpty ? '必須です' : null,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _outputController,
-            decoration: InputDecoration(
-              labelText: '保存ファイル',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.file_present),
-                onPressed: () => _selectSavePath(
-                  _outputController,
-                  const XTypeGroup(label: 'Text', extensions: ['txt']),
+          if (_isSubmitting)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ColoredBox(
+                  color: Colors.black.withOpacity(0.16),
+                  child: Center(
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0.95, end: 1),
+                      duration: const Duration(milliseconds: 520),
+                      curve: Curves.easeOutBack,
+                      builder: (context, scale, child) {
+                        return Transform.scale(scale: scale, child: child);
+                      },
+                      child: Card(
+                        elevation: 12,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(strokeWidth: 3),
+                              ),
+                              const SizedBox(width: 14),
+                              Text(
+                                '作成中・・・',
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              ElevatedButton.icon(
-                onPressed: _isSubmitting ? null : _submitScriptGenerate,
-                icon: const Icon(Icons.play_arrow),
-                label: Text(_isSubmitting ? '送信中...' : '$_provider で台本生成'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _copyOutputText,
-                icon: const Icon(Icons.copy),
-                label: const Text('コピー'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _saveOutputToFile,
-                icon: const Icon(Icons.save),
-                label: const Text('保存'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _openLargeEditorDialog,
-                icon: const Icon(Icons.open_in_full),
-                label: const Text('大画面で編集'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text('生成結果', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          TextFormField(
-            controller: _outputTextController,
-            maxLines: 10,
-            decoration: const InputDecoration(
-              hintText: '生成結果がここに表示されます。',
-            ),
-          ),
         ],
       ),
     );
@@ -2626,11 +2685,9 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
         return DropdownButtonFormField<String>(
           value: _geminiModel,
           decoration: const InputDecoration(labelText: 'モデル'),
-          items: const [
-            DropdownMenuItem(value: 'gemini-2.0-flash', child: Text('gemini-2.0-flash')),
-            DropdownMenuItem(value: 'gemini-1.5-flash', child: Text('gemini-1.5-flash')),
-            DropdownMenuItem(value: 'gemini-1.5-pro', child: Text('gemini-1.5-pro')),
-          ],
+          items: _geminiModels
+              .map((model) => DropdownMenuItem(value: model, child: Text(model)))
+              .toList(),
           onChanged: (value) {
             if (value == null) return;
             setState(() {
@@ -2640,6 +2697,19 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
           },
         );
     }
+  }
+
+  bool get _shouldShowMaxTokensField => _provider != 'ChatGPT';
+
+  int? _resolveMaxTokensForRequest() {
+    if (!_shouldShowMaxTokensField) {
+      return null;
+    }
+    final parsed = int.tryParse(_maxTokensController.text.trim());
+    if (parsed == null || parsed <= 0) {
+      return null;
+    }
+    return parsed;
   }
 
   Future<Map<String, String>> _readTemplates() async {
@@ -2861,7 +2931,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
       _showSnackBar('APIキーが未設定です。設定タブで入力してください。');
       return;
     }
-    final maxTokens = int.tryParse(_maxTokensController.text);
+    final maxTokens = _resolveMaxTokensForRequest();
     setState(() {
       _isSubmitting = true;
     });
