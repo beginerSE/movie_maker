@@ -461,6 +461,7 @@ class ScriptGenerateRequest(BaseModel):
     prompt: str
     model: str = DEFAULT_SCRIPT_GEMINI_MODEL
     max_tokens: Optional[int] = None
+    use_web_search: bool = False
 
 
 class ScriptGenerateResponse(BaseModel):
@@ -982,6 +983,7 @@ async def generate_script(payload: ScriptGenerateRequest) -> ScriptGenerateRespo
                 prompt=payload.prompt,
                 model=model or DEFAULT_SCRIPT_OPENAI_MODEL,
                 max_tokens=payload.max_tokens,
+                use_web_search=payload.use_web_search,
             )
         elif provider == "claudecode":
             text = generate_script_with_claude(

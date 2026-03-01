@@ -1184,6 +1184,7 @@ def generate_script_with_openai(
     prompt: str,
     model: str,
     max_tokens: int | None = None,
+    use_web_search: bool = False,
 ) -> str:
     if not api_key:
         raise RuntimeError("ChatGPT APIキーが空です。")
@@ -1197,7 +1198,7 @@ def generate_script_with_openai(
         "Content-Type": "application/json",
     }
 
-    if _is_openai_responses_model(model):
+    if use_web_search or _is_openai_responses_model(model):
         payload = {
             "model": model,
             "input": [
@@ -1209,6 +1210,8 @@ def generate_script_with_openai(
         }
         if bounded_tokens is not None:
             payload["max_output_tokens"] = bounded_tokens
+        if use_web_search:
+            payload["tools"] = [{"type": "web_search_preview"}]
 
         resp = _post_openai_with_retry(
             "https://api.openai.com/v1/responses",
