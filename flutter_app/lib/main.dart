@@ -2356,6 +2356,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   String _chatGptModel = 'gpt-4.1-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   String _template = '（テンプレなし）';
+  bool _useOpenAiWebSearch = false;
   bool _isSubmitting = false;
   static const Map<String, String> _defaultTemplates = {
     '（テンプレなし）': '',
@@ -2417,6 +2418,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
     final chatGptModel = await _persistence.readString('chatgpt_model');
     final claudeModel = await _persistence.readString('claude_model');
     final template = await _persistence.readString('template');
+    final useOpenAiWebSearch = await _persistence.readBool('use_openai_web_search');
     final templateContents = await _readTemplates();
     final templateKeys = templateContents.keys.toList();
     if (!mounted) return;
@@ -2431,6 +2433,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
       _templateContents = templateContents;
       _templates = templateKeys;
       _template = template ?? _template;
+      _useOpenAiWebSearch = useOpenAiWebSearch ?? _useOpenAiWebSearch;
       if (!_templates.contains(_template) && _templates.isNotEmpty) {
         _template = _templates.first;
       }
@@ -2534,6 +2537,19 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                 ],
               ),
               const SizedBox(height: 12),
+              if (_provider == 'ChatGPT')
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Web検索を有効化（OpenAI Responses API）'),
+                  subtitle: const Text('最新情報を参照しながら台本を生成します。'),
+                  value: _useOpenAiWebSearch,
+                  onChanged: (value) {
+                    setState(() {
+                      _useOpenAiWebSearch = value;
+                    });
+                    _persistence.setBool('use_openai_web_search', value);
+                  },
+                ),
               TextFormField(
                 controller: _promptController,
                 maxLines: 8,
@@ -2952,6 +2968,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
         'prompt': _promptController.text,
         'model': _resolveModel(),
         'max_tokens': maxTokens,
+        'use_web_search': _provider == 'ChatGPT' ? _useOpenAiWebSearch : false,
         'project_id': ProjectState.currentProjectId.value,
       };
       final response = await http
