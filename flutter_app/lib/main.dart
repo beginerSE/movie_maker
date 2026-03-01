@@ -2577,7 +2577,7 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
                     icon: const Icon(Icons.file_present),
                     onPressed: () => _selectSavePath(
                       _outputController,
-                      const XTypeGroup(label: 'Text', extensions: ['txt']),
+                      XTypeGroup(label: 'Text', extensions: ['txt']),
                     ),
                   ),
                 ),
@@ -3277,7 +3277,7 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
                                     icon: const Icon(Icons.folder_open),
                                     onPressed: () => _selectFile(
                                       _scriptPathController,
-                                      const XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
+                                      XTypeGroup(label: 'Script', extensions: ['srt', 'txt']),
                                     ),
                                   ),
                                 ),
@@ -4270,7 +4270,7 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
                         icon: const Icon(Icons.subtitles),
                         onPressed: () => _selectFile(
                           _srtController,
-                          const XTypeGroup(label: 'SRT', extensions: ['srt']),
+                          XTypeGroup(label: 'SRT', extensions: ['srt']),
                         ),
                       ),
                     ),
@@ -5424,7 +5424,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
 
   Future<void> _selectYoutubeThumbnail() async {
     final selected = await openFile(acceptedTypeGroups: [
-      const XTypeGroup(label: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'])
+      XTypeGroup(label: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'])
     ]);
     if (selected == null) return;
     _youtubeThumbnailController.text = selected.path;
@@ -5782,7 +5782,7 @@ class _VideoEditFormState extends State<VideoEditForm> {
     AppLogger.info('詳細動画編集: ファイル選択ダイアログを開きます');
     await _selectFile(
       _inputVideoController,
-      const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
+      XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
     );
     AppLogger.info('詳細動画編集: ファイル選択 path=${_inputVideoController.text.trim()}');
     await _initInputVideoPreview(_inputVideoController.text);
@@ -6326,7 +6326,7 @@ class _ImageCollectFormState extends State<ImageCollectForm> {
                       icon: const Icon(Icons.subtitles),
                       onPressed: () => _selectFile(
                         _srtController,
-                        const XTypeGroup(label: 'SRT', extensions: ['srt']),
+                        XTypeGroup(label: 'SRT', extensions: ['srt']),
                       ),
                     ),
                   ),
@@ -6528,7 +6528,7 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
                       icon: const Icon(Icons.folder_open),
                       onPressed: () => _selectFile(
                         _projectNameController,
-                        const XTypeGroup(label: 'Project', extensions: ['mmproj']),
+                        XTypeGroup(label: 'Project', extensions: ['mmproj']),
                       ),
                     ),
                   ),
@@ -6617,7 +6617,7 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
                       icon: const Icon(Icons.video_library),
                       onPressed: () => _selectFile(
                         _mainVideoController,
-                        const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
+                        XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
                       ),
                     ),
                   ),
@@ -6723,7 +6723,7 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
                       icon: const Icon(Icons.image),
                       onPressed: () => _selectFile(
                         _overlayImageController,
-                        const XTypeGroup(label: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp']),
+                        XTypeGroup(label: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp']),
                       ),
                     ),
                   ),
@@ -6800,7 +6800,7 @@ class _DetailedEditFormState extends State<DetailedEditForm> {
                       icon: const Icon(Icons.save_alt),
                       onPressed: () => _selectSavePath(
                         _exportPathController,
-                        const XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
+                        XTypeGroup(label: 'Video', extensions: ['mp4', 'mov', 'mkv']),
                       ),
                     ),
                   ),
@@ -7707,7 +7707,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                                     icon: const Icon(Icons.folder_open),
                                     onPressed: () => _selectFile(
                                       _scriptController,
-                                      const XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
+                                      XTypeGroup(label: 'Script', extensions: ['txt', 'srt']),
                                     ),
                                   ),
                                 ),
@@ -7746,7 +7746,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                 icon: const Icon(Icons.collections),
                 onPressed: () async {
                   final files = await openFiles(
-                    acceptedTypeGroups: const [
+                    acceptedTypeGroups: [
                       XTypeGroup(
                         label: 'Images',
                         extensions: ['png', 'jpg', 'jpeg', 'webp'],
@@ -7771,7 +7771,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                 child: OutlinedButton.icon(
                   onPressed: () async {
                     final files = await openFiles(
-                      acceptedTypeGroups: const [
+                      acceptedTypeGroups: [
                         XTypeGroup(
                           label: 'Images',
                           extensions: ['png', 'jpg', 'jpeg', 'webp'],
@@ -7862,7 +7862,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                       onPressed: _useBgm
                           ? () => _selectFile(
                                 _bgmController,
-                                const XTypeGroup(label: 'Audio', extensions: ['mp3', 'wav', 'aac']),
+                                XTypeGroup(label: 'Audio', extensions: ['mp3', 'wav', 'aac']),
                               )
                           : null,
                     ),
