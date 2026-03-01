@@ -318,6 +318,28 @@ class AppLogger {
   }
 }
 
+bool _isDeprecatedAiModelOption(String model) {
+  final normalized = model.trim().toLowerCase();
+  if (normalized.startsWith('gpt-4')) {
+    return true;
+  }
+  if (normalized.startsWith('gemini-1.5')) {
+    return true;
+  }
+  if (normalized.startsWith('gemini-2.0')) {
+    return true;
+  }
+  return false;
+}
+
+List<String> _filterDeprecatedAiModelOptions(Iterable<String> models) {
+  return models
+      .map((model) => model.trim())
+      .where((model) => model.isNotEmpty)
+      .where((model) => !_isDeprecatedAiModelOption(model))
+      .toList();
+}
+
 const List<ProjectFlowStep> kFlowSteps = [
   ProjectFlowStep(key: 'script', label: '台本作成（AI + 人間修正）'),
   ProjectFlowStep(key: 'base_video', label: '動画作成（ベース動画生成）'),
@@ -2077,51 +2099,35 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _showSuccessSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _createProject() async {
     final controller = TextEditingController();
-    String selectedType = 'standard';
     final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocalState) => AlertDialog(
-          title: const Text('プロジェクト作成'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: controller, decoration: const InputDecoration(labelText: '表示名')),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: selectedType,
-                decoration: const InputDecoration(labelText: '作成方法'),
-                items: const [
-                  DropdownMenuItem(value: 'standard', child: Text('任意作成（従来通り）')),
-                  DropdownMenuItem(value: 'flow', child: Text('AI作成（フロー型）')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setLocalState(() {
-                    selectedType = value;
-                  });
-                },
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: const Text('プロジェクト作成'),
+        content: TextField(controller: controller, decoration: const InputDecoration(labelText: '表示名')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, {
+              'name': controller.text.trim(),
+              'project_type': 'flow',
+            }),
+            child: const Text('作成'),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, {
-                'name': controller.text.trim(),
-                'project_type': selectedType,
-              }),
-              child: const Text('作成'),
-            ),
-          ],
-        ),
-      ),
+        ],
+          ),
     );
     final name = result?['name'] ?? '';
-    final projectType = result?['project_type'] ?? 'standard';
-    if (name.isEmpty) return;
+    final projectType = result?['project_type'] ?? 'flow';
+    if (name.isEmpty) {
+      _showErrorSnackBar('表示名を入力してください。');
+      return;
+    }
     setState(() => _busy = true);
     try {
       final uri = ApiConfig.httpUri('/projects');
@@ -2140,6 +2146,10 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
         );
       }
       await widget.onChanged();
+      if (mounted) {
+        Navigator.of(context).pop();
+        _showSuccessSnackBar('作成しました！');
+      }
     } catch (error) {
       _showErrorSnackBar(error.toString().replaceFirst('Exception: ', ''));
     } finally {
@@ -2244,9 +2254,8 @@ class _ProjectManagerDialogState extends State<_ProjectManagerDialog> {
       }
       await widget.onChanged();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('削除しました！')),
-        );
+        Navigator.of(context).pop();
+        _showSuccessSnackBar('削除しました！');
       }
     } catch (error) {
       _showErrorSnackBar(error.toString().replaceFirst('Exception: ', ''));
@@ -2347,13 +2356,10 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   final _maxTokensController = TextEditingController(text: '20000');
   final _outputTextController = TextEditingController();
   late final InputPersistence _persistence;
-  static const List<String> _geminiModels = [
-    'gemini-2.5-flash',
-    'gemini-2.5-pro',
-  ];
+  static const List<String> _geminiModels = ['gemini-2.5-flash', 'gemini-2.5-pro'];
   String _provider = 'Gemini';
   String _geminiModel = 'gemini-2.5-flash';
-  String _chatGptModel = 'gpt-4.1-mini';
+  String _chatGptModel = 'gpt-5-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   String _template = '（テンプレなし）';
   bool _useOpenAiWebSearch = false;
@@ -2428,7 +2434,10 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
       _geminiModel = _geminiModels.contains(persistedGeminiModel)
           ? persistedGeminiModel
           : _geminiModel;
-      _chatGptModel = chatGptModel ?? _chatGptModel;
+      final persistedChatGptModel = chatGptModel?.trim() ?? '';
+      _chatGptModel = persistedChatGptModel.isNotEmpty && !_isDeprecatedAiModelOption(persistedChatGptModel)
+          ? persistedChatGptModel
+          : _chatGptModel;
       _claudeModel = claudeModel ?? _claudeModel;
       _templateContents = templateContents;
       _templates = templateKeys;
@@ -2659,17 +2668,14 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
   Widget _buildModelDropdown() {
     switch (_provider) {
       case 'ChatGPT':
+        const chatGptModels = ['gpt-5-mini', 'gpt-5', 'gpt-5-nano'];
         return DropdownButtonFormField<String>(
-          value: _chatGptModel,
+          value: chatGptModels.contains(_chatGptModel) ? _chatGptModel : chatGptModels.first,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
             DropdownMenuItem(value: 'gpt-5-mini', child: Text('gpt-5-mini')),
             DropdownMenuItem(value: 'gpt-5', child: Text('gpt-5')),
             DropdownMenuItem(value: 'gpt-5-nano', child: Text('gpt-5-nano')),
-            DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
-            DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
-            DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
-            DropdownMenuItem(value: 'gpt-4o', child: Text('gpt-4o')),
           ],
           onChanged: (value) {
             if (value == null) return;
@@ -2698,8 +2704,9 @@ class _ScriptGenerateFormState extends State<ScriptGenerateForm> {
           },
         );
       default:
+        const geminiModels = ['gemini-2.5-flash', 'gemini-2.5-pro'];
         return DropdownButtonFormField<String>(
-          value: _geminiModel,
+          value: geminiModels.contains(_geminiModel) ? _geminiModel : geminiModels.first,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: _geminiModels
               .map((model) => DropdownMenuItem(value: model, child: Text(model)))
@@ -3147,8 +3154,8 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   final _outputController = TextEditingController();
   late final InputPersistence _persistence;
   String _provider = 'Gemini';
-  String _geminiModel = 'gemini-2.0-flash';
-  String _chatGptModel = 'gpt-4.1-mini';
+  String _geminiModel = 'gemini-2.5-flash';
+  String _chatGptModel = 'gpt-5-mini';
   String _claudeModel = 'claude-opus-4-5-20251101';
   bool _isSubmitting = false;
   final _selectedTitleController = TextEditingController();
@@ -3189,8 +3196,14 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
     if (!mounted) return;
     setState(() {
       _provider = provider ?? _provider;
-      _geminiModel = geminiModel ?? _geminiModel;
-      _chatGptModel = chatGptModel ?? _chatGptModel;
+      final persistedGeminiModel = geminiModel?.trim() ?? '';
+      _geminiModel = persistedGeminiModel.isNotEmpty && !_isDeprecatedAiModelOption(persistedGeminiModel)
+          ? persistedGeminiModel
+          : _geminiModel;
+      final persistedChatGptModel = chatGptModel?.trim() ?? '';
+      _chatGptModel = persistedChatGptModel.isNotEmpty && !_isDeprecatedAiModelOption(persistedChatGptModel)
+          ? persistedChatGptModel
+          : _chatGptModel;
       _claudeModel = claudeModel ?? _claudeModel;
       _selectedTitleController.text = selectedTitle;
     });
@@ -3347,17 +3360,14 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
   Widget _buildModelDropdown() {
     switch (_provider) {
       case 'ChatGPT':
+        const chatGptModels = ['gpt-5-mini', 'gpt-5', 'gpt-5-nano'];
         return DropdownButtonFormField<String>(
-          value: _chatGptModel,
+          value: chatGptModels.contains(_chatGptModel) ? _chatGptModel : chatGptModels.first,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
             DropdownMenuItem(value: 'gpt-5-mini', child: Text('gpt-5-mini')),
             DropdownMenuItem(value: 'gpt-5', child: Text('gpt-5')),
             DropdownMenuItem(value: 'gpt-5-nano', child: Text('gpt-5-nano')),
-            DropdownMenuItem(value: 'gpt-4.1-mini', child: Text('gpt-4.1-mini')),
-            DropdownMenuItem(value: 'gpt-4.1', child: Text('gpt-4.1')),
-            DropdownMenuItem(value: 'gpt-4o-mini', child: Text('gpt-4o-mini')),
-            DropdownMenuItem(value: 'gpt-4o', child: Text('gpt-4o')),
           ],
           onChanged: (value) {
             if (value == null) return;
@@ -3386,13 +3396,13 @@ class _TitleGenerateFormState extends State<TitleGenerateForm> {
           },
         );
       default:
+        const geminiModels = ['gemini-2.5-flash', 'gemini-2.5-pro'];
         return DropdownButtonFormField<String>(
-          value: _geminiModel,
+          value: geminiModels.contains(_geminiModel) ? _geminiModel : geminiModels.first,
           decoration: const InputDecoration(labelText: 'モデル'),
           items: const [
-            DropdownMenuItem(value: 'gemini-2.0-flash', child: Text('gemini-2.0-flash')),
-            DropdownMenuItem(value: 'gemini-1.5-flash', child: Text('gemini-1.5-flash')),
-            DropdownMenuItem(value: 'gemini-1.5-pro', child: Text('gemini-1.5-pro')),
+            DropdownMenuItem(value: 'gemini-2.5-flash', child: Text('gemini-2.5-flash')),
+            DropdownMenuItem(value: 'gemini-2.5-pro', child: Text('gemini-2.5-pro')),
           ],
           onChanged: (value) {
             if (value == null) return;
@@ -3539,8 +3549,8 @@ class MaterialsGenerateForm extends StatefulWidget {
 
 class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
   final _formKey = GlobalKey<FormState>();
-  final _modelController = TextEditingController(text: 'gemini-3-pro-image-preview');
-  List<String> _availableModels = const ['gemini-3-pro-image-preview'];
+  final _modelController = TextEditingController(text: 'gemini-2.5-flash-image-preview');
+  List<String> _availableModels = const ['gemini-2.5-flash-image-preview'];
   final _promptController = TextEditingController();
   final _outputController = TextEditingController();
   String? _generatedImagePath;
@@ -3616,11 +3626,9 @@ class _MaterialsGenerateFormState extends State<MaterialsGenerateForm> {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final section = data['thumbnail'] as Map<String, dynamic>?;
       if (section == null) return;
-      final models = (section['models'] as List<dynamic>? ?? [])
-          .whereType<String>()
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList();
+      final models = _filterDeprecatedAiModelOptions(
+        (section['models'] as List<dynamic>? ?? []).whereType<String>(),
+      );
       if (models.isEmpty || !mounted) {
         return;
       }
@@ -3908,14 +3916,14 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
   final _formKey = GlobalKey<FormState>();
   final _srtController = TextEditingController();
   final _outputController = TextEditingController(text: 'ponchi_images');
-  final _geminiModelController = TextEditingController(text: 'gemini-2.0-flash');
+  final _geminiModelController = TextEditingController(text: 'gemini-2.5-flash');
   final _outputTextController = TextEditingController();
   final List<_PonchiPreviewItem> _previewItems = [];
   final List<_PonchiIdeaRow> _ideaRows = [];
   final Set<String> _rowGeneratingKeys = <String>{};
   late final InputPersistence _persistence;
   String _engine = 'Gemini';
-  List<String> _ponchiModels = const ['gemini-2.0-flash'];
+  List<String> _ponchiModels = const ['gemini-2.5-flash'];
   bool _isSubmittingIdeas = false;
   bool _isSubmittingImages = false;
   late final VoidCallback _projectListener;
@@ -4172,11 +4180,9 @@ class _PonchiGenerateFormState extends State<PonchiGenerateForm> {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final section = data['ponchi'] as Map<String, dynamic>?;
       if (section == null) return;
-      final models = (section['models'] as List<dynamic>? ?? [])
-          .whereType<String>()
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList();
+      final models = _filterDeprecatedAiModelOptions(
+        (section['models'] as List<dynamic>? ?? []).whereType<String>(),
+      );
       if (models.isEmpty || !mounted) {
         return;
       }
