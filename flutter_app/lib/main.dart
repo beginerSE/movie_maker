@@ -7088,6 +7088,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
   final _voicevoxRotationController = TextEditingController(text: '1,3');
   final _voicevoxCasterController = TextEditingController(text: '四国めたん');
   final _voicevoxAnalystController = TextEditingController(text: 'ずんだもん');
+  final _voicevoxSpeedController = TextEditingController(text: '1.00');
   final _captionFontSizeController = TextEditingController(text: '36');
   final _captionAlphaController = TextEditingController(text: '170');
   final _captionTextColorController = TextEditingController(text: '#FFFFFF');
@@ -7345,6 +7346,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     _persistence.registerController(_voicevoxRotationController, 'vv_rotation');
     _persistence.registerController(_voicevoxCasterController, 'vv_caster');
     _persistence.registerController(_voicevoxAnalystController, 'vv_analyst');
+    _persistence.registerController(_voicevoxSpeedController, 'vv_speed_text');
     _persistence.registerController(
       _captionFontSizeController,
       'caption_font_size',
@@ -7401,6 +7403,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     _voicevoxRotationController.dispose();
     _voicevoxCasterController.dispose();
     _voicevoxAnalystController.dispose();
+    _voicevoxSpeedController.dispose();
     _captionFontSizeController.dispose();
     _captionAlphaController.dispose();
     _captionTextColorController.dispose();
@@ -7421,6 +7424,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
     final bgmGainDb = await _persistence.readDouble('bgm_gain_db');
     final ttsEngine = await _persistence.readString('tts_engine');
     final voicevoxMode = await _persistence.readString('vv_mode');
+    final normalizedVoicevoxMode = voicevoxMode == '2人対談' ? '二人対談' : voicevoxMode;
     final voicevoxSpeed = await _persistence.readDouble('vv_speed');
     final captionBoxEnabled =
         await _persistence.readBool('caption_box_enabled');
@@ -7430,8 +7434,9 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
       _useBgm = useBgm ?? _useBgm;
       _bgmGainDb = bgmGainDb ?? _bgmGainDb;
       _ttsEngine = ttsEngine ?? _ttsEngine;
-      _voicevoxMode = voicevoxMode ?? _voicevoxMode;
+      _voicevoxMode = normalizedVoicevoxMode ?? _voicevoxMode;
       _voicevoxSpeed = voicevoxSpeed ?? _voicevoxSpeed;
+      _voicevoxSpeedController.text = _voicevoxSpeed.toStringAsFixed(2);
       _captionBoxEnabled = captionBoxEnabled ?? _captionBoxEnabled;
       _bgOffStyle = bgOffStyle ?? _bgOffStyle;
     });
@@ -7935,6 +7940,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                 ],
                 const SizedBox(height: 12),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
@@ -7945,7 +7951,7 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                             value: 'ローテーション',
                             child: Text('ローテーション'),
                           ),
-                          DropdownMenuItem(value: '2人対談', child: Text('2人対談')),
+                          DropdownMenuItem(value: '二人対談', child: Text('二人対談')),
                         ],
                         onChanged: (value) {
                           if (value == null) return;
@@ -7957,52 +7963,60 @@ class _VideoGenerateFormState extends State<VideoGenerateForm> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _voicevoxRotationController,
-                        decoration:
-                            const InputDecoration(labelText: 'ローテーション話者(カンマ)'),
+                    if (_voicevoxMode == 'ローテーション')
+                      Expanded(
+                        flex: 2,
+                        child: TextFormField(
+                          controller: _voicevoxRotationController,
+                          decoration:
+                              const InputDecoration(labelText: 'ローテーション話者(カンマ)'),
+                        ),
+                      )
+                    else ...[
+                      Expanded(
+                        child: _buildVoicevoxSpeakerDropdown(
+                          label: 'キャスター話者',
+                          controller: _voicevoxCasterController,
+                          persistenceKey: 'vv_caster',
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildVoicevoxSpeakerDropdown(
-                        label: 'キャスター話者',
-                        controller: _voicevoxCasterController,
-                        persistenceKey: 'vv_caster',
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildVoicevoxSpeakerDropdown(
+                          label: 'アナリスト話者',
+                          controller: _voicevoxAnalystController,
+                          persistenceKey: 'vv_analyst',
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(width: 12),
                     Expanded(
-                      child: _buildVoicevoxSpeakerDropdown(
-                        label: 'アナリスト話者',
-                        controller: _voicevoxAnalystController,
-                        persistenceKey: 'vv_analyst',
+                      child: TextFormField(
+                        controller: _voicevoxSpeedController,
+                        decoration: const InputDecoration(labelText: '話速(0.5〜2.0)'),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                        ],
+                        onChanged: (value) {
+                          final parsed = double.tryParse(value);
+                          if (parsed == null) {
+                            return;
+                          }
+                          final clamped = parsed.clamp(0.5, 2.0);
+                          _voicevoxSpeed = clamped;
+                          _persistence.setDouble('vv_speed', clamped);
+                        },
+                        onEditingComplete: () {
+                          final parsed = double.tryParse(_voicevoxSpeedController.text);
+                          final clamped = (parsed ?? _voicevoxSpeed).clamp(0.5, 2.0);
+                          setState(() {
+                            _voicevoxSpeed = clamped;
+                            _voicevoxSpeedController.text = clamped.toStringAsFixed(2);
+                          });
+                          _persistence.setDouble('vv_speed', clamped);
+                        },
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('話速(0.5〜2.0)'),
-                    Slider(
-                      value: _voicevoxSpeed,
-                      min: 0.5,
-                      max: 2.0,
-                      divisions: 30,
-                      label: _voicevoxSpeed.toStringAsFixed(2),
-                      onChanged: (value) {
-                        setState(() {
-                          _voicevoxSpeed = value;
-                        });
-                        _persistence.setDouble('vv_speed', value);
-                      },
                     ),
                   ],
                 ),
@@ -8371,11 +8385,6 @@ class LogPanel extends StatefulWidget {
 }
 
 class _LogPanelState extends State<LogPanel> {
-  static const _tabLogs = 'Logs';
-  static const _tabErrors = 'Errors';
-  static const _tabRequests = 'Requests';
-
-  final List<String> _tabs = const [_tabLogs, _tabErrors, _tabRequests];
   final ScrollController _scrollController = ScrollController();
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -8384,7 +8393,6 @@ class _LogPanelState extends State<LogPanel> {
   String _progressLabel = '';
   String? _eta;
   bool _autoScroll = true;
-  String _activeTab = _tabLogs;
 
   @override
   void initState() {
@@ -8419,24 +8427,18 @@ class _LogPanelState extends State<LogPanel> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
             color: const Color(0xFFF6F8FC),
             border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
           ),
           child: Row(
             children: [
-              ..._tabs.map(
-                (tab) => Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: ChoiceChip(
-                    label: Text(tab),
-                    selected: _activeTab == tab,
-                    onSelected: (_) => setState(() {
-                      _activeTab = tab;
-                    }),
-                  ),
-                ),
+              const Icon(Icons.terminal, size: 18),
+              const SizedBox(width: 6),
+              const Text(
+                'コンソール',
+                style: TextStyle(fontWeight: FontWeight.w600),
               ),
               const Spacer(),
               IconButton(
@@ -8476,12 +8478,12 @@ class _LogPanelState extends State<LogPanel> {
         if (widget.collapsed) const SizedBox.shrink() else ...[
         if (_currentJobId != null) ...[
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+            padding: const EdgeInsets.fromLTRB(10, 2, 10, 0),
             child: Text('Job: $_currentJobId'),
           ),
           if (_progress != null) ...[
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
               child: Text(
                 _progressLabel,
                 style: const TextStyle(
@@ -8492,19 +8494,19 @@ class _LogPanelState extends State<LogPanel> {
             ),
             const SizedBox(height: 8),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
               child: LinearProgressIndicator(value: _progress),
             ),
             if (_eta != null)
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                padding: const EdgeInsets.fromLTRB(10, 2, 10, 0),
                 child: Text('ETA: $_eta'),
               ),
           ],
         ],
         Expanded(
           child: Container(
-            margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            margin: const EdgeInsets.fromLTRB(10, 6, 10, 10),
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: const Color(0xFF101216),
@@ -8544,16 +8546,7 @@ class _LogPanelState extends State<LogPanel> {
   }
 
   List<AppLogEntry> _visibleLogs() {
-    final source = AppLogger.entries;
-    return source.where((entry) {
-      if (_activeTab == _tabErrors) {
-        return entry.level == AppLogLevel.error;
-      }
-      if (_activeTab == _tabRequests) {
-        return entry.message.contains('http') || entry.message.contains('API');
-      }
-      return true;
-    }).toList(growable: false);
+    return AppLogger.entries.toList(growable: false);
   }
 
   void _handleLatestJobIdChanged() {
