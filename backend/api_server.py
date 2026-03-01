@@ -991,6 +991,7 @@ async def generate_script(payload: ScriptGenerateRequest) -> ScriptGenerateRespo
                 prompt=payload.prompt,
                 model=model or DEFAULT_CLAUDE_MODEL,
                 max_tokens=payload.max_tokens or 20000,
+                use_web_search=payload.use_web_search,
             )
         else:
             raise HTTPException(status_code=400, detail=f"Unknown provider: {payload.provider}")
